@@ -1,0 +1,864 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JobScope</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="apple-touch-icon" href="/static/favicon.svg">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%234f46e5'/><text x='18' y='70' font-size='56' fill='white' font-family='sans-serif' font-weight='bold'>J</text></svg>">
+<style>
+:root {
+  --bg: #f4f6fb;
+  --surface: #ffffff;
+  --surface-2: #eef1f8;
+  --text: #171e2d;
+  --muted: #5d667a;
+  --border: #e1e5f0;
+  --accent: #4f46e5;
+  --accent-2: #7c3aed;
+  --accent-soft: #eef0fe;
+  --ok: #15803d;
+  --warn: #b45309;
+  --danger: #b91c1c;
+  --shadow: 0 12px 34px -14px rgba(23,30,45,.22);
+  --radius: 14px;
+}
+[data-theme="dark"] {
+  --bg: #0d1020;
+  --surface: #171b2e;
+  --surface-2: #21263f;
+  --text: #e8eaf5;
+  --muted: #9aa3bd;
+  --border: #2a3052;
+  --accent: #7c7ff5;
+  --accent-2: #a78bfa;
+  --accent-soft: #262b4c;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  --shadow: 0 12px 34px -14px rgba(0,0,0,.6);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+/* Soft floating gradient blobs behind everything (subtle, not oppressive) */
+body::before {
+  content: ""; position: fixed; inset: -25%;
+  background:
+    radial-gradient(520px at 18% 12%, rgba(79,70,229,.13), transparent 62%),
+    radial-gradient(460px at 82% 88%, rgba(124,58,237,.11), transparent 62%),
+    radial-gradient(380px at 70% 18%, rgba(52,211,153,.08), transparent 60%);
+  pointer-events: none; z-index: -1;
+  animation: drift 28s ease-in-out infinite alternate;
+}
+@keyframes drift { to { transform: translate(-3%, -2%) scale(1.05); } }
+@media (prefers-reduced-motion: reduce) {
+  body::before { animation: none; }
+  * { animation-duration: .001s !important; transition-duration: .001s !important; }
+}
+button { font: inherit; cursor: pointer; }
+input, textarea { font: inherit; color: var(--text); }
+
+.app { max-width: 900px; margin: 0 auto; padding: 0 18px 36px; height: 100vh; display: flex; flex-direction: column; }
+main.chat { flex: 1; overflow-y: auto; padding: 18px 4px 8px; scroll-behavior: smooth; }
+main.chat::-webkit-scrollbar { width: 8px; }
+main.chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+
+header { display: flex; align-items: center; gap: 12px; padding: 16px 2px 0; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; letter-spacing: .2px; }
+.brand .dot { width: 12px; height: 12px; border-radius: 4px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+.spacer { flex: 1; }
+.status { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; background: var(--surface); }
+.status .pulse { width: 8px; height: 8px; border-radius: 50%; background: #c8cfdf; }
+.status.online .pulse { background: var(--ok); }
+.status.busy .pulse { background: var(--warn); animation: breathe 1.5s infinite; }
+@keyframes breathe { 0%{box-shadow:0 0 0 0 rgba(180,83,9,.45);} 70%{box-shadow:0 0 0 7px rgba(180,83,9,0);} 100%{box-shadow:0 0 0 0 rgba(180,83,9,0);} }
+.status .modeltag { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); border-left: 1px solid var(--border); padding-left: 9px; margin-left: 2px; }
+.iconbtn { border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: 10px; padding: 7px 11px; font-size: 13.5px; transition: all .2s cubic-bezier(.22,.68,.35,1); }
+.iconbtn:hover { color: var(--accent); border-color: var(--accent); transform: translateY(-2px) rotate(-1.5deg); box-shadow: 0 6px 14px -8px var(--accent); }
+.iconbtn:active { transform: translateY(0) scale(.95); }
+
+/* ---------- circuit pipeline ---------- */
+.circuit { position: relative; margin: 16px 0 6px; padding: 4px 6px 2px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.circuit svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.pline { stroke: var(--border); stroke-width: 1.6; fill: none; stroke-linecap: round; transition: stroke .3s; }
+.pline.on { stroke: var(--accent); stroke-width: 2.2; stroke-dasharray: 6 4; animation: dashflow 1s linear infinite; }
+@keyframes dashflow { to { stroke-dashoffset: -10; } }
+.nodes { display: flex; justify-content: space-between; position: relative; padding: 10px 12px 8px; }
+.node { display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: default; z-index: 2; }
+.node .pill { position: relative; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font-size: 16px; background: var(--surface-2); border: 1.5px solid var(--border); color: var(--muted); transition: transform .25s cubic-bezier(.22,.68,.35,1), box-shadow .25s, background .25s, border-color .25s; box-shadow: 0 2px 8px -4px rgba(0,0,0,.15); transform-style: preserve-3d; }
+/* Hover: each node pill pops toward the viewer in 3D with a soft glow */
+.node .pill:hover, .node:focus-within .pill { transform: rotateX(-9deg) rotateY(-9deg) translateY(-3px) scale(1.08); box-shadow: 0 12px 22px -10px var(--accent); }
+.node .lbl { font-size: 10.5px; color: var(--muted); letter-spacing: .3px; font-weight: 600; white-space: nowrap; }
+.node.live .pill { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); transform: translateY(-2px); box-shadow: 0 6px 16px -8px var(--accent); }
+/* Pulsing ring on the active node, like a live circuit contact */
+.node.live .pill::after { content: ""; position: absolute; inset: -7px; border-radius: 17px; border: 2px solid var(--accent); opacity: 0; animation: ringpulse 1.6s ease-out infinite; }
+@keyframes ringpulse { 0% { transform: scale(.82); opacity: .8; } 100% { transform: scale(1.32); opacity: 0; } }
+.node.done .pill { border-color: var(--ok); color: var(--ok); background: rgba(21,128,61,.08); }
+.node.fail .pill { border-color: var(--danger); color: var(--danger); background: rgba(185,28,28,.07); }
+.node.live .lbl { color: var(--accent); }
+.node.done .lbl { color: var(--ok); }
+.pop { position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); min-width: 190px; max-width: 240px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 11.5px; color: var(--muted); box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 30; white-space: normal; }
+.pop b { color: var(--text); display: block; margin-bottom: 2px; }
+.pop::after { content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-top-color: var(--surface); }
+.node:hover .pop, .node:focus-within .pop { opacity: 1; }
+.node:first-child .pop, .node:nth-child(2) .pop { transform: translate(-25%, 0); }
+.node:last-child .pop { transform: translate(-75%, 0); }
+.skillsbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 8px 2px 0; font-size: 12px; color: var(--muted); }
+.skillsbar .label { text-transform: uppercase; font-size: 10.5px; letter-spacing: .6px; font-weight: 600; }
+.chip { background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 3px 10px; font-size: 11.5px; font-family: 'JetBrains Mono', monospace; }
+.chip.dim { background: var(--surface-2); color: var(--muted); }
+
+/* ---------- chat ---------- */
+.msg { display: flex; margin: 0 0 16px; }
+.msg .av { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-weight: 700; font-size: 12px; flex: none; }
+.msg.user .av { background: var(--accent); color: #fff; margin-left: 10px; }
+.msg.assistant .av { background: var(--accent-soft); color: var(--accent); margin-right: 10px; }
+.msg.user { flex-direction: row-reverse; }
+.bubble { max-width: 82%; padding: 11px 15px; border-radius: var(--radius); font-size: 14.5px; }
+.msg.user .bubble { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; border-bottom-right-radius: 4px; }
+.msg.assistant .bubble { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; box-shadow: var(--shadow); }
+.bubble p { margin: 7px 0; }
+.bubble ul, .bubble ol { margin: 7px 0; padding-left: 22px; }
+.bubble a { color: inherit; }
+.typing { display: inline-flex; gap: 4px; }
+.typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: bly 1.2s infinite; }
+.typing i:nth-child(2){ animation-delay:.2s } .typing i:nth-child(3){ animation-delay:.4s }
+@keyframes bly { 0%,100%{opacity:.25; transform:translateY(0)} 50%{opacity:1; transform:translateY(-3px)} }
+
+/* ---------- tool cards ---------- */
+.toolcard { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin: 0 42px 12px; font-size: 13px; overflow: hidden; animation: rise .25s ease; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+.toolcard .head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; user-select: none; }
+.toolcard .head .o { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); flex: none; }
+.toolcard .head .name { font-family: 'JetBrains Mono', monospace; color: var(--text); font-size: 12.5px; }
+.toolcard .head .meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+.toolcard .body { display: none; border-top: 1px solid var(--border); padding: 10px 12px; }
+.toolcard.open .body { display: block; }
+.toolcard pre { background: var(--surface-2); border-radius: 8px; padding: 8px 10px; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; white-space: pre-wrap; word-break: break-word; margin: 4px 0; max-height: 220px; overflow: auto; }
+.toolcard dt { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px; margin-top: 8px; }
+
+/* ---------- flashcard deck ---------- */
+.deck { margin: 2px 42px 18px; perspective: 1200px; }
+.deckhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12.5px; color: var(--muted); }
+.deckhead b { color: var(--accent); font-family: 'JetBrains Mono', monospace; }
+.deckstage { position: relative; height: 210px; }
+.card { position: absolute; inset: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow); padding: 16px 18px; display: flex; flex-direction: column; transform-origin: left center; opacity: 0; pointer-events: none; transition: transform .5s cubic-bezier(.22,.68,.35,1), opacity .35s; }
+.card.show { opacity: 1; pointer-events: auto; transform: rotateY(0) translateX(0); }
+/* Hover tilts the flashcard into 3D space and lifts it */
+.card.show:hover { transform: rotateY(-6deg) translateY(-5px) scale(1.015); box-shadow: 0 24px 42px -18px rgba(79,70,229,.45); }
+.card.leaving { opacity: 0; transform: translateX(-46%) rotateY(-28deg); }
+.card.entering { opacity: 0; transform: translateX(46%) rotateY(26deg); }
+.card .src { position: absolute; top: 12px; right: 14px; font-size: 10.5px; font-family: 'JetBrains Mono', monospace; color: var(--muted); border: 1px solid var(--border); padding: 2px 8px; border-radius: 999px; background: var(--surface-2); }
+.card h3 { margin: 2px 0 2px; font-size: 16.5px; font-weight: 700; line-height: 1.3; padding-right: 70px; }
+.card .co { color: var(--muted); font-size: 13.5px; margin-bottom: 8px; }
+.card .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.card .tag { font-size: 11px; border-radius: 999px; padding: 3px 9px; background: var(--surface-2); color: var(--muted); }
+.card .tag.loc { background: var(--accent-soft); color: var(--accent); }
+.card .tag.sal { background: rgba(21,128,61,.1); color: var(--ok); }
+.card .actions { margin-top: auto; display: flex; gap: 8px; }
+.btnglow { position: relative; overflow: hidden; flex: 1; border: 0; border-radius: 10px; padding: 9px 0; font-weight: 700; font-size: 13.5px; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); text-align: center; text-decoration: none; display: inline-block; transition: transform .18s cubic-bezier(.22,.68,.35,1), box-shadow .18s; }
+/* gradient sheen sweeps across the button on hover */
+.btnglow::after { content: ""; position: absolute; top: 0; left: -120%; width: 55%; height: 100%; background: linear-gradient(115deg, transparent, rgba(255,255,255,.5), transparent); transform: skewX(-20deg); transition: left .45s ease; }
+.btnglow:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 12px 24px -10px var(--accent); }
+.btnglow:hover::after { left: 140%; }
+.btnglow:active { transform: translateY(0) scale(.98); }
+.decknav { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 10px; }
+.decknav button { border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: 9px; width: 30px; height: 30px; font-size: 14px; transition: all .18s cubic-bezier(.22,.68,.35,1); }
+.decknav button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 6px 12px -7px var(--accent); }
+.decknav button:active:not(:disabled) { transform: translateY(0) scale(.9); }
+.decknav button:disabled { opacity: .4; }
+.dots { display: flex; gap: 5px; }
+.dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--border); transition: all .25s; }
+.dots i.on { background: var(--accent); width: 16px; border-radius: 4px; }
+.deckcount { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--muted); }
+
+/* Ghost variant of .btnglow — the per-card "LaTeX resume" action. */
+.btnglow.ghost { flex: 0 0 auto; padding: 9px 13px; font-size: 12px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+.btnglow.ghost:hover { border-color: var(--accent); color: var(--accent); box-shadow: 0 12px 24px -12px var(--accent); transform: translateY(-2px) scale(1.02); }
+
+/* ---------- LaTeX resume modal ---------- */
+.rmodal { position: fixed; inset: 0; z-index: 55; display: none; align-items: center; justify-content: center; padding: 18px; }
+.rmodal.show { display: flex; }
+.rmodal .rbg { position: absolute; inset: 0; background: rgba(10,14,26,.45); }
+.rmodal .wrap { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 30px 60px -24px rgba(0,0,0,.5); width: min(760px, 100%); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+.rmodal .rhead { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.rmodal .rhead h2 { font-size: 15.5px; margin: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rmodal .rhead .meta { color: var(--muted); font-size: 12px; flex: none; }
+.rmodal .rtabs { display: flex; gap: 6px; padding: 10px 16px 0; }
+.rmodal .rtab { border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: 9px 9px 0 0; padding: 7px 14px; font-size: 12.5px; font-weight: 600; transition: color .15s, border-color .15s; }
+.rmodal .rtab:hover { color: var(--accent); }
+.rmodal .rtab.on { color: var(--accent); border-color: var(--accent); border-bottom-color: var(--surface); }
+.rmodal .rbody { flex: 1; overflow-y: auto; padding: 16px; background: var(--surface-2); min-height: 220px; }
+#rBodyTex { margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.rmodal .rfoot { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface); }
+.rmodal .rdesc { font-size: 12px; color: var(--muted); flex: 1; }
+
+/* Rendered-preview styling (mirrors the ATS LaTeX layout, no tables). */
+.resume-preview { background: #fff; color: #16202e; border-radius: 6px; box-shadow: 0 6px 18px -8px rgba(0,0,0,.28); padding: 26px 30px; font-family: Georgia, "Times New Roman", serif; font-size: 13px; line-height: 1.5; max-width: 640px; margin: 0 auto; }
+.resume-preview .rh-name { text-align: center; font-size: 26px; font-weight: 700; letter-spacing: .5px; margin-bottom: 3px; }
+.resume-preview .rh-center { text-align: center; margin: 2px 0; font-size: 12.5px; color: inherit; }
+.resume-preview h2 { color: #1F4E79; font-size: 14.5px; border-bottom: 2px solid #1F4E79; padding-bottom: 2px; margin: 15px 0 6px; }
+.resume-preview h2:first-of-type { margin-top: 10px; }
+.resume-preview .rh-h { margin: 8px 0 2px; }
+.resume-preview .rh-row { display: flex; justify-content: space-between; gap: 14px; }
+.resume-preview .rh-row em { font-style: italic; }
+.resume-preview .rh-r { white-space: nowrap; }
+.resume-preview ul { margin: 4px 0 8px; padding-left: 20px; }
+.resume-preview li { margin-bottom: 3px; }
+.resume-preview a { color: #1F4E79; }
+
+/* ---------- error banner ---------- */
+.banner { display: none; margin: 0 0 14px; gap: 12px; align-items: flex-start; background: #fdf1f1; border: 1px solid #f3c3c3; color: var(--danger); border-radius: 12px; padding: 12px 14px; font-size: 14px; }
+[data-theme="dark"] .banner { background: rgba(248,113,113,.08); border-color: rgba(248,113,113,.3); }
+.banner.show { display: flex; }
+.banner .bmsg { flex: 1; word-break: break-word; }
+.banner .bmsg b { display: block; margin-bottom: 2px; }
+
+/* ---------- starter + composer ---------- */
+.starters { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 2px; }
+.starter { border: 1px dashed var(--border); background: var(--surface); color: var(--muted); border-radius: 999px; padding: 6px 13px; font-size: 13px; transition: all .18s cubic-bezier(.22,.68,.35,1); }
+.starter:hover { color: var(--accent); border-color: var(--accent); border-style: solid; transform: translateY(-2px); box-shadow: 0 6px 14px -8px var(--accent); }
+.composer { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px; margin-top: 8px; }
+.composer textarea { flex: 1; border: 0; outline: 0; background: transparent; resize: none; max-height: 140px; font-size: 15px; padding: 4px 2px; display: block; }
+.sendbtn { position: relative; overflow: hidden; border: 0; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; border-radius: 10px; width: 38px; height: 38px; flex: none; font-size: 16px; transition: transform .18s cubic-bezier(.22,.68,.35,1), box-shadow .18s; }
+.sendbtn::after { content: ""; position: absolute; top: 0; left: -120%; width: 55%; height: 100%; background: linear-gradient(115deg, transparent, rgba(255,255,255,.5), transparent); transform: skewX(-20deg); transition: left .4s ease; }
+.sendbtn:not(:disabled):hover { transform: translateY(-2px) scale(1.04); box-shadow: 0 8px 18px -8px var(--accent); }
+.sendbtn:not(:disabled):hover::after { left: 140%; }
+.sendbtn:not(:disabled):active { transform: translateY(0) scale(.95); }
+.sendbtn:disabled { opacity: .5; cursor: not-allowed; }
+.hint { text-align: center; font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+
+/* ---------- drawers ---------- */
+.overlay { position: fixed; inset: 0; background: rgba(10,14,26,.35); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 40; }
+.overlay.show { opacity: 1; pointer-events: auto; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(430px, 94vw); background: var(--surface); border-left: 1px solid var(--border); transform: translateX(105%); transition: transform .22s ease; z-index: 50; display: flex; flex-direction: column; box-shadow: -18px 0 40px -20px rgba(0,0,0,.35); }
+.drawer.show { transform: translateX(0); }
+.drawer .dhead { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: 1px solid var(--border); }
+.drawer .dhead h2 { font-size: 16px; margin: 0; flex: 1; }
+.drawer .dbody { flex: 1; overflow-y: auto; padding: 16px 18px; }
+.drawer .dfoot { padding: 14px 18px; border-top: 1px solid var(--border); }
+.drawer label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin: 16px 0 6px; }
+.drawer input[type=text], .drawer input[type=number], .drawer textarea { width: 100%; border: 1px solid var(--border); background: var(--surface-2); border-radius: 9px; padding: 8px 10px; outline: none; }
+.drawer input:focus, .drawer textarea:focus { border-color: var(--accent); }
+.drop { border: 1.5px dashed var(--border); border-radius: 10px; padding: 14px; text-align: center; color: var(--muted); font-size: 13px; cursor: pointer; transition: all .15s; }
+.drop:hover, .drop.drag { border-color: var(--accent); color: var(--accent); }
+.chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+.chips .chip.editable { gap: 5px; align-items: center; display: inline-flex; }
+.chips .chip .x { opacity: .55; background: none; border: 0; color: inherit; padding: 0; font-size: 13px; line-height: 1; }
+.chips .chip .x:hover { opacity: 1; }
+.addrow { display: flex; gap: 6px; margin-top: 8px; }
+.addrow input { flex: 1; border: 1px solid var(--border); background: var(--surface-2); border-radius: 9px; padding: 7px 10px; outline: none; }
+.srole { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.srole button { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 9px; padding: 6px 10px; font-size: 12.5px; transition: all .18s cubic-bezier(.22,.68,.35,1); text-align: left; max-width: 100%; }
+.srole button:hover { border-color: var(--accent); color: var(--accent); transform: translateY(-2px); box-shadow: 0 6px 14px -8px var(--accent); }
+.srole button small { display: block; color: var(--muted); font-size: 10.5px; font-weight: 400; }
+.chkrow { display: flex; align-items: center; gap: 9px; font-size: 13.5px; padding: 6px 0; }
+.chkrow input { width: 16px; height: 16px; accent-color: var(--accent); }
+.btn { border: 0; border-radius: 10px; padding: 9px 14px; font-size: 13.5px; font-weight: 600; transition: transform .18s cubic-bezier(.22,.68,.35,1), box-shadow .18s, filter .18s; }
+.btn.primary { background: var(--accent); color: #fff; width: 100%; }
+.btn.primary:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 20px -10px var(--accent); filter: brightness(1.06); }
+.btn.ghost { background: var(--surface-2); color: var(--text); }
+.btn.ghost:hover:not(:disabled) { transform: translateY(-2px); }
+.btn.small { padding: 5px 10px; font-size: 12px; border-radius: 8px; }
+.btn:active:not(:disabled) { transform: translateY(0) scale(.97); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.logrow { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; font-size: 13px; }
+.logrow .lhead { display: flex; align-items: center; gap: 8px; }
+.logrow .lm { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.logrow .lt { color: var(--muted); font-size: 11.5px; font-family: 'JetBrains Mono', monospace; }
+.badge { font-size: 10.5px; border-radius: 999px; padding: 2px 8px; }
+.badge.ok { background: rgba(21,128,61,.12); color: var(--ok); }
+.badge.err { background: rgba(185,28,28,.12); color: var(--danger); }
+.logrow .lbody { display: none; margin-top: 8px; color: var(--muted); }
+.logrow.open .lbody { display: block; }
+.logrow pre { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; background: var(--surface-2); border-radius: 8px; padding: 7px 9px; white-space: pre-wrap; word-break: break-word; }
+.logrow .actions { display: flex; gap: 8px; margin-top: 8px; }
+.toast { position: fixed; bottom: 22px; left: 50%; transform: translate(-50%, 24px); background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 10px; font-size: 13.5px; opacity: 0; pointer-events: none; transition: all .25s; z-index: 60; }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.empty { text-align: center; color: var(--muted); font-size: 13px; padding: 26px 0; }
+.spin { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%; animation: rot .8s linear infinite; vertical-align: -1px; }
+@keyframes rot { to { transform: rotate(360deg); } }
+.section-title { font-size: 13px; font-weight: 700; margin: 18px 0 4px; }
+.sub { font-size: 12.5px; color: var(--muted); }
+code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><span class="dot"></span>JobScope</div>
+  <div class="spacer"></div>
+  <div id="status" class="status"><span class="pulse"></span><span id="statusText">Connecting…</span><span class="modeltag" id="modelTag"></span></div>
+  <button class="iconbtn" id="themeBtn" title="Toggle theme">Dark</button>
+  <button class="iconbtn" id="logsBtn" title="Run logs">History</button>
+  <button class="iconbtn" id="settingsBtn" title="Role, skills, model">Settings</button>
+</header>
+
+<div class="app">
+  <div class="circuit">
+    <svg viewBox="0 0 100 40" preserveAspectRatio="none">
+      <path id="pline1" class="pline" d="M 4 20 H 25"></path>
+      <path id="pline2" class="pline" d="M 25 20 H 50"></path>
+      <path id="pline3" class="pline" d="M 50 20 H 75"></path>
+      <path id="pline4" class="pline" d="M 75 20 H 96"></path>
+    </svg>
+    <div class="nodes" id="nodes">
+      <div class="node" data-node="agent"><div class="pill">◈</div><div class="lbl">Agent</div>
+        <div class="pop"><b>Agent</b><span class="ptext">waiting for a run</span></div></div>
+      <div class="node" data-node="boards"><div class="pill">⌕</div><div class="lbl">Job boards</div>
+        <div class="pop"><b>Job boards</b><span class="ptext">Indeed · LinkedIn · Naukri · Glassdoor · Foundit · Internshala</span></div></div>
+      <div class="node" data-node="router"><div class="pill">⇄</div><div class="lbl">Router</div>
+        <div class="pop"><b>Router</b><span class="ptext">decides: summarize now, or fall back to Gmail</span></div></div>
+      <div class="node" data-node="gmail"><div class="pill">✉</div><div class="lbl">Gmail</div>
+        <div class="pop"><b>Gmail fallback</b><span class="ptext">job-alert emails when boards are blocked</span></div></div>
+      <div class="node" data-node="report"><div class="pill">◎</div><div class="lbl">Report</div>
+        <div class="pop"><b>Report</b><span class="ptext">the final match list</span></div></div>
+    </div>
+  </div>
+  <div class="skillsbar"><span class="label">Search keywords</span><span id="skillChips"></span></div>
+
+  <main class="chat" id="chat"></main>
+
+  <div class="starters" id="starters">
+    <button class="starter">Find remote jobs matching my skills</button>
+    <button class="starter">Hunt across all job boards</button>
+  </div>
+
+  <div class="banner" id="banner">
+    <div class="bmsg"><b>Run failed</b><span id="bannerMsg">–</span></div>
+    <button class="btn ghost small" id="retryBtn">Retry</button>
+    <button class="btn ghost small" id="restartBtn">Restart agent</button>
+    <button class="btn ghost small" id="dismissBtn">Dismiss</button>
+  </div>
+
+  <div class="composer">
+    <textarea id="input" rows="1" placeholder="Ask the agent to hunt for jobs…"></textarea>
+    <button class="sendbtn" id="send" title="Send">➤</button>
+  </div>
+  <div class="hint">Enter to send · Shift+Enter for a new line · Upload your resume in Settings to suggest roles &amp; search by your skills</div>
+</div>
+
+<div class="overlay" id="overlay"></div>
+
+<!-- Settings / Resume drawer -->
+<aside class="drawer" id="settingsDrawer">
+  <div class="dhead"><h2>Job profile</h2><button class="iconbtn" data-close>✕</button></div>
+  <div class="dbody">
+    <div class="section-title">Suggested from your resume</div>
+    <div class="srole" id="suggestions"></div>
+    <div class="sub" id="inferredRow"></div>
+
+    <div class="section-title">Target role</div>
+    <input type="text" id="cfgRole" placeholder="e.g. Data Analyst / entry-level, remote">
+    <div class="sub">Skills drive the actual search terms; this keeps the hunt on-target.</div>
+
+    <label>Skills → search keywords</label>
+    <div class="drop" id="dropResume">Upload resume / CV (.pdf, .txt, .md) — skills, role suggestions &amp; location are extracted automatically</div>
+    <input type="file" id="resumeFile" hidden accept=".pdf,.txt,.md">
+    <div class="chips" id="skillChipsEdit"></div>
+    <div class="addrow"><input type="text" id="skillAdd" placeholder="Add a skill…"><button class="btn ghost" id="skillAddBtn">Add</button></div>
+    <div class="sub" id="resumeState"></div>
+
+    <label>Language model (Ollama)</label>
+    <input type="text" id="cfgModel" placeholder="llama3.1">
+    <div class="chkrow"><input type="checkbox" id="cfgRemote"><span>Remote jobs <b>outside India</b> only</span></div>
+    <label>Options</label>
+    <div style="display:flex;gap:10px">
+      <input type="number" id="cfgDays" placeholder="60" title="Search window (days)">
+      <input type="number" id="cfgMax" placeholder="10" title="Max results">
+    </div>
+    <div class="sub" style="margin-top:4px">days back · max results — restarting applies both.</div>
+  </div>
+  <div class="dfoot">
+    <button class="btn primary" id="saveCfg">Save &amp; restart agent</button>
+    <div class="sub" style="text-align:center;margin-top:8px" id="cfgState"></div>
+  </div>
+</aside>
+
+<!-- Logs drawer -->
+<aside class="drawer" id="logsDrawer">
+  <div class="dhead"><h2>Run logs</h2><button class="iconbtn" id="refreshLogs" title="Refresh">↻</button><button class="iconbtn" data-close>✕</button></div>
+  <div class="dbody" id="logsBody"><div class="empty">No runs yet.</div></div>
+  <div class="dfoot"><div class="sub">Errors are also saved to <code>logs/runs-*.jsonl</code> and <code>logs/errors.jsonl</code> on disk.</div></div>
+</aside>
+
+<!-- LaTeX resume modal -->
+<div class="rmodal" id="resumeModal">
+  <div class="rbg" id="rModalBg"></div>
+  <div class="wrap">
+    <div class="rhead">
+      <h2 id="rModalTitle">Resume</h2>
+      <span class="meta" id="rModalMeta"></span>
+      <button class="iconbtn" id="rModalClose" title="Close">✕</button>
+    </div>
+    <div class="rtabs">
+      <button class="rtab on" id="rtabPv">Preview</button>
+      <button class="rtab" id="rtabTex">LaTeX source</button>
+    </div>
+    <div class="rbody" id="rBodyPreview"><div class="empty">Building LaTeX resume…</div></div>
+    <pre class="rbody" id="rBodyTex" style="display:none"></pre>
+    <div class="rfoot">
+      <span class="rdesc" id="rDesc"></span>
+      <button class="btn ghost" id="rCopy" title="Copy the .tex to your clipboard">Copy LaTeX</button>
+      <button class="btn primary" id="rDownload" style="width:auto" title="Save the .tex file">Download .tex</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const chat = $("chat"), input = $("input");
+
+const state = { settings: {}, busy: false, lastMsg: null,
+                theme: localStorage.getItem("js-theme") || "light",
+                deck: [], deckIdx: 0 };
+document.documentElement.dataset.theme = state.theme;
+$("themeBtn").textContent = state.theme === "light" ? "Dark" : "Light";
+
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2600); }
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
+function fmtTime(ts) { return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+
+let M;
+const markLazy = () => {
+  if (window.marked) { M = { parse: txt => marked.parse(txt) }; }
+  else { M = { parse: md => esc(md).replace(/^### (.*)$/gm, "<h4>$1</h4>").replace(/\*\*(.*?)\*\*/g, "<b>$1</b>").replace(/^\s*[*-] (.*)$/gm, "<li>$1</li>").replace(/(?:^<li>.*<\/li>$)/gm, m => "<ul>" + m + "</ul>").replace(/\n/g, " ").replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>') }; }
+};
+markLazy();
+
+/* ---------- circuit pipeline ---------- */
+const NODEORDER = ["agent", "boards", "router", "gmail", "report"];
+const PLINES = ["pline1", "pline2", "pline3", "pline4"];
+
+function circReset() {
+  document.querySelectorAll(".node").forEach(n => n.classList.remove("live", "done", "fail"));
+  PLINES.forEach(p => $(p).classList.remove("on"));
+}
+function circ(node, cls, text) {
+  const el = document.querySelector(`.node[data-node="${node}"]`);
+  if (el) {
+    el.classList.remove("live", "done", "fail");
+    el.classList.add(cls);
+    if (text != null) el.querySelector(".ptext").textContent = text;
+  }
+  paintLines();
+}
+function paintLines() {
+  // connector n is "live" once node[n] (0-based) has started and node[n+1] is pending-up-to
+  for (let i = 1; i < NODEORDER.length; i++) {
+    const prev = document.querySelector(`.node[data-node="${NODEORDER[i-1]}"]`);
+    if (prev && (prev.classList.contains("live") || prev.classList.contains("done"))) $(PLINES[i-1]).classList.add("on");
+    else $(PLINES[i-1]).classList.remove("on");
+  }
+}
+
+/* ---------- chat ---------- */
+function appendMsg(kind, text, typing) {
+  const m = document.createElement("div");
+  m.className = "msg " + kind;
+  const av = document.createElement("div"); av.className = "av"; av.textContent = kind === "user" ? "You" : "JS";
+  const b = document.createElement("div"); b.className = "bubble";
+  if (typing) { b.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>'; b._raw = ""; }
+  else b.innerHTML = markdown(text);
+  m.appendChild(av); m.appendChild(b);
+  chat.appendChild(m);
+  chat.scrollTop = chat.scrollHeight;
+  return b;
+}
+function markdown(t) { try { return M.parse(t || ""); } catch { return esc(t); } }
+
+/* ---------- flashcard deck ---------- */
+function renderDeck(jobs) {
+  if (!jobs || !jobs.length) return;
+  state.deck = jobs; state.deckIdx = 0;
+  const slot = document.querySelector(".deck");
+  if (slot) slot.remove();
+  const d = document.createElement("div"); d.className = "deck";
+  d.innerHTML =
+    '<div class="deckhead"><b>' + jobs.length + '</b>&nbsp;jobs found&nbsp;&middot;&nbsp;<span class="deckcount" id="deckCount">1 / ' + jobs.length + '</span></div>' +
+    '<div class="deckstage" id="deckStage"></div>' +
+    '<div class="decknav"><button id="deckPrev" title="Previous">‹</button><div class="dots" id="deckDots"></div><button id="deckNext" title="Next">›</button></div>';
+  chat.insertBefore(d, activeBubble ? activeBubble.closest(".msg") : chat.lastChild);
+  showCard(0);
+  $("deckPrev").onclick = () => go(-1);
+  $("deckNext").onclick = () => go(1);
+  d.addEventListener("keydown", e => { if (e.key === "ArrowLeft") go(-1); if (e.key === "ArrowRight") go(1); });
+  d.tabIndex = 0;
+  // swipe
+  let x0 = null;
+  d.addEventListener("touchstart", e => x0 = e.touches[0].clientX, { passive: true });
+  d.addEventListener("touchend", e => { if (x0 != null) { const dx = e.changedTouches[0].clientX - x0; if (Math.abs(dx) > 40) go(dx < 0 ? 1 : -1); x0 = null; } }, { passive: true });
+  chat.scrollTop = chat.scrollHeight;
+}
+function showCard(i) {
+  const stage = $("deckStage"); if (!stage) return;
+  stage.innerHTML = "";
+  const j = state.deck[i]; if (!j) return;
+  const card = document.createElement("div");
+  card.className = "card show";
+  card.innerHTML =
+    '<span class="src">' + esc(j.source || "job board") + '</span>' +
+    '<h3>' + esc(j.title || "Job") + '</h3>' +
+    '<div class="co">' + esc(j.company || "") + '</div>' +
+    '<div class="tags">' +
+      (j.location ? '<span class="tag loc">◉ ' + esc(j.location) + '</span>' : "") +
+      (j.salary ? '<span class="tag sal">' + esc(j.salary) + '</span>' : "") +
+    '</div>' +
+    '<div class="actions"><a class="btnglow" href="' + esc(j.link || "#") + '" target="_blank" rel="noopener" tabindex="0">Apply now</a>' +
+    '<button class="btnglow ghost resumebtn" title="Build a LaTeX resume tailored to this posting">LaTeX resume</button></div>';
+  stage.appendChild(card);
+  card.querySelector(".resumebtn").onclick = () => openResume(j);
+  $("deckCount").textContent = (i + 1) + " / " + state.deck.length;
+  const dots = $("deckDots"); dots.innerHTML = "";
+  state.deck.forEach((_, k) => {
+    const di = document.createElement("i"); if (k === i) di.className = "on"; dots.appendChild(di);
+  });
+  $("deckPrev").disabled = i <= 0; $("deckNext").disabled = i >= state.deck.length - 1;
+  stage.scrollIntoView({ block: "nearest" });
+}
+function go(dir) { const n = state.deckIdx + dir; if (n < 0 || n >= state.deck.length) return; state.deckIdx = n; showCard(n); }
+
+/* ---------- LaTeX resume modal ---------- */
+let _rTex = "", _rFile = "Resume.tex";
+function closeResume() { $("resumeModal").classList.remove("show"); document.body.style.overflow = ""; }
+$("rModalBg").onclick = closeResume;
+$("rModalClose").onclick = closeResume;
+document.addEventListener("keydown", e => { if (e.key === "Escape" && $("resumeModal").classList.contains("show")) closeResume(); });
+
+function switchRTab(w) {
+  const pv = w === "pv";
+  $("rBodyPreview").style.display = pv ? "" : "none";
+  $("rBodyTex").style.display = pv ? "none" : "";
+  $("rtabPv").classList.toggle("on", pv);
+  $("rtabTex").classList.toggle("on", !pv);
+  if (!pv) $("rBodyTex").textContent = _rTex;
+}
+$("rtabPv").onclick = () => switchRTab("pv");
+$("rtabTex").onclick = () => switchRTab("tex");
+
+$("rCopy").onclick = async () => {
+  if (!_rTex) { toast("Nothing to copy yet"); return; }
+  try { await navigator.clipboard.writeText(_rTex); toast("LaTeX source copied"); }
+  catch { const ta = document.createElement("textarea"); ta.value = _rTex; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); toast("LaTeX source copied"); }
+};
+$("rDownload").onclick = () => {
+  if (!_rTex) { toast("Nothing to download yet"); return; }
+  const blob = new Blob([_rTex], { type: "application/x-tex" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = _rFile;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast("Downloading " + a.download);
+};
+
+function openResume(job) {
+  $("rModalTitle").textContent = (job.title || "Job") + (job.company ? " \u2014 " + job.company : "");
+  $("rModalMeta").textContent = job.location || job.source || "";
+  $("rDesc").textContent = "";
+  _rTex = ""; _rFile = "Resume.tex";
+  $("rBodyPreview").style.display = "";
+  $("rBodyPreview").innerHTML = '<div class="empty"><span class="spin"></span> Building LaTeX resume — fetching posting &amp; ranking skills…</div>';
+  $("rBodyTex").textContent = "";
+  switchRTab("pv");
+  $("resumeModal").classList.add("show");
+  document.body.style.overflow = "hidden";
+  generateResume(job);
+}
+
+async function generateResume(job) {
+  try {
+    const res = await fetch("/api/resume/gen", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: job.title || "", company: job.company || "", location: job.location || "", link: job.link || "", source: job.source || "" }) });
+    const r = await res.json();
+    if (!r.ok) {
+      $("rBodyPreview").innerHTML = '<div class="empty">Failed to build resume — ' + esc(r.error || "server error") + "</div>";
+      $("rDesc").textContent = r.error || "Generation failed";
+      return;
+    }
+    _rTex = r.tex || ""; _rFile = r.filename || "Resume.tex";
+    $("rBodyPreview").innerHTML = r.preview
+      ? '<div class="resume-preview">' + r.preview + "</div>"
+      : '<div class="empty">Preview unavailable — open the LaTeX tab.</div>';
+    $("rBodyTex").textContent = _rTex;
+    $("rDesc").textContent = (r.desc_fetched ? "Tailored from the live posting description." : "Posting page blocked this network — tailored from role + skills.") + " Compiles with pdflatex.";
+  } catch (e) {
+    $("rBodyPreview").innerHTML = '<div class="empty">Request failed — ' + esc(e.message) + "</div>";
+    $("rDesc").textContent = e.message;
+  }
+}
+
+/* ---------- SSE / run ---------- */
+async function sendMessage(text) {
+  if (state.busy) return;
+  state.busy = true; state.lastMsg = text;
+  $("send").disabled = true; $("status").className = "status busy"; $("statusText").textContent = "Hunting…";
+  $("banner").classList.remove("show");
+  circReset();
+  circ("agent", "live", "starting the hunt");
+
+  appendMsg("user", text);
+  const node = appendMsg("assistant", "", true);
+  activeBubble = activeCard = null;
+  activeBubble = node;
+  let runFailed = null;
+
+  try {
+    const res = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }) });
+    if (!res.ok) throw new Error("Server returned " + res.status);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        handleFrame(frame.trim());
+      }
+    }
+  } catch (e) { runFailed = e.message || String(e); }
+
+  finalize(node, runFailed);
+}
+
+let activeBubble = null, activeCard = null;
+
+function emitFrame(fnLine) {
+  if (!fnLine.startsWith("data:")) return;
+  let obj; try { obj = JSON.parse(fnLine.slice(5).trim()); } catch { return; }
+  switch (obj.type) {
+    case "token":
+      if (activeBubble) { activeBubble._raw = (activeBubble._raw || "") + obj.text; activeBubble.innerHTML = markdown(activeBubble._raw); }
+      break;
+    case "tool_start":
+      if (/job_boards|scrape/.test(obj.name)) { circ("boards", "live", "searching 6 boards: " + (obj.args || "")); }
+      if (/job_emails|gmail/.test(obj.name)) { circ("gmail", "live", "reading job-alert emails"); }
+      addToolCard(obj.name, obj.args);
+      break;
+    case "tool_end":
+      if (activeCard) { activeCard.querySelector(".body pre").textContent = obj.output; activeCard.querySelector(".meta").textContent = "done"; }
+      if (/job_boards|scrape/.test(obj.name)) {
+        const blocked = /403|blocked|captcha|js wall|bot wall|no results/i.test(obj.output || "");
+        circ("boards", blocked ? "fail" : "done", blocked ? "all boards blocked — router will fall back" : "boards returned listings");
+        if (blocked) circ("router", "live", "board search blocked — routing to Gmail fallback");
+        else circ("router", "done", "board search OK — summarizing");
+      }
+      if (/job_emails|gmail/.test(obj.name)) circ("gmail", "done", "job alerts read");
+      break;
+    case "fallback":
+      circ("router", "done", "routed to Gmail fallback");
+      circ("gmail", "live", "fetching job-alert emails");
+      break;
+    case "jobs":
+      renderDeck(obj.payload && obj.payload.jobs);
+      break;
+    case "status":
+      if (obj.stage === "done") { circ("gmail", "done", ""); circ("report", "done", "final match list ready"); }
+      break;
+    case "error":
+      $("bannerMsg").textContent = obj.message; $("banner").classList.add("show");
+      circ("report", "fail", "run failed: " + (obj.message || ""));
+      break;
+  }
+}
+function handleFrame(frame) { frame.split("\n").forEach(emitFrame); }
+
+function finalize(bubble, runFailed) {
+  const failed = !!runFailed || $("banner").classList.contains("show");
+  if (runFailed) { $("bannerMsg").textContent = runFailed; $("banner").classList.add("show"); }
+  if (bubble && !(bubble._raw || "").trim() && !failed) bubble.textContent = "_no response_";
+  state.busy = failed;
+  $("send").disabled = failed;
+  if (failed) { $("status").className = "status"; $("statusText").textContent = "Needs attention"; }
+  else { $("status").className = "status online"; $("statusText").textContent = "Ready"; loadLogs(); }
+}
+
+function addToolCard(name, args) {
+  const c = document.createElement("div");
+  c.className = "toolcard";
+  c.innerHTML = '<div class="head"><span class="o"></span><span class="name">' + esc(name) + '</span><span class="meta">working…</span></div>' +
+    '<div class="body"><dt>arguments</dt><pre>' + esc(args) + '</pre><dt>output</dt><pre></pre></div>';
+  c.querySelector(".head").onclick = () => c.classList.toggle("open");
+  chat.insertBefore(c, activeBubble ? activeBubble.closest(".msg") : null);
+  activeCard = c;
+  chat.scrollTop = chat.scrollHeight;
+}
+
+/* ---------- theme ---------- */
+$("themeBtn").onclick = () => {
+  state.theme = state.theme === "light" ? "dark" : "light";
+  document.documentElement.dataset.theme = state.theme;
+  localStorage.setItem("js-theme", state.theme);
+  $("themeBtn").textContent = state.theme === "light" ? "Dark" : "Light";
+};
+
+/* ---------- settings / resume / suggestions ---------- */
+function openDrawer(id) { $(id).classList.add("show"); $("overlay").classList.add("show"); }
+function closeDrawers() { document.querySelectorAll(".drawer").forEach(d => d.classList.remove("show")); $("overlay").classList.remove("show"); }
+$("overlay").onclick = closeDrawers;
+document.querySelectorAll("[data-close]").forEach(b => b.onclick = closeDrawers);
+$("settingsBtn").onclick = () => openDrawer("settingsDrawer");
+$("logsBtn").onclick = () => { openDrawer("logsDrawer"); loadLogs(); };
+
+async function loadConfig() {
+  try {
+    const r = await (await fetch("/api/config")).json();
+    state.settings = r;
+    $("cfgRole").value = r.target_role || "";
+    $("cfgModel").value = r.model || "";
+    $("cfgDays").value = r.days_back || 60;
+    $("cfgMax").value = r.max_results || 10;
+    $("cfgRemote").checked = r.remote_only !== false;
+    $("modelTag").textContent = r.model || "";
+    renderSuggestions(r.role_suggestions || []);
+    renderSkillChips(r.skills || []);
+    $("status").className = "status online"; $("statusText").textContent = "Ready";
+  } catch (e) { $("status").className = "status"; $("statusText").textContent = "Offline — is the server running?"; }
+}
+
+function renderSuggestions(list) {
+  const box = $("suggestions");
+  box.innerHTML = list.length ? "" : `<div class="sub">Upload your resume to get roles matched to your skills.</div>`;
+  const seen = new Set();
+  list.forEach((role, k) => {
+    if (seen.has(role)) return; seen.add(role);
+    const b = document.createElement("button");
+    b.innerHTML = esc(role.split(" / ")[0]) + (k === 0 ? '<small>★ best match</small>' : "<small></small>");
+    b.onclick = () => { $("cfgRole").value = role; toast("Role set: " + role.split(" / ")[0]); };
+    box.appendChild(b);
+  });
+}
+
+function renderSkillChips(list) {
+  const box = $("skillChipsEdit"); box.innerHTML = "";
+  const bar = $("skillChips"); bar.innerHTML = "";
+  const L = list || [];
+  if (!L.length) bar.innerHTML = '<span class="chip dim">using role title</span>';
+  L.forEach(s => {
+    const cb = document.createElement("span"); cb.className = "chip"; cb.textContent = s;
+    bar.appendChild(cb); appendChip(s);
+  });
+}
+function currentSkills() { return [...$("skillChipsEdit").querySelectorAll(".chip.editable")].map(c => c.childNodes[0].textContent.trim()).filter(Boolean); }
+function appendChip(v) {
+  const box = $("skillChipsEdit");
+  const c = document.createElement("span"); c.className = "chip editable"; c.textContent = v;
+  const x = document.createElement("button"); x.className = "x"; x.textContent = "✕";
+  x.onclick = () => c.remove();
+  c.appendChild(x); box.appendChild(c);
+}
+$("skillAddBtn").onclick = () => { const v = $("skillAdd").value.trim(); if (!v) return; appendChip(v); $("skillAdd").value = ""; };
+$("skillAdd").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("skillAddBtn").click(); } });
+
+const drop = $("dropResume"), fileInput = $("resumeFile");
+drop.onclick = () => fileInput.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("drag"); };
+drop.ondragleave = () => drop.classList.remove("drag");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("drag"); if (e.dataTransfer.files.length) uploadResume(e.dataTransfer.files[0]); };
+fileInput.onchange = () => { if (fileInput.files.length) uploadResume(fileInput.files[0]); };
+
+async function uploadResume(file) {
+  $("resumeState").innerHTML = '<span class="spin"></span> Reading resume, extracting skills, suggesting roles…';
+  try {
+    const fd = new FormData(); fd.append("file", file);
+    const r = await (await fetch("/api/resume", { method: "POST", body: fd })).json();
+    if (!r.ok) { $("resumeState").textContent = "⚠ " + r.error; return; }
+    renderSkillChips(r.skills);
+    renderSuggestions(r.suggestions && r.suggestions.map(s => s.role) || []);
+    $("cfgRole").value = r.target_role || $("cfgRole").value;
+    if (r.inferred) {
+      $("inferredRow").textContent = "📍 " + (r.inferred.location || "—") + (r.inferred.remote_only ? " · remote-only hunt enabled" : "");
+      if (r.inferred.remote_only !== undefined) $("cfgRemote").checked = !!r.inferred.remote_only;
+    }
+    $("cfgRemote").checked = true;
+    $("resumeState").textContent = "✔ " + r.skills.length + " skills · suggested roles ready — Save & restart to lock in.";
+    toast("Resume analyzed: " + r.skills.length + " skills");
+  } catch (e) { $("resumeState").textContent = "⚠ Upload failed: " + e.message; }
+}
+
+$("saveCfg").onclick = async () => {
+  $("cfgState").innerHTML = '<span class="spin"></span> Restarting agent…';
+  try {
+    const body = {
+      target_role: $("cfgRole").value, model: $("cfgModel").value,
+      days_back: Number($("cfgDays").value) || 60, max_results: Number($("cfgMax").value) || 10,
+      skills: currentSkills(), remote_only: $("cfgRemote").checked
+    };
+    const r = await (await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+    $("cfgState").textContent = "✔ Agent restarted · " + body.model + " · " + (r.skills.length || "role-title") + " keywords" + (r.remote_only ? " · remote" : "");
+    $("modelTag").textContent = r.model; renderSkillChips(r.skills); toast("Agent restarted");
+    setTimeout(() => { $("cfgState").textContent = ""; }, 4000);
+  } catch (e) { $("cfgState").textContent = "⚠ " + e.message; }
+};
+
+/* ---------- logs ---------- */
+async function loadLogs() {
+  try {
+    const r = await (await fetch("/api/logs")).json();
+    renderLogs(r.runs || [], r.errors || []);
+  } catch { }
+}
+function renderLogs(runs, errs) {
+  const box = $("logsBody");
+  if (!runs.length) { box.innerHTML = '<div class="empty">No runs yet on this server session.</div>'; return; }
+  box.innerHTML = "";
+  runs.forEach(run => {
+    const ok = run.status === "ok";
+    const row = document.createElement("div");
+    row.className = "logrow" + (ok ? "" : " open");
+    row.innerHTML =
+      '<div class="lhead"><span class="badge ' + (ok ? "ok" : "err") + '">' + (ok ? "ok" : "error") + '</span>' +
+      '<span class="lm">' + esc(run.message || "") + '</span>' +
+      '<span class="lt">' + (run.duration_s != null ? run.duration_s + "s" : "…") + '</span><span class="lt">' + fmtTime(run.ts) + '</span></div>' +
+      '<div class="lbody"><pre>' + esc(JSON.stringify({ tools: run.tools || [], duration_s: run.duration_s, jobs: run.jobs || 0, skills: run.skills || [], error: run.error }, null, 1)) + '</pre>' +
+      (ok ? "" : '<div class="actions"><button class="btn ghost small" data-retry="' + esc(run.message) + '">Retry</button></div>') + '</div>';
+    row.querySelector(".lhead").onclick = e => { if (e.target.closest("[data-retry]")) return; row.classList.toggle("open"); };
+    const rt = row.querySelector("[data-retry]");
+    if (rt) rt.onclick = e => { e.stopPropagation(); closeDrawers(); sendMessage(rt.dataset.retry || "hi"); };
+    box.appendChild(row);
+  });
+  if (errs.length) {
+    const h = document.createElement("div"); h.className = "section-title"; h.textContent = "System errors (" + errs.length + ")";
+    box.appendChild(h);
+    errs.slice(0, 5).forEach(er => {
+      const r = document.createElement("div"); r.className = "logrow";
+      r.innerHTML = '<div class="lhead"><span class="badge err">sys</span><span class="lm">' + esc(er.event || "error") + '</span><span class="lt">' + fmtTime(er.ts) + '</span></div>' +
+        '<div class="lbody open"><pre>' + esc(er.detail || er.exception || "") + '</pre></div>';
+      box.appendChild(r);
+    });
+  }
+}
+
+let retryMessage = null;
+$("retryBtn").onclick = () => { closeDrawers(); state.busy = false; $("banner").classList.remove("show"); sendMessage(retryMessage || state.lastMsg || "hi"); };
+$("dismissBtn").onclick = () => { $("banner").classList.remove("show"); $("status").className = "status online"; $("statusText").textContent = "Ready"; state.busy = false; $("send").disabled = false; };
+$("restartBtn").onclick = async () => { $("banner").classList.remove("show"); $("status").className = "status busy"; $("statusText").textContent = "Restarting…"; await $("saveCfg").onclick?.(); $("status").className = "status online"; $("statusText").textContent = "Ready"; toast("Agent restarted"); };
+
+/* ---------- composer ---------- */
+function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 140) + "px"; }
+input.addEventListener("input", autosize);
+input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } });
+$("send").onclick = () => submit();
+function submit() { const t = input.value.trim(); if (!t || state.busy) return; retryMessage = t; input.value = ""; autosize(); sendMessage(t); }
+document.querySelectorAll(".starter").forEach(b => b.onclick = () => { retryMessage = b.textContent; sendMessage(b.textContent); });
+
+/* ---------- init ---------- */
+loadConfig();
+</script>
+</body>
+</html>

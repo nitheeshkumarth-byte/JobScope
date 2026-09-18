@@ -1,0 +1,567 @@
+% ============================================================================
+%  JobScope — LaTeX project documentation
+%  Compile with:  pdflatex JobScope_Guide.tex   (run twice for the ToC)
+%  Packages required (all standard): tikz, listings, booktabs, hyperref,
+%  enumitem, geometry, xcolor, titlesec.
+% ============================================================================
+\documentclass[11pt,a4paper]{article}
+
+% ---- packages --------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amssymb}
+\usepackage[margin=2.6cm]{geometry}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shadows.blur}
+\usepackage{titlesec}
+
+% ---- colours (defined BEFORE hyperref so its colour options resolve) -------
+\definecolor{indigo}{HTML}{4F46E5}
+\definecolor{violet}{HTML}{7C3AED}
+\definecolor{surface}{HTML}{F1F5F9}
+\definecolor{codebg}{HTML}{0F172A}
+\definecolor{teal}{HTML}{0D9488}
+
+\usepackage[colorlinks=true,linkcolor=indigo!70,urlcolor=teal]{hyperref}
+
+% ---- code listing style ------------------------------------------------------
+\lstset{
+  basicstyle=\ttfamily\footnotesize\color{white},
+  backgroundcolor=\color{codebg},
+  commentstyle=\color{teal},
+  keywordstyle=\color{orange!90},
+  stringstyle=\color{green!70},
+  numbers=left, numberstyle=\tiny\color{gray}, numbersep=6pt,
+  frame=single, rulecolor=\color{gray!40}, breaklines=true,
+  showstringspaces=false, aboveskip=10pt, belowskip=10pt,
+}
+
+% ---- section styling ---------------------------------------------------------
+\titleformat{\section}{\Large\bfseries\color{indigo}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{violet}}{\thesubsection}{0.5em}{}
+\setlist{itemsep=2pt, topsep=4pt}
+
+% ---- handy commands ------------------------------------------------------------
+\newcommand{\file}[1]{\texttt{\small #1}}
+\newcommand{\tool}[1]{\texttt{#1}}
+\newcommand{\nodepill}[1]{{\footnotesize\bfseries\color{white}\colorbox{indigo}{#1}}}
+\newcommand{\link}[1]{\url{#1}}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+
+\begin{document}
+
+% ============================================================================
+%  TITLE PAGE
+% ============================================================================
+\begin{titlepage}
+  \centering
+  \vspace*{2.5cm}
+  {\color{indigo}\rule{\textwidth}{2pt}}
+
+  \vspace{0.9cm}
+  {\fontsize{34}{40}\selectfont\bfseries\color{indigo} JobScope}\\[6pt]
+  {\Large A LangGraph\,$\cdot$\,Ollama\,$\cdot$\,MCP job-hunting agent with a live dashboard}
+
+  \vspace{0.9cm}
+  {\color{indigo}\rule{\textwidth}{2pt}}
+
+  \vspace{2.6cm}
+  \begin{minipage}{0.78\textwidth}
+    \small
+    \textbf{Abstract.} JobScope is a locally-run job-hunting agent.
+    A LangGraph actor turns a target role and the user's resume skills into
+    keyword queries, dispatches them to several job boards through MCP tool
+    servers, and \emph{deterministically} falls back to Gmail job-alert
+    emails when the boards are bot-blocked. A FastAPI dashboard streams the
+    whole run to the browser as Server-Sent Events, renders listings as an
+    Apply-able flashcard deck, and animates a circuit-style pipeline with
+    per-step hover logs. Everything runs offline against a local LLM (Ollama);
+    no external API keys beyond a free GitHub PAT and a Gmail app password.
+  \end{minipage}
+
+  \vspace{3cm}
+  {\small \today \\[4pt]
+   Build target: Python 3.14, Windows / PowerShell \\[2pt]
+   File: \file{docs/JobScope\_Guide.tex}}
+\end{titlepage}
+
+\tableofcontents
+\clearpage
+
+% ============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+JobScope is a job-hunting assistant that the user runs \emph{entirely on their
+own machine}. It is the final result of a seven-step tutorial that grows, step
+by step, from a bare LangGraph state machine (\file{step1}) to a full agent
+with multiple MCP tool servers and a deterministic fallback
+(\file{agent.py}).
+
+\begin{itemize}
+  \item \textbf{Agent framework:} LangGraph (StateGraph, prebuilt \file{ToolNode},
+        \file{tools\_condition} router).
+  \item \textbf{Model:} Ollama running locally on \link{http://localhost:11434}
+        (default \tool{llama3.1}, configurable e.g.\ \tool{qwen2.5}). No paid
+        API.
+  \item \textbf{Tool protocol:} Model Context Protocol (MCP) over stdio — each
+        server is a Python subprocess that the agent's client launches.
+  \item \textbf{Job sources:} six job boards via a multi-board scraper, plus a
+        Gmail IMAP fallback.
+  \item \textbf{Constraint:} the user lives in India and only wants
+        \textbf{remote} jobs that are \textbf{not} based in India. This is
+        enforced as deterministic code, not prose.
+\end{itemize}
+
+% ============================================================================
+\section{Architecture overview}
+\label{sec:arch}
+
+\newcommand{\archnode}[4]{%
+  \node[draw=#2!70, fill=#2!12, rounded corners=4pt,
+        minimum width=#4, minimum height=2.1em, font=\small,
+        blur shadow={shadow blur steps=5}] (#1) {#3};
+}
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth, node distance=1.15cm and 1.6cm]
+  \archnode{dash}{indigo}{FastAPI dashboard\\\scriptsize (dashboard.py)}{3.4cm}
+  \archnode{agent}{violet}{LangGraph agent\\\scriptsize (agent.py)}{3.0cm}
+  \archnode{mcp}{teal}{MCP servers (stdio subprocesses)\\ \scriptsize github \textbar\ scraper \textbar\ gmail}{4.4cm}
+  \archnode{boards}{gray!70}{Job boards (Ind./Lkd/Naukri/GD/Foundit/IS/WWR)\\ \scriptsize WWR static $\Rightarrow$ works; rest blocked $\Rightarrow$ fallback}{4.6cm}
+  \archnode{mail}{gray!70}{Gmail IMAP job alerts}{3.2cm}
+  \archnode{ollama}{violet!60}{Ollama LLM\\ \scriptsize localhost:11434}{2.8cm}
+
+  \draw[->, thick, indigo] (dash) -- node[above,font=\scriptsize]{SSE on port 8000} (agent);
+  \draw[->, thick, violet] (agent) -- node[above,font=\scriptsize]{tool calls} (mcp);
+  \draw[->, thick, gray]   (mcp)  -- node[below,font=\scriptsize]{HTTPS} (boards);
+  \draw[->, thick, gray]   (mcp)  -- node[below,font=\scriptsize]{IMAPS:993} (mail);
+  \draw[->, thick, violet!60] (agent) -- node[right,font=\scriptsize]{prompt} (ollama);
+  \draw[->, thick, teal]   (boards) -- node[right,font=\scriptsize]{listings or 403/CAPTCHA} (mcp);
+  \draw[->, thick, teal]   (mail)   -- node[right,font=\scriptsize]{alert emails} (mcp);
+  \draw[->, dashed, thick, violet] (mcp) to[bend right=25] node[below,font=\scriptsize]{fallback route} (mail);
+\end{tikzpicture}
+\end{center}
+
+\begin{itemize}
+  \item The dashboard and the chat CLI share the \emph{same} compiled graph —
+        \file{create\_agent()} is the single source of truth.
+  \item MCP servers are subprocesses with \tool{stdio} transport; they are
+        \emph{not} network services (only ports 8000 and 11434 are open locally).
+  \item When \emph{all} boards are blocked, a deterministic graph edge routes
+        the run to a fallback node that queries Gmail instead.
+\end{itemize}
+
+% ============================================================================
+\section{Components and project layout}
+\label{sec:files}
+
+\begin{center}
+\begin{tabular}{@{}llp{7.4cm}@{}}
+\toprule
+\textbf{File} & \textbf{Role} & \textbf{Purpose}\\
+\midrule
+\file{agent.py} & core & shared agent: config, MCP client, graph, router, filters\\
+\file{dashboard.py} & backend & FastAPI server, SSE streaming, resume API, JSONL logging\\
+\file{static/index.html} & frontend & job dashboard: pipeline, flashcards, drawers\\
+\file{mcp\_server\_github.py} & MCP & GitHub repo / README tools\\
+\file{mcp\_server\_indeed\_scraper.py} & MCP & multi-board \tool{search\_job\_boards} scraper\\
+\file{mcp\_server\_gmail.py} & MCP & \tool{search\_job\_emails} via IMAP + app password\\
+\file{resume\_generator.py} & core & per-job LaTeX resume builder + HTML preview\\
+\file{resume\_data.py} & data & canonical resume content (skills/experience/education)\\
+\file{ui.py} & frontend & Chainlit chat UI (alternative frontend)\\
+\file{step7\_scraper\_with\_fallback.py} & CLI & command-line full run with fallback\\
+\file{step1..step6\_*.py} & tutorial & seven-step learning progression\\
+\file{requirements.txt} & setup & pinned Python dependencies\\
+\file{.env.example} & setup & secret/config template\\
+\file{logs/} & output & \file{runs-YYYY-MM-DD.jsonl} + \file{errors.jsonl}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{The seven-step tutorial progression}
+The \file{step*.py} files build the concept understanding:
+\begin{enumerate}
+  \item \file{step1\_basics.py} — bare LangGraph state machine with three nodes.
+  \item \file{step2\_agent\_with\_tool.py} — LLM plus a plain Python tool.
+  \item \file{step3\_github\_tool.py} — decorated \tool{@tool} functions hitting GitHub.
+  \item \file{step4\_mcp\_client.py} — client-side MCP tool discovery.
+  \item \file{step5\_two\_mcp\_servers.py} — two servers at once.
+  \item \file{step6\_gmail\_source.py} — Gmail as a job source.
+  \item \file{step7\_scraper\_with\_fallback.py} — full agent wiring the scraper
+        and the Gmail fallback.
+\end{enumerate}
+
+% ============================================================================
+\section{The LangGraph agent (\file{agent.py})}
+\label{sec:agent}
+
+\subsection{State}
+The graph uses \tool{AgentState}(\file{MessagesState}) with one extra key:
+\tool{fallback\_used} — a flag that stops the router from looping
+\emph{scrape-blocked \(\to\) fallback \(\to\) scrape-blocked}.
+
+\subsection{Nodes and edges}
+\begin{itemize}
+  \item \nodepill{agent} --- on a fresh hunt this \emph{skips the LLM}: it emits
+        one \tool{AIMessage} whose parallel tool\_calls fan out to
+        \tool{search\_job\_boards} and to both Gmail alert senders
+        simultaneously (zero inference). Afterwards the final answer is built
+        \textbf{in code by default} (\tool{AGENT\_SUMMARY\_MODE=template}) ---
+        instant, every title/company/location/Apply link preserved from the
+        structured payload. With \tool{AGENT\_SUMMARY\_MODE=llm} the Ollama LLM
+        writes it instead --- an \emph{unbound} instance on a trimmed context
+        (raw tool dumps are removed from state first), to keep the expensive
+        CPU inference short.\par\nopagebreak
+  \item \nodepill{tools} --- prebuilt \tool{ToolNode} executes the MCP tools;
+        the parallel tool\_calls run concurrently.
+  \item \nodepill{prep} --- picks the winning source in code: boards if they
+        returned any listings, otherwise the filtered Gmail fallback; then
+        hands the summary LLM one self-contained payload (with the
+        \tool{###JOBS\_JSON###} feed for flashcards).
+  \item \nodepill{fallback} --- legacy sequential path (LLM-decided runs where
+        the scraper was blocked); pulls both alert senders from Gmail in
+        parallel.
+\end{itemize}
+
+Edges:
+\begin{lstlisting}[language=Python]
+START -> agent -> (tools_condition)
+  tools_condition: "tools"  -> tools
+                   "__end__"-> END
+tools -> route_after_tools: "prep"    (parallel collect ran)
+                            "fallback"(scraper was blocked, legacy)
+                            "agent"   (summarise normally)
+prep -> agent
+fallback -> agent
+\end{lstlisting}
+
+The router \tool{route\_after\_tools} routes to \tool{prep} whenever Gmail
+tool results are already in state (the parallel-collect path), else to the
+legacy \tool{fallback} when the job-board tool's text contains a blocked
+marker, else back to \tool{agent} to write the final answer. \tool{fallback\_used}
+stops any of this from looping.
+
+\subsection{Blocked markers}
+A multi-board run can fail on \emph{some} boards yet still return jobs, so the
+literal word \tool{"blocked"} alone is \textbf{not} a fallback trigger. The
+markers that are (\file{agent.py:53}):
+\begin{lstlisting}
+"all boards were blocked", "captcha", "http 403", "fall back",
+"no job links", "couldn't extract", "request failed", "js-rendered",
+\end{lstlisting}
+
+% ============================================================================
+\section{Job filtering rules}
+\label{sec:filters}
+
+All filtering is \textbf{deterministic code}, applied to fallback data and
+scraper listings before the LLM sees them:
+
+\begin{description}[leftmargin=5.5em]
+  \item[Seniority] \tool{SENIORITY\_FILTER} drops titles matching
+        \tool{senior\,|\,lead\,|\,manager\,|\,principal\,|\,staff\,|\,architect\,|\,director\,|\,head of}.
+  \item[Experience] \tool{EXPERIENCE\_FILTER} drops lines matching
+        \tool{\textbackslash b(?:[5-9]\textbar\textbackslash d\{2,\})+\textbackslash+ years/yrs}.
+  \item[Geography] \tool{INDIA\_TOKENS} (\file{agent.py:73}) matches Indian
+        cities/states/``Remote-India'' and, when \tool{remote\_only} is on,
+        the listing is excluded.
+  \item[Links] \tool{\_keep\_job} additionally requires a valid \tool{http(s)}
+        link so every card is Apply-able.
+\end{description}
+
+The system prompt mirrors these rules for the LLM (so it re-rationalises them
+in prose), but the graph does not rely on it.
+
+% ============================================================================
+\section{MCP tool servers}
+\label{sec:mcp}
+
+Every server declares tools with \tool{@mcp.tool()} and runs with
+\tool{mcp.run(transport="stdio")}. The client
+(\tool{MultiServerMCPClient}) spawns each server with \tool{sys.executable}.
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Server} & \textbf{Tools} & \textbf{Notes}\\
+\midrule
+\file{mcp\_server\_github.py} & \tool{list\_github\_repos}, \tool{get\_repo\_readme} & GitHub API + PAT\\
+\file{mcp\_server\_indeed\_scraper.py} & \tool{search\_job\_boards} & 6 boards, per-source blocked status\\
+\file{mcp\_server\_gmail.py} & \tool{search\_job\_emails} & IMAP, 15\,s connect timeout\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Multi-board scraper}
+\tool{search\_job\_boards(query, location="Remote", remote\_only=True)} tries
+Indeed, LinkedIn, Naukri, Glassdoor, Foundit, Internshala and WeWorkRemotely
+concurrently in a loop, dedupes results, drops senior/5+-year listings,
+applies the India filter, and reports each board as \emph{a number of
+listings} or \emph{blocked (reason)}. Most boards bot-wall a plain HTTP
+client (403/CAPTCHA or connection refusal), but WeWorkRemotely serves static
+HTML and is ranked by keyword overlap, so real listings usually come back.
+Output ends with a machine-readable block:
+
+\begin{lstlisting}[language=Python]
+###JOBS_JSON###
+{"sources": {"Indeed": 12, ...}, "blocked": [...], "total": 12,
+ "remote_only": true, "jobs": [{"source","title","company",
+  "location","salary","link"}, ...]}
+\end{lstlisting}
+
+\subsection{Gmail server}
+\tool{search\_job\_emails(sender, days\_back, max\_results)}:
+\begin{enumerate}
+  \item connects over IMAPS (15\,s timeout so a blocked network fails fast);
+  \item searches \tool{FROM sender SINCE date}, newest first;
+  \item strips the huge tracking-URL footers that waste LLM context;
+  \item caps each body at 1200 characters;
+  \item parses each email into a structured listing
+        (\tool{\_extract\_listing}) keeping the one real ``View job'' URL,
+        and appends its own \tool{###JOBS\_JSON###} block.
+\end{enumerate}
+
+% ============================================================================
+\section{Resume pipeline and role suggestions}
+\label{sec:resume}
+
+The dashboard turns a CV (pdf/txt/md) into the agent's search terms:
+
+\begin{enumerate}
+  \item \tool{\_extract\_text} — text from PDF (\tool{pypdf}) or plain text decode.
+  \item \tool{extract\_skills} — LLM-first extraction with a deterministic
+        lexicon fallback (list of $\sim$30 known skills).
+  \item \tool{suggest\_roles} — a rubric scores role titles against the skills
+        (e.g.\ \tool{sql python power bi tableau} \(\to\) \emph{Data Analyst}).
+  \item \tool{infer\_location} — regex/city lookup on the CV text; the inferred
+        location also drives \tool{remote\_only} (the sample CV resolved to
+        ``Hyderabad, India'').
+\end{enumerate}
+
+The top role suggestion becomes the \tool{target\_role}, the full list is stored
+in \tool{role\_suggestions}, and \tool{skills} feed the keyword-driven search
+query (\tool{search\_query\_from} uses the three strongest skill keywords
+before falling back to the plain role title).
+
+\subsection{Per-job LaTeX resume generation}
+Each flashcard's \emph{LaTeX resume} button calls \file{POST /api/resume/gen}
+(\tool{resume\_generator.py}), which produces an ATS-friendly 10\,pt article
+document from the user's canonical resume (\tool{resume\_data.py}):
+
+\begin{enumerate}
+  \item \tool{desc\_snippet} --- best-effort fetch of the posting page for a
+        description snippet (boards are usually bot-walled; failures are
+        silent and the resume is still tailored from role + skills).
+  \item \tool{\_rank\_skills} --- counts how often each skill group's keywords
+        appear in the posting and reorders \tool{resume\_data.SKILLS} so the
+        most job-relevant groups come first; matched keywords also seed the
+        Objective.
+  \item \tool{build\_resume} --- emits \file{.tex} from a raw \tool{ATS\_TEMPLATE}
+        (standard \verb|\section*| headings, \verb|\heading[4]| and
+        \verb|\subheading[2]| macros, accent \verb|1F4E79|, no tables, no
+        columns). Headers/links come from \tool{resume\_data} optionally
+        overridden by the uploaded CV (\tool{extract\_contact}).
+  \item \tool{tex\_to\_html} --- the same source is converted into a standalone
+        HTML preview so the browser shows the resume without a TeX install.
+\end{enumerate}
+
+The dashboard returns \tool{\{ok, filename, tex, preview, desc\_fetched\}}; the
+browser renders the preview, and offers \emph{Copy LaTeX} and \emph{Download
+.tex} (the file compiles with a plain \tool{pdflatex}).
+
+% ============================================================================
+\section{Dashboard backend (\file{dashboard.py})}
+\label{sec:dash}
+
+\subsection{Endpoints}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Method/path} & \textbf{Purpose}\\
+\midrule
+\file{GET /} & serve the single-page UI\\
+\file{GET /api/config} & current config + discovered tool names\\
+\file{POST /api/config} & rebuild the agent with new settings\\
+\file{POST /api/resume} & upload CV $\Rightarrow$ skills, suggestions, location\\
+\file{POST /api/resume/gen} & build a tailored LaTeX resume + preview for one listing\\
+\file{POST /api/run} & run the agent; \textbf{SSE} stream of events\\
+\file{GET /api/logs} & recent run history + errors\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{SSE event frames}
+\file{/api/run} responds \tool{text/event-stream} and emits framed JSON events:
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Event type} & \textbf{Meaning}\\
+\midrule
+\file{status} & run life-cycle (starting / done / error)\\
+\file{token} & streamed LLM token chunks\\
+\file{tool\_start} / \file{tool\_end} & an MCP tool began / finished (with preview)\\
+\file{jobs} & parsed \tool{###JOBS\_JSON###} payload $\Rightarrow$ flashcard deck\\
+\file{fallback} & the deterministic Gmail fallback fired\\
+\file{error} & fatal failure (banner with Retry/Restart)\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Logging}
+Every run and error is appended as JSONL:
+\begin{itemize}
+  \item \file{logs/runs-YYYY-MM-DD.jsonl} — run id, message, skills, tools used,
+        duration, job counts, model.
+  \item \file{logs/errors.jsonl} — failures with full tracebacks.
+\end{itemize}
+
+% ============================================================================
+\section{Frontend (\file{static/index.html})}
+\label{sec:ui}
+
+A single HTML file (Inter + JetBrains Mono fonts with CDN fallback) that:
+\begin{itemize}
+  \item renders a \textbf{circuit pipeline} (Agent \(\to\) Job boards \(\to\)
+        Router \(\to\) Gmail \(\to\) Report) whose connectors light up with an
+        animated dash as the run progresses, and whose \textbf{hover popovers}
+        show each step's live log;
+  \item renders results as a \textbf{flashcard deck} — page-turn/slide
+        animation, arrows, dots, swipe, keyboard — where every card carries an
+        \textbf{Apply now} button opening the job URL in a new tab;
+  \item offers a Settings drawer (role chips, editable skill chips, resume
+        upload, remote-only toggle) and a History drawer (Retry / Restart);
+  \item adds 3-D hover interactions (tilted node pills, lifted glowing
+        buttons with gradient sheen, floating gradient blobs) that respect
+        \texttt{prefers-reduced-motion}.
+\end{itemize}
+
+% ============================================================================
+\section{Configuration}
+\label{sec:config}
+
+\subsection{\file{.env} variables}
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Variable} & \textbf{Meaning} & \textbf{Default}\\
+\midrule
+\file{OLLAMA\_MODEL} & Ollama model name & \file{llama3.1}\\
+\file{OLLAMA\_NUM\_CTX} & model context window (tokens) & \file{8192}\\
+\file{TARGET\_ROLE} & role the agent matches listings to & \emph{Junior Data Analyst}\,…\\
+\file{JOB\_DAYS\_BACK} & email search window & \file{60}\\
+\file{JOB\_MAX\_RESULTS} & emails per sender & \file{10}\\
+\file{GITHUB\_TOKEN} & GitHub PAT (public reads) & ---\\
+\file{GITHUB\_USERNAME} & GitHub account & ---\\
+\file{GMAIL\_ADDRESS} & Gmail address (IMAP) & ---\\
+\file{GMAIL\_APP\_PASSWORD} & Gmail app password & ---\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\verb|.env| never gets committed — \file{.env.example} is the template.
+
+\subsection{AgentConfig}
+\tool{AgentConfig} (dataclass in \file{agent.py}) centralises model, context
+window, role, search window/max results, \tool{skills}, \tool{resume\_text},
+\tool{remote\_only}, \tool{exclude\_locations} and \tool{role\_suggestions};
+\tool{load\_config()} fills it from \file{.env} with sane defaults.
+
+% ============================================================================
+\section{Setup and usage}
+\label{sec:usage}
+
+\begin{lstlisting}[language=PowerShell, numbers=none]
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+Copy-Item .env.example .env   # fill in YOUR tokens
+ollama pull llama3.1          # https://ollama.com/download
+\end{lstlisting}
+
+Launch options:
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Interface} & \textbf{Command}\\
+\midrule
+Dashboard UI & \file{python dashboard.py} $\rightarrow$ \link{http://localhost:8000}\\
+Dashboard alt port & \file{python dashboard.py --port 9000}\\
+Chainlit UI & \file{chainlit run ui.py}\\
+CLI full run & \file{python step7\_scraper\_with\_fallback.py}\\
+Agent self-check & \file{python agent.py}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Prerequisites for a run:} Ollama must be up at
+\link{http://localhost:11434} with the configured model pulled, and
+\file{.env} must contain valid GitHub/Gmail credentials.
+
+% ============================================================================
+\section{Logs and troubleshooting}
+\label{sec:troubleshoot}
+
+\begin{lstlisting}[language=PowerShell, numbers=none]
+Get-Content logs\runs-2026-09-18.jsonl   # every run
+Get-Content logs\errors.jsonl            # failures + tracebacks
+\end{lstlisting}
+
+Common situations:
+\begin{itemize}
+  \item \textbf{All boards blocked (403/CAPTCHA):} expected from a datacentre
+        IP; the router falls back to Gmail automatically and the deck still
+        populates from parsed alert emails.
+  \item \textbf{Gmail connection hangs:} IMAP now fails fast (15\,s timeout)
+        and \tool{asyncio.wait\_for} (60\,s) bounds each tool call.
+  \item \textbf{Run is slow:} pure-CPU Ollama inference; a smaller model or an
+        NVIDIA-backed Ollama build cuts latency dramatically.
+  \item \textbf{\file{watchfiles} fails to install:} harmless (no Rust
+        toolchain); uvicorn works without it.
+\end{itemize}
+
+% ============================================================================
+\section{Current limitations and roadmap}
+\label{sec:roadmap}
+
+\subsection{Known limitations}
+\begin{itemize}
+  \item Most boards bot-wall a plain HTTP client; the Gmail fallback is the
+        backup path, and it rarely fires now that WeWorkRemotely serves real
+        listings. A Playwright browser-scraper would fix the rest.
+  \item Scrapers return page 1 only.
+  \item Gmail IMAP is a blunt \tool{FROM sender} search; Google's own alerts
+        are loose matches.
+  \item Single-turn UI sessions (each message re-runs with system context).
+  \item \tool{INDEED\_ACCESS\_TOKEN} (official remote MCP server) is not wired
+        up — it needs its own OAuth flow.
+\end{itemize}
+
+\subsection{Roadmap}
+\begin{itemize}
+  \item[\textcolor{green!50!black}{\checkmark}] Graphical dashboard; shared
+        \file{agent.py}; resume $\to$ skills $\to$ role suggestions;
+        remote/outside-India filtering; multi-board search; flashcard deck
+        with Apply buttons; run/error logging with History drawer.
+  \item[\textcolor{gray}{$\circ$}] Step 8: scheduled daily digest (Windows Task
+        Scheduler) + JSON persistence.
+  \item[\textcolor{gray}{$\circ$}] Browser-driven scraping (Playwright).
+  \item[\textcolor{gray}{$\circ$}] Resume tailoring: per-job \LaTeX $\to$ PDF.
+  \item[\textcolor{gray}{$\circ$}] Multi-turn conversation + persisted chat history.
+  \item[\textcolor{gray}{$\circ$}] Scraper pagination and more robust card parsing.
+\end{itemize}
+
+\vfill
+\begin{center}
+{\small\color{gray} End of document.\quad JobScope --- generated \today}
+\end{center}
+
+\end{document}

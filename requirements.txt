@@ -1,0 +1,32 @@
+# Core LangGraph + LangChain
+langgraph==1.2.11
+langchain-core==1.6.2
+langchain-ollama==1.1.0
+
+# NOTE: this project now uses Ollama (free, runs locally) instead of
+# the Anthropic API, which requires paid credits. Install Ollama
+# separately from https://ollama.com/download — it's not a pip
+# package. After installing, run: ollama pull llama3.1
+
+# MCP protocol + LangGraph adapter
+mcp==1.30.0
+langchain-mcp-adapters==0.3.2
+
+# Used by our custom GitHub MCP server (mcp_server_github.py)
+requests==2.33.1
+
+# Loads .env into os.environ automatically
+python-dotenv==1.0.1
+
+# Gmail access uses imaplib (built into Python) + an app password —
+# no extra dependency needed.
+
+# Web UI for the agent (ui.py) — run with: chainlit run ui.py
+chainlit==2.8.0
+
+# Dashboard (static/index.html + dashboard.py) — FastAPI over SSE
+fastapi==0.116.1
+uvicorn==0.53.0
+
+# Resume/CV parsing (dashboard /api/resume) — PDF text extraction
+pypdf==6.19.0
