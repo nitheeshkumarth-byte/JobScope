@@ -2,29 +2,36 @@
 MCP SERVER: search_job_boards — multi-site job-board search tool.
 
 Searches several job boards for the user's query and aggregates results into
-one normalized feed, so the agent speaks to ONE tool instead of five:
+one normalized feed, so the agent speaks to ONE tool instead of many:
 
     Indeed, LinkedIn Jobs, Naukri, Glassdoor, Foundit (ex-Monster India),
-    Internshala
+    Internshala, WeWorkRemotely, Remotive, Arbeitnow
 
 Status notes
 - Boards are probed IN PARALLEL (one worker each), so even an all-blocked run
-  finishes in roughly one network timeout instead of six in a row. A board
-  that just failed is skipped for a short TTL cache so back-to-back hunts don't
-  re-hit the wall.
-- Every board is fetched with a plain browser User-Agent. LinkedIn, Glassdoor,
-  Naukri, Foundit and Internshala are heavily JS/anti-bot protected (HTTP 403 /
-  CAPTCHA, or network-level refusal) and are *expected* to fail from a plain
-  HTTP client. WeWorkRemotely serves static HTML, so it usually returns real
-  listings; blocked sources are reported per-source rather than crashing the
-  run, and the Gmail fallback node still covers the agent when every source
-  is blocked.
+  finishes in roughly one network timeout instead of ten in a row. A hard
+  deadline (GLOBAL_DEADLINE) caps the whole hunt: a stuck DNS/socket that
+  ignores its own timeout is reported "blocked (timed out)" and reaped, never
+  allowed to hang the agent's run. A board that just failed is skipped for a
+  short TTL cache so back-to-back hunts don't re-hit the wall.
+- Every board is fetched with a plain browser User-Agent. Indeed roams
+  between HTTP 403 and a JS-rendered shell, LinkedIn answers 429/CAPTCHA or a
+  geo-rendered page without company/location, and LinkedIn's webpage feed
+  went blog-only, Naukri / Glassdoor / Foundit refuse plain HTTP. The live
+  sources are WeWorkRemotely (static HTML), Remotive + Arbeitnow (keyless JSON
+  feeds) and Internshala's work-from-home internships page (static HTML) —
+  those usually return real listings every run. Blocked sources are reported
+  per-source rather than crashing the run, and the Gmail fallback node still
+  covers the agent when every source is blocked.
 - The tool returns a human-readable summary AND a `###JOBS_JSON###` block that
   the dashboard parses into a flashcard deck with Apply buttons.
 - Entries are filtered for "remote work that is NOT based in India" when
-  remote_only is True (the user's stated constraint).
+  remote_only is True (the user's stated constraint) — work-from-home /
+  wfh postings are exempt from the India drop because they are remote
+  regardless of the country they're advertised from; results are ranked so
+  titles matching the query's role/skill words float to the top.
 
-Env vars: none required (public search pages only).
+Env vars: none required (public search pages + keyless APIs only).
 """
 
 import html as html_mod
@@ -32,7 +39,8 @@ import json
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, wait
 
 import requests
 from mcp.server.fastmcp import FastMCP
@@ -45,6 +53,35 @@ MAX_JOBS = 20
 # Boards that just failed are remembered briefly so a follow-up search within
 # BLOCK_CACHE_SECONDS skips them instantly instead of re-hitting the wall.
 BLOCK_CACHE_SECONDS = 90
+
+# Board named by the user in plain language ("just linkedin", "search naukri").
+# When one is asked for, only that board is scraped — the deck must not mix in
+# other platforms. _canonical_board() maps the alias onto a BOARDS key.
+BOARD_ALIASES = {
+    "Indeed": r"\bindeed\b",
+    "LinkedIn": r"\blinked\s*in\b|\blinkedin\b",
+    "Naukri": r"\bnaukri\b",
+    "Glassdoor": r"\bglassdoor\b",
+    "Foundit": r"\bfoundit\b|\bmonster\b",
+    "Internshala": r"\binternshala\b",
+    "WeWorkRemotely": r"\bwework(?:remotely)?\b|\bwe\s+work\s+remote(?:ly)?\b|\bwwr\b",
+    "Remotive": r"\bremotive\b",
+    "Arbeitnow": r"\barbeitnow\b",
+}
+
+
+def _canonical_board(name: str) -> str | None:
+    """Resolve a user-supplied board name/alias onto a BOARDS key (None if it
+    doesn't match anything, so a typo degrades to the normal multi-board run)."""
+    if name:
+        lowered = name.strip().lower()
+        for canonical, pattern in BOARD_ALIASES.items():
+            if re.search(pattern, lowered, re.I):
+                return canonical
+        for canonical in BOARDS:
+            if canonical.lower() == lowered:
+                return canonical
+    return None
 _fail_until: dict[str, float] = {}
 _block_lock = threading.Lock()
 
@@ -78,6 +115,10 @@ SENIORITY_FILTER = re.compile(
 )
 EXPERIENCE_FILTER = re.compile(r"\b(?:[5-9]|\d{2,})\+\s*(?:years|yrs)\b", re.IGNORECASE)
 
+# Hard cap for one entire multi-board search — a stuck DNS/socket must not be
+# able to take the agent's run down with it.
+GLOBAL_DEADLINE = 40.0
+
 
 def _text(blob: str) -> str:
     """Strip HTML tags + collapse whitespace from a scraped blob."""
@@ -107,15 +148,25 @@ def _fetch(url: str, timeout=(3.05, 12)):
     """GET a page; returns HTML text or raises on a hard failure.
 
     (connect, read) timeout tuple: sites that refuse connections (Naukri,
-    Foundit) fail in ~3s instead of holding the parallel probe open for 10s."""
+    Foundit) fail in ~3s instead of holding the parallel probe open for 10s.)
+    Bot-wall signatures are matched deliberately: pages that merely EMBED a
+    reCAPTCHA site key (Internshala's listing page does) are real content."""
     resp = requests.get(url, headers=HEADERS, timeout=timeout)
     if resp.status_code != 200:
         raise RuntimeError(f"HTTP {resp.status_code}")
     html_doc = resp.text
-    if any(sig in html_doc.lower() for sig in ("captcha", "verify you are a human",
-                                                "access denied", "unusual traffic")):
+    if any(sig in html_doc.lower() for sig in (
+            "verify you are a human", "access denied", "unusual traffic", "cf-chl")):
         raise RuntimeError("CAPTCHA / bot-wall")
     return html_doc
+
+
+def _get_json(url: str) -> dict:
+    """GET a keyless public JSON API endpoint; returns the parsed document."""
+    resp = requests.get(url, headers=HEADERS, timeout=(3.05, 25))
+    if resp.status_code != 200:
+        raise RuntimeError(f"HTTP {resp.status_code}")
+    return resp.json()
 
 
 def _dedupe(jobs: list[Job]) -> list[Job]:
@@ -132,14 +183,17 @@ def _dedupe(jobs: list[Job]) -> list[Job]:
 
 def _outside_india(jobs: list[Job], remote_only: bool) -> list[Job]:
     """Enforce the 'remote, not in India' rule: when remote_only is on, drop
-    any listing whose location matches an India city/state token."""
+    any listing whose location matches an India city/state token — EXCEPT
+    work-from-home/wfh postings, which ARE remote regardless of the country
+    they're advertised from (Internshala labels its WFH roles this way)."""
     if not remote_only:
         return jobs
+    wfh = re.compile(r"\b(work from home|wfh|remote-india)\b", re.IGNORECASE)
     kept = []
     for j in jobs:
         loc = j.location
-        if loc and INDIA_TOKENS.search(loc):
-            continue  # role is India-tied — exclude
+        if loc and not wfh.search(loc) and INDIA_TOKENS.search(loc):
+            continue  # role is India-tied and office-based — exclude
         kept.append(j)
     return kept
 
@@ -251,6 +305,132 @@ def _internshala(query: str) -> list[Job]:
     return jobs
 
 
+def _select(jobs: list[Job], query: str, cap: int = MAX_JOBS) -> list[Job]:
+    """Rank listings so titles matching the query's role/skill words lead.
+
+    Keeps raw order within the same score, and only fills in unmatched titles
+    when few matched (so niche skills don't zero out a whole board)."""
+    wanted = [w.lower() for w in (query or "").lower().split() if len(w) > 2]
+    if not wanted:
+        return jobs[:cap]
+    scored = []
+    for j in jobs:
+        low = j.title.lower()
+        scored.append((sum(1 for w in wanted if w in low), j))
+    matched = sorted((s for s in scored if s[0] > 0), key=lambda t: t[0], reverse=True)
+    out = [j for _, j in matched]
+    if len(out) < 8:
+        rest = [j for s, j in scored if s == 0]
+        out += rest[: cap - len(out)]
+    return out[:cap]
+
+
+def _remotive(query: str) -> list[Job]:
+    """Remotive's public remote-jobs JSON feed (keyless, CORS-open).
+
+    Usually the freshest worldwide remote listings, with travel-friendly
+    locations like 'Americas, Europe' that pass the not-India filter."""
+    data = _get_json("https://remotive.com/api/remote-jobs?limit=50")
+    jobs = []
+    for j in (data.get("jobs") or []) if isinstance(data, dict) else []:
+        title = j.get("title") if isinstance(j, dict) else None
+        link = j.get("url") if isinstance(j, dict) else None
+        if not isinstance(title, str) or not isinstance(link, str):
+            continue
+        title, link = title.strip(), link.strip()
+        loc = (j.get("candidate_required_location") or "")
+        loc = str(loc).strip()
+        if loc.lower() in ("worldwide", "anywhere", "remote"):
+            loc = "Anywhere in the World"
+        salary = (j.get("salary") or "")
+        salary = str(salary).strip() if salary else ""
+        if not title or not link:
+            continue
+        jobs.append(Job("Remotive", title,
+                        company=str(j.get("company_name") or "").strip(),
+                        location=loc, salary=salary, link=link))
+    if not jobs:
+        raise RuntimeError("empty API response")
+    return jobs
+
+
+def _arbeitnow(query: str) -> list[Job]:
+    """Arbeitnow's public job API — 250 recent worldwide roles, remote flagged.
+
+    Locations are concrete ('Berlin, Germany' etc.), so India-tied ones are
+    cleanly dropped by the remote_only filter."""
+    data = _get_json("https://www.arbeitnow.com/api/job-board-api")
+    jobs = []
+    for it in data.get("data") or []:
+        title = (it.get("title") or "").strip()
+        link = (it.get("url") or "").strip()
+        if not title or not link:
+            continue
+        loc = (it.get("location") or "").strip()
+        jtypes = it.get("job_types") or []
+        if not loc and any("remote" in str(t).lower() for t in jtypes):
+            loc = "Remote"
+        jobs.append(Job("Arbeitnow", title,
+                        company=(it.get("company_name") or "").strip(),
+                        location=loc, link=link))
+    if not jobs:
+        raise RuntimeError("empty API response")
+    return jobs
+
+
+def _dynamite(query: str) -> list[Job]:
+    """DynamiteJobs' public RSS feed — currently blog-only, kept as a stub so
+    the board is easy to re-enable if their job feed returns."""
+    root = ET.fromstring(_fetch("https://www.dynamitejobs.com/feed/"))
+    jobs = []
+    for it in root.findall(".//item"):
+        link = (it.findtext("link") or "").strip()
+        if not link or "/blog/" in link.lower():
+            continue
+        title = _text(it.findtext("title") or "")
+        if not title:
+            continue
+        jobs.append(Job("DynamiteJobs", title, link=link, location="Remote"))
+    if not jobs:
+        raise RuntimeError("feed is blog-only right now")
+    return jobs
+
+
+def _internshala(query: str) -> list[Job]:
+    """Scrape Internshala's work-from-home internships page (static HTML).
+
+    These are India-remote internships — the location reads 'Work From Home',
+    so remote_only's India-token filter still lets them through, but they're
+    clearly labelled so the user can tell them apart from worldwide boards."""
+    html_doc = _fetch("https://internshala.com/internships/work-from-home-jobs/")
+    jobs = []
+    card = re.compile(
+        r'class="[^"]*individual_internship[^"]*"(.*?)(?=class="[^"]*individual_internship[^"]*"|$)',
+        re.DOTALL,
+    )
+    for cm in card.finditer(html_doc):
+        block = cm.group(1)
+        am = re.search(r'<a[^>]+href="(/internship/[^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL)
+        if not am:
+            continue
+        title = _text(am.group(2))
+        if not title:
+            continue
+        link = "https://internshala.com" + am.group(1)
+        comp = (re.search(r'class="company-name"[^>]*>(.*?)</', block, re.DOTALL)
+                or re.search(r'class="[^"]*company[^"]*"[^>]*>(.*?)</', block, re.DOTALL))
+        locm = re.search(r'class="[^"]*locations[^"]*"[^>]*>(.*?)</', block, re.DOTALL)
+        sal = re.search(r'class="[^"]*salary[^"]*"[^>]*>(.*?)</', block, re.DOTALL)
+        jobs.append(Job("Internshala", title,
+                        company=_text(comp.group(1)) if comp else "",
+                        location=_text(locm.group(1)) if locm else "Work From Home (India)",
+                        salary=_text(sal.group(1)) if sal else "",
+                        link=link))
+    if not jobs:
+        raise RuntimeError("no results / bot wall")
+    return jobs
+
+
 def _weworkremotely(query: str) -> list[Job]:
     """Scrape WeWorkRemotely's static listing page for relevant titles.
 
@@ -296,38 +476,49 @@ BOARDS = {
     "Foundit": _foundit,
     "Internshala": _internshala,
     "WeWorkRemotely": _weworkremotely,
+    "Remotive": _remotive,
+    "Arbeitnow": _arbeitnow,
 }
 
 
 @mcp.tool()
 def search_job_boards(query: str, location: str = "Remote",
-                      remote_only: bool = True) -> str:
-    """Search multiple job boards (Indeed, LinkedIn, Naukri, Glassdoor,
-    Foundit, Internshala) for matching roles and aggregate the results.
+                      remote_only: bool = True, board: str | None = None) -> str:
+    """Search job boards for matching roles and aggregate the results.
 
-    Every board is tried independently; blocked boards are reported per-source
-    instead of failing the whole search. When remote_only is True (default),
-    India-tied postings are excluded — the user lives in India and only wants
-    remote roles that are NOT based there.
+    By default every board is tried (Indeed, LinkedIn, Naukri, Glassdoor,
+    Foundit, Internshala, WeWorkRemotely, Remotive, Arbeitnow). Pass a board
+    name (or plain-language alias like "linkedin", "just indeed") to restrict
+    the search to THAT board only — the user asked for one platform, so the
+    deck must come from it alone.
+
+    Blocked boards are reported per-source instead of failing the whole
+    search. When remote_only is True (default), India-tied postings are
+    excluded — the user lives in India and only wants remote roles that are
+    NOT based there.
 
     Returns a human-readable summary followed by a ###JOBS_JSON### block that
     the UI turns into Apply-able flashcards. If every source is blocked, the
     summary says so explicitly — fall back to the Gmail email-alert tool."""
     found: list[Job] = []
     sources = {}
+    requested = _canonical_board(board) if board else None
 
-    def probe(name, scrape_fn):
+    def probe(name, scrape_fn, force=False):
         # skip boards that just failed (short TTL cache), like an efficient
-        # retry budget for bot-walled sites
-        with _block_lock:
-            skip_until = _fail_until.get(name, 0.0)
-        if skip_until > time.time():
-            return name, "blocked (cached)"
+        # retry budget for bot-walled sites — unless the user named this board
+        # outright, in which case honor the request and try it anyway
+        if not force:
+            with _block_lock:
+                skip_until = _fail_until.get(name, 0.0)
+            if skip_until > time.time():
+                return name, "blocked (cached)"
         try:
             rows = _outside_india(_dedupe(scrape_fn(query)), remote_only)
             rows = [j for j in rows
                     if not SENIORITY_FILTER.search(f"{j.title} {j.company} {j.location}")
                     and not EXPERIENCE_FILTER.search(f"{j.title} {j.company} {j.location} {j.salary}")]
+            rows = _select(rows, query)
             if rows:
                 with _block_lock:
                     _fail_until.pop(name, None)  # it worked — clear any cache
@@ -338,25 +529,67 @@ def search_job_boards(query: str, location: str = "Remote",
                 _fail_until[name] = time.time() + BLOCK_CACHE_SECONDS
             return name, f"blocked ({_friendly(exc)})"
 
-    # All boards in parallel: the six connections compete, so the step takes
-    # as long as the *slowest* board (~one timeout) instead of six sequential.
-    with ThreadPoolExecutor(max_workers=len(BOARDS)) as pool:
-        futures = {pool.submit(probe, name, fn): name for name, fn in BOARDS.items()}
-        for fut in as_completed(futures):
-            name, result = fut.result()
-            if isinstance(result, list):
-                sources[name] = len(result)
-                found.extend(result)
-            else:
-                sources[name] = result
+    if requested is None:
+        # All boards in parallel: connections compete, so the step takes as
+        # long as the *slowest* board (~one timeout) instead of ten in a row.
+        # A hard deadline caps the whole hunt even if one DNS/socket call
+        # ignores its timeout (a stuck fetch must never hang the agent's whole
+        # run); stragglers are reported "timed out" and reaped — the server
+        # thread leaks in the background at worst, never the request.
+        deadline = time.monotonic() + GLOBAL_DEADLINE
+        futures = {}
+        with ThreadPoolExecutor(max_workers=len(BOARDS)) as pool:
+            for name, fn in BOARDS.items():
+                futures[pool.submit(probe, name, fn)] = name
+            while futures and time.monotonic() < deadline:
+                done, _pending = wait(futures, timeout=max(0.2, min(5.0, deadline - time.monotonic())))
+                for fut in done:
+                    futures.pop(fut)
+                    try:
+                        _probe_name, result = fut.result()
+                    except Exception as exc:
+                        result = f"blocked ({_friendly(exc)})"
+                    if isinstance(result, list):
+                        sources[_probe_name] = len(result)
+                        found.extend(result)
+                    else:
+                        sources[_probe_name] = result
+            for fut in list(futures):
+                name = futures.pop(fut)
+                fut.cancel()
+                sources[name] = "blocked (timed out)"
+    else:
+        # A single, user-named board: no competition, no deadline sweep.
+        _probe_name, result = probe(requested, BOARDS[requested], force=True)
+        if isinstance(result, list):
+            sources[requested] = len(result)
+            found.extend(result)
+        else:
+            sources[requested] = result
 
     blocked_names = [n for n, s in sources.items() if not isinstance(s, int)]
-    found = _dedupe(found)[:MAX_JOBS]
+    if requested is None:
+        # Give every healthy board a fair slice before the global rank, so one
+        # board that returns many weak matches can't crowd out the rest of the
+        # deck — then rank across ALL boards so titles matching the role/skill
+        # words lead the deck, and trim to the cap.
+        per_source = 8
+        slice_pool, buckets = [], {}
+        for j in found:
+            buckets.setdefault(j.source, []).append(j)
+        for src, items in buckets.items():
+            slice_pool.extend(items[:per_source])
+        found = _select(_dedupe(slice_pool), query)[:MAX_JOBS]
 
-    lines = ["Job search across boards (remote, outside India):"]
-    for name in BOARDS:
-        val = sources.get(name)
-        lines.append(f"[{name}] {val if isinstance(val, int) else val}")
+    if requested is None:
+        lines = ["Job search across boards (remote, outside India):"]
+        for name in BOARDS:
+            val = sources.get(name)
+            lines.append(f"[{name}] {val if isinstance(val, int) else val}")
+    else:
+        lines = [f"Job search (limited to {requested}, remote, outside India):"]
+        val = sources.get(requested)
+        lines.append(f"[{requested}] {val if isinstance(val, int) else val}")
     lines.append(f"[TOTAL] {len(found)} listing(s)")
 
     payload = {
@@ -367,9 +600,13 @@ def search_job_boards(query: str, location: str = "Remote",
         "jobs": [j.to_dict() for j in found],
     }
     trailing = ""
-    if len(blocked_names) == len(BOARDS) or not found:
-        trailing = (". All boards were blocked — fall back to search_job_emails "
-                    "for Gmail job alerts instead.")
+    if not found:
+        if requested is None:
+            trailing = (". All boards were blocked — fall back to search_job_emails "
+                        "for Gmail job alerts instead.")
+        else:
+            trailing = (f". {requested} was blocked — fall back to search_job_emails "
+                        "for Gmail job alerts instead.")
     return "\n".join(lines) + trailing + "\n\n" + JOBS_MARKER + "\n" + json.dumps(payload)
 
 

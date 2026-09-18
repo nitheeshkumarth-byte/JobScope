@@ -316,7 +316,7 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
       <div class="node" data-node="agent"><div class="pill">◈</div><div class="lbl">Agent</div>
         <div class="pop"><b>Agent</b><span class="ptext">waiting for a run</span></div></div>
       <div class="node" data-node="boards"><div class="pill">⌕</div><div class="lbl">Job boards</div>
-        <div class="pop"><b>Job boards</b><span class="ptext">Indeed · LinkedIn · Naukri · Glassdoor · Foundit · Internshala</span></div></div>
+        <div class="pop"><b>Job boards</b><span class="ptext">Indeed · LinkedIn · Naukri · Glassdoor · Foundit · Internshala · WeWorkRemotely · Remotive · Arbeitnow</span></div></div>
       <div class="node" data-node="router"><div class="pill">⇄</div><div class="lbl">Router</div>
         <div class="pop"><b>Router</b><span class="ptext">decides: summarize now, or fall back to Gmail</span></div></div>
       <div class="node" data-node="gmail"><div class="pill">✉</div><div class="lbl">Gmail</div>
@@ -358,9 +358,15 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
     <div class="srole" id="suggestions"></div>
     <div class="sub" id="inferredRow"></div>
 
-    <div class="section-title">Target role</div>
-    <input type="text" id="cfgRole" placeholder="e.g. Data Analyst / entry-level, remote">
-    <div class="sub">Skills drive the actual search terms; this keeps the hunt on-target.</div>
+    <div class="section-title">Target roles (pick as many as you like)</div>
+    <div class="chips" id="roleChipsEdit"></div>
+    <div class="addrow"><input type="text" id="roleAdd" placeholder="Add a role…"><button class="btn ghost" id="roleAddBtn">Add</button></div>
+    <div class="sub">First role drives the search query: click a suggested role above or type your own; every selected role is matched and reported on.</div>
+
+    <label>Cities / locations you're open to</label>
+    <div class="chips" id="cityChipsEdit"></div>
+    <div class="addrow"><input type="text" id="cityAdd" placeholder="Add a city…"><button class="btn ghost" id="cityAddBtn">Add</button></div>
+    <div class="sub">Seeded from your CV on first upload; leave empty to search anywhere (remote).</div>
 
     <label>Skills → search keywords</label>
     <div class="drop" id="dropResume">Upload resume / CV (.pdf, .txt, .md) — skills, role suggestions &amp; location are extracted automatically</div>
@@ -717,9 +723,8 @@ $("logsBtn").onclick = () => { openDrawer("logsDrawer"); loadLogs(); };
 
 async function loadConfig() {
   try {
-    const r = await (await fetch("/api/config")).json();
+    const r = await (await fetch("/api/config", { cache: "no-store" })).json();
     state.settings = r;
-    $("cfgRole").value = r.target_role || "";
     $("cfgModel").value = r.model || "";
     $("cfgDays").value = r.days_back || 60;
     $("cfgMax").value = r.max_results || 10;
@@ -727,6 +732,8 @@ async function loadConfig() {
     $("modelTag").textContent = r.model || "";
     renderSuggestions(r.role_suggestions || []);
     renderSkillChips(r.skills || []);
+    renderRoleChips(r.roles && r.roles.length ? r.roles : [r.target_role || ""]);
+    renderCityChips(r.cities || []);
     $("status").className = "status online"; $("statusText").textContent = "Ready";
   } catch (e) { $("status").className = "status"; $("statusText").textContent = "Offline — is the server running?"; }
 }
@@ -739,7 +746,7 @@ function renderSuggestions(list) {
     if (seen.has(role)) return; seen.add(role);
     const b = document.createElement("button");
     b.innerHTML = esc(role.split(" / ")[0]) + (k === 0 ? '<small>★ best match</small>' : "<small></small>");
-    b.onclick = () => { $("cfgRole").value = role; toast("Role set: " + role.split(" / ")[0]); };
+    b.onclick = () => { appendRoleChip(role); toast("Role added: " + role.split(" / ")[0]); };
     box.appendChild(b);
   });
 }
@@ -755,6 +762,37 @@ function renderSkillChips(list) {
   });
 }
 function currentSkills() { return [...$("skillChipsEdit").querySelectorAll(".chip.editable")].map(c => c.childNodes[0].textContent.trim()).filter(Boolean); }
+function renderRoleChips(list) {
+  const box = $("roleChipsEdit"); box.innerHTML = "";
+  const seen = new Set();
+  (list || []).forEach(r => { if (!r || seen.has(r.toLowerCase())) return; seen.add(r.toLowerCase()); appendRoleChip(r); });
+}
+function currentRoles() { return [...$("roleChipsEdit").querySelectorAll(".chip.editable")].map(c => c.childNodes[0].textContent.trim()).filter(Boolean); }
+function appendRoleChip(v) {
+  const box = $("roleChipsEdit");
+  const name = String(v).trim(); if (!name) return;
+  if ([...box.querySelectorAll(".chip")].some(c => c.childNodes[0].textContent.trim().toLowerCase() === name.toLowerCase())) return;
+  const c = document.createElement("span"); c.className = "chip editable"; c.textContent = name;
+  const x = document.createElement("button"); x.className = "x"; x.textContent = "✕";
+  x.onclick = () => c.remove();
+  c.appendChild(x); box.appendChild(c);
+}
+$("roleAddBtn").onclick = () => { const v = $("roleAdd").value.trim(); if (!v) return; appendRoleChip(v); $("roleAdd").value = ""; };
+$("roleAdd").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("roleAddBtn").click(); } });
+function renderCityChips(list) {
+  const box = $("cityChipsEdit"); box.innerHTML = "";
+  (list || []).forEach(c => appendCityChip(c));
+}
+function currentCities() { return [...$("cityChipsEdit").querySelectorAll(".chip.editable")].map(c => c.childNodes[0].textContent.trim()).filter(Boolean); }
+function appendCityChip(v) {
+  const box = $("cityChipsEdit");
+  const c = document.createElement("span"); c.className = "chip editable"; c.textContent = v;
+  const x = document.createElement("button"); x.className = "x"; x.textContent = "✕";
+  x.onclick = () => c.remove();
+  c.appendChild(x); box.appendChild(c);
+}
+$("cityAddBtn").onclick = () => { const v = $("cityAdd").value.trim(); if (!v) return; appendCityChip(v); $("cityAdd").value = ""; };
+$("cityAdd").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("cityAddBtn").click(); } });
 function appendChip(v) {
   const box = $("skillChipsEdit");
   const c = document.createElement("span"); c.className = "chip editable"; c.textContent = v;
@@ -780,12 +818,12 @@ async function uploadResume(file) {
     if (!r.ok) { $("resumeState").textContent = "⚠ " + r.error; return; }
     renderSkillChips(r.skills);
     renderSuggestions(r.suggestions && r.suggestions.map(s => s.role) || []);
-    $("cfgRole").value = r.target_role || $("cfgRole").value;
+    if (r.roles && r.roles.length) renderRoleChips(r.roles); else if (r.target_role) renderRoleChips([r.target_role]);
     if (r.inferred) {
       $("inferredRow").textContent = "📍 " + (r.inferred.location || "—") + (r.inferred.remote_only ? " · remote-only hunt enabled" : "");
       if (r.inferred.remote_only !== undefined) $("cfgRemote").checked = !!r.inferred.remote_only;
     }
-    $("cfgRemote").checked = true;
+    renderCityChips(r.cities || []);
     $("resumeState").textContent = "✔ " + r.skills.length + " skills · suggested roles ready — Save & restart to lock in.";
     toast("Resume analyzed: " + r.skills.length + " skills");
   } catch (e) { $("resumeState").textContent = "⚠ Upload failed: " + e.message; }
@@ -794,16 +832,24 @@ async function uploadResume(file) {
 $("saveCfg").onclick = async () => {
   $("cfgState").innerHTML = '<span class="spin"></span> Restarting agent…';
   try {
+    const roles = currentRoles();
     const body = {
-      target_role: $("cfgRole").value, model: $("cfgModel").value,
+      target_role: roles[0] || "", roles: roles, model: $("cfgModel").value,
       days_back: Number($("cfgDays").value) || 60, max_results: Number($("cfgMax").value) || 10,
-      skills: currentSkills(), remote_only: $("cfgRemote").checked
+      skills: currentSkills(), remote_only: $("cfgRemote").checked,
+      cities: currentCities()
     };
-    const r = await (await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
-    $("cfgState").textContent = "✔ Agent restarted · " + body.model + " · " + (r.skills.length || "role-title") + " keywords" + (r.remote_only ? " · remote" : "");
-    $("modelTag").textContent = r.model; renderSkillChips(r.skills); toast("Agent restarted");
+    const res = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const r = await res.json();
+    if (!r.ok) throw new Error(r.error || "restart failed");
+    $("cfgState").textContent = "✔ Agent restarted · " + body.model + " · " + (r.roles ? r.roles.length : 0) + " role" + (r.roles.length > 1 ? "s" : "") + " · " + (r.skills.length || "role-title") + " keywords" + (r.remote_only ? " · remote" : "");
+    $("modelTag").textContent = r.model; renderSkillChips(r.skills); renderRoleChips(r.roles || []); toast("Agent restarted");
     setTimeout(() => { $("cfgState").textContent = ""; }, 4000);
-  } catch (e) { $("cfgState").textContent = "⚠ " + e.message; }
+  } catch (e) {
+    const msg = String(e.message);
+    $("cfgState").textContent = "⚠ " + msg + (msg.toLowerCase().includes("fetch") ? " — server unreachable; restart it or hard-refresh (Ctrl+F5)." : " — no changes were applied.");
+  }
 };
 
 /* ---------- logs ---------- */

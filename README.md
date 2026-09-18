@@ -108,10 +108,21 @@ expandable card, and animates a **circuit-style pipeline** (Agent → Job boards
 → Router → Gmail → Report) — hover a node to see that step's log. It also:
 
 - **Search by your resume.** Upload your CV (.pdf/.txt/.md) in Settings — the
-  skills are extracted locally (LLM-first, lexicon fallback) into editable
-  keyword chips, and matched against a role rubric to **suggest roles** (e.g.
+  skill keywords come straight from your **"Technical Skills"** block and are
+  only keywords that literally appear in the CV (no invented extras; the free
+  local parse catches every entry of the column — colons, pipe-separated
+  table rows, bullets). Uploading another CV **adds its keywords to the set**
+  instead of replacing them (deduped). You pick the **target role(s)** as
+  multi-select chips — click any suggested role or type your own, keep as many
+  as you like (the first is primary for the query, all are matched) — and the
+  **cities** you're open to (also multi-select). The CV only seeds these on
+  the first upload. They drive the board search query + location, the match
+  criteria, and are matched against a role rubric to **suggest roles** (e.g.
   skills `sql python power bi tableau` → "Data Analyst"). Your location is
-  inferred from the CV, and **remote + outside-India** is enforced.
+  inferred from the CV, and **remote + outside-India** is enforced until you
+  uncheck it. Save & restart reports failures inline (no more silent
+  `failed to fetch`), and pages are served `no-store` so the UI always matches
+  the backend.
 - **Flashcard deck + Apply buttons.** When the scraper returns listing data,
   jobs appear as a smooth deck of flashcards (page-turn / slide animation,
   arrows, dots, swipe, keyboard) — each card has a big **Apply now** button
@@ -204,7 +215,7 @@ with the configured model pulled, and `.env` must contain valid GitHub/Gmail val
 | `OLLAMA_MODEL` | Ollama model name | `llama3.1` |
 | `OLLAMA_NUM_CTX` | Model context window (tokens) | `8192` |
 | `TARGET_ROLE` | The role the agent matches listings to | `Junior Data Analyst / entry-level, 0-2 years experience` |
-| `RESUME_EXTRACT_MODE` | `auto` (lexicon-first, instant; LLM only if nothing found), `fast` (lexicon only), `llm` (always the slow local model) | `auto` |
+| `RESUME_EXTRACT_MODE` | `strict` (only keywords literally in the CV — default), `auto` (also adds known-skill lexicon terms), `fast` (lexicon only), `llm` (always the slow local model) | `strict` |
 | `AGENT_SUMMARY_MODE` | `template` builds the final answer in code (instant); `llm` uses the local model (nicer prose, minutes on CPU) | `template` |
 | `JOB_DAYS_BACK` | Email search window (days) | `60` |
 | `JOB_MAX_RESULTS` | Emails to read per sender | `10` |
@@ -234,12 +245,16 @@ Python requirements: `fastapi`, `uvicorn`, `langchain`, `langgraph`,
 
 ## Current limitations
 
-- **Most boards are bot-protected from plain HTTP.** Indeed, Glassdoor,
-  LinkedIn and Internshala answer 403/CAPTCHA, Naukri and Foundit refuse the
-  connection outright — but WeWorkRemotely serves static HTML and usually
-  gets through, so the board path works and the Gmail fallback is the backup,
-  not the only way. (A browser-based scraper for the other six would help;
-  that's a larger change.)
+- **Some boards are bot-protected from plain HTTP.** Indeed roams between
+  HTTP 403 and a JS-rendered shell, LinkedIn answers 429/CAPTCHA (or a
+  geo-rendered page without company/location fields), and Naukri, Glassdoor
+  and Foundit refuse the connection outright. The boards that **do** serve a
+  plain HTTP client — WeWorkRemotely (static HTML), Remotive + Arbeitnow
+  (keyless JSON feeds) and Internshala's work-from-home internships page —
+  are scanned every run and feed the deck (20 jobs, mixed across boards). The
+  Gmail fallback is the backup when every board fails. (A browser-based
+  scraper such as Playwright would unlock the other six; that's a larger
+  change.)
 - Scrapers return page 1 only.
 - **Gmail IMAP** is a blunt search (`FROM sender`) — filtering happens later in
   the agent, and Google's own alerts are loose matches.
@@ -255,7 +270,7 @@ Python requirements: `fastapi`, `uvicorn`, `langchain`, `langgraph`,
 - [x] Shared `agent.py` + deterministic fallback router
 - [x] Resume/CV → skill keywords → keyword-driven search + **role suggestions**
 - [x] Remote + outside-India filtering (skills/rubric, location inference)
-- [x] Multi-board search (Indeed · LinkedIn · Naukri · Glassdoor · Foundit · Internshala · WeWorkRemotely)
+- [x] Multi-board search (Indeed · LinkedIn · Naukri · Glassdoor · Foundit · Internshala · WeWorkRemotely · Remotive · Arbeitnow)
 - [x] Flashcard job deck with **Apply buttons** + circuit pipeline UI
 - [x] Run + error logging (`logs/*.jsonl`) and History drawer with Retry/Restart
 - [x] Resume tailoring: per-job LaTeX resume (ATS template) + live preview, Copy & Download

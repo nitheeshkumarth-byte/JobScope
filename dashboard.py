@@ -137,13 +137,15 @@ class ResumeGenRequest(BaseModel):
 
 
 class ConfigRequest(BaseModel):
-    target_role: str
+    target_role: str = ""
     model: str
     num_ctx: int = 8192
     days_back: int = 60
     max_results: int = 10
     skills: list[str] = []
     remote_only: bool = True
+    cities: list[str] = []
+    roles: list[str] = []
 
 
 # --------------------------------------------------------------------------
@@ -211,6 +213,127 @@ def _parse_skill_list(text: str) -> list[str]:
     return result[:20]
 
 
+# Heading markers for a resume's explicit skills block (matched as a prefix —
+# the list often shares the same line via a colon, or a pipe-separated table
+# row). STRICT ones name a skills/technology area; GENERIC ("skills") is used
+# only as a last resort.
+_TECH_HEADING_STRICT = re.compile(
+    r"^\s*(?:technical\s+skills?|skills?\s*(?:&\s*|\s+and\s+)?(?:tools?|technolog\w+)"
+    r"|tools?\s*(?:&\s*|\s+and\s+)?technolog\w*|technolog\w*|technical\s+expertise"
+    r"|core\s+competenc\w*|key\s+skills?|skills?\s*summary|tech\s+stack)\b",
+    re.IGNORECASE,
+)
+_TECH_HEADING_GENERIC = re.compile(r"^\s*skills?\b", re.IGNORECASE)
+
+# Common next-section headings that end a skills list even when they aren't
+# rendered as all-caps or with a trailing colon.
+_SECTION_WORDS = {
+    "projects", "experience", "work experience", "professional experience",
+    "education", "certifications", "courses", "accomplishments",
+    "achievements", "internships", "training", "languages", "interests",
+    "activities", "personal projects", "contact", "references",
+}
+
+# Filler leading/trailing tokens inside one skill item ("working knowledge of
+# Python" -> "Python") and words that are never a skill themselves.
+_SKILL_FILLER_RE = re.compile(
+    r"(?i)^(?:proficient\s+in|working\s+knowledge\s+of|knowledge\s+of|"
+    r"experience\s+in|familiar\s+with|basic\s+|strong\s+|using\s+|in\s+|"
+    r"with\s+|and\s+|etc\.?)\s*"
+)
+_NOT_A_SKILL = {"and", "etc", "etc.", "tools", "skills", "work experience",
+                "education", "certifications", "soft skills", "languages",
+                "projects", "experience", "summary", "profile"}
+
+
+def _is_heading_break(line: str) -> bool:
+    """True when a line ends the skills list (looks like the NEXT section:
+    a known section word, all-caps, or a short title-cased line + colon)."""
+    s = line.strip()
+    if not s or s.startswith(("*", "-", "•")) or "|" in s or "," in s or ";" in s:
+        return False
+    if s.lower() in _SECTION_WORDS:
+        return True
+    return (s.isupper() or s.endswith(":")) and len(s) < 45
+
+
+def _technical_skill_rows(text: str) -> list[str]:
+    """Take EVERY entry from the resume's explicit skills block.
+
+    The user's CV lists its toolkit in a "Technical Skills" column; whatever
+    the PDF text layer spits out (colons, pipe-separated table cells, bullet
+    lines), the whole block belongs in the keyword list — not just the slice
+    that happens to match a known lexicon."""
+    lines = (text or "").splitlines()
+    anchor = None
+    for i, ln in enumerate(lines):
+        if _TECH_HEADING_STRICT.search(ln):
+            anchor = i
+            break
+    if anchor is None:
+        for i, ln in enumerate(lines):
+            if _TECH_HEADING_GENERIC.search(ln):
+                anchor = i
+                break
+    if anchor is None:
+        return []
+
+    head = lines[anchor]
+    m = _TECH_HEADING_STRICT.search(head) or _TECH_HEADING_GENERIC.search(head)
+    heading_end = m.end() if m else len(head)
+    collected = []
+    if "|" in head:
+        # a table row like "Technical Skills|Python|SQL|Power BI"
+        cells = [c.strip() for c in head.split("|") if c.strip()]
+        if len(cells) > 1:
+            collected.append(", ".join(cells[1:]))
+    else:
+        rest = head[heading_end:].lstrip(":|\t ).").strip()
+        if rest:
+            collected.append(rest)
+    for ln in lines[anchor + 1:]:
+        if _is_heading_break(ln):
+            break
+        collected.append(ln)
+
+    out = []
+    for chunk in collected:
+        for p in re.split(r"[,;|\n•]+", chunk):
+            p = p.strip().strip("*-#").strip()
+            p = _SKILL_FILLER_RE.sub("", p).strip()
+            p = p.rstrip(".,;:").strip()
+            p = re.sub(r"\s+", " ", p)
+            if (2 <= len(p) <= 40 and not re.fullmatch(r"\d+.*", p)
+                    and p.lower() not in _NOT_A_SKILL
+                    and re.fullmatch(r"[\w\s.\-#+/&()]+", p)):
+                out.append(p)
+    seen, result = set(), []
+    for p in out:
+        k = p.lower()
+        if k not in seen:
+            seen.add(k)
+            result.append(p)
+    return result[:60]
+
+
+def _merge_skills(*groups: list[str]) -> list[str]:
+    """Explicit technical-skills first (user's exact words), then the rest.
+    Dedupes case-insensitively, drops a later item that is redundant with an
+    earlier one as a standalone word (lexicon "excel" behind "Advanced
+    Excel"), and caps so the prompt/search stay lean."""
+    seen, out = set(), []
+    for gi, group in enumerate(groups):
+        for s in group:
+            k = (s or "").strip().lower()
+            if not k or k in seen:
+                continue
+            if gi > 0 and any(re.search(rf"\b{re.escape(k)}\b", prev) for prev in seen):
+                continue
+            seen.add(k)
+            out.append(s.strip())
+    return out[:60]
+
+
 # Lexicon = explicit fallback list + the canonical resume keyword groups, so
 # the fast path still catches backend/Python skills a Data-Analyst-flavoured
 # rubric would miss. Sorted for deterministic output.
@@ -235,19 +358,28 @@ def _cache_skills(key: str, skills: list[str]) -> list[str]:
 
 
 async def extract_skills(resume_text: str, model: str, num_ctx: int = 8192) -> list[str]:
-    """Lexicon-first skill extraction — instant — with an optional LLM pass.
+    """Deterministic skill extraction — instant, no LLM by default.
 
-    A local-CPU model takes ~40s per inference, so by default the deterministic
-    lexicon answers immediately; the LLM only runs when the lexicon finds
-    nothing (or when RESUME_EXTRACT_MODE=llm forces it). Results are cached."""
+    `strict` (the default) uses ONLY keywords that literally appear in the
+    resume: the whole "Technical Skills" block if the CV has one, otherwise
+    known-skill mentions found verbatim in the text. `auto` additionally
+    enriches with lexicon terms, `fast` is lexicon-only, and `llm` always
+    runs the local model. Results are cached."""
     key = hashlib.sha256(f"{model}\n{resume_text}".encode("utf-8", "ignore")).hexdigest()
     if key in SKILL_CACHE:
         return SKILL_CACHE[key]
 
     lexicon = _lexicon_skills(resume_text)
-    mode = os.environ.get("RESUME_EXTRACT_MODE", "auto").lower()
-    if mode == "fast" or (mode == "auto" and lexicon):
-        return _cache_skills(key, lexicon)
+    explicit = _technical_skill_rows(resume_text)
+    mode = os.environ.get("RESUME_EXTRACT_MODE", "strict").lower()
+    if mode == "strict":
+        base = explicit or lexicon
+        if base:
+            return _cache_skills(key, _merge_skills(base))
+    if mode == "fast":
+        return _cache_skills(key, _merge_skills(lexicon))
+    if mode == "auto" and (explicit or lexicon):
+        return _cache_skills(key, _merge_skills(explicit, lexicon))
 
     try:
         # Use the SAME num_ctx as the agent so Ollama reuses the resident
@@ -262,10 +394,10 @@ async def extract_skills(resume_text: str, model: str, num_ctx: int = 8192) -> l
         )
         parsed = _parse_skill_list(_text_content(resp.content))
         if parsed:
-            return _cache_skills(key, parsed)
+            return _cache_skills(key, _merge_skills(explicit, parsed))
     except Exception as exc:
         _log({"event": "skill_extractor_error", "detail": str(exc)}, kind="errors")
-    return _cache_skills(key, lexicon)
+    return _cache_skills(key, _merge_skills(explicit, lexicon))
 
 
 # --------------------------------------------------------------------------
@@ -284,6 +416,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="JobScope", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.middleware("http")
+async def _no_cache(request, call_next):
+    """Never serve the previous session's page/CSS/JS. The skills/cities/roles
+    chips change the page between deploys, and a stale cached index.html shows
+    a UI that doesn't match the API (broken Save, missing inputs)."""
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
 
 
 def _frame(obj: dict) -> str:
@@ -311,69 +453,129 @@ async def get_config():
         "role_suggestions": bundle.cfg.role_suggestions,
         "remote_only": bundle.cfg.remote_only,
         "location": bundle.cfg.indeed_location,
+        "cities": bundle.cfg.preferred_cities,
+        "roles": bundle.cfg.target_roles or [bundle.cfg.target_role],
         "tools": [t.name for t in bundle.tools],
     }
 
 
 @app.post("/api/config")
 async def update_config(req: ConfigRequest):
-    """Replace the running agent with a new configuration."""
-    cfg = AgentConfig(
-        target_role=req.target_role,
-        model=req.model,
-        num_ctx=req.num_ctx,
-        days_back=req.days_back,
-        max_results=req.max_results,
-        skills=[s for s in req.skills if s],
-        remote_only=req.remote_only,
-        role_suggestions=app.state.bundle.cfg.role_suggestions,
-    )
-    app.state.bundle = await create_agent(cfg)
+    """Replace the running agent with a new configuration.
+
+    Roles are multi-select: the first is the primary (drives the board query),
+    the rest are kept on the list for matching/context. Never throws a bare
+    500 — restart failures come back as a normal JSON payload so the UI can
+    show what happened instead of a vague network error."""
+    cities = [c.strip() for c in req.cities if c.strip()]
+    roles = [r.strip() for r in req.roles if r.strip()]
+    previous = app.state.bundle.cfg
+    if not roles:
+        # user cleared the chips: fall back to what the hunt is currently using
+        roles = [r for r in (previous.target_roles or [previous.target_role]) if r]
+    if not roles:
+        roles = [req.target_role.strip()] if req.target_role.strip() else []
+    if not roles:
+        roles = ["Junior Data Analyst / entry-level, 0-2 years experience"]
+    primary = roles[0]
+    try:
+        cfg = AgentConfig(
+            target_role=primary,
+            target_roles=roles,
+            model=req.model,
+            num_ctx=req.num_ctx,
+            days_back=req.days_back,
+            max_results=req.max_results,
+            indeed_query=primary,
+            skills=[s for s in req.skills if s],
+            resume_text=app.state.resume_text or previous.resume_text,
+            remote_only=req.remote_only,
+            # with remote_only on the boards search "Remote" and remote India
+            # postings are already filtered; with it off the first chosen city
+            # becomes the boards' location instead of the stale asset default.
+            indeed_location=cities[0] if (cities and not req.remote_only) else "Remote",
+            preferred_cities=cities,
+            role_suggestions=previous.role_suggestions,
+        )
+        app.state.bundle = await create_agent(cfg)
+    except Exception as exc:
+        _log({"event": "config_restart_error", "detail": str(exc)}, kind="errors")
+        return {"ok": False, "error": f"Agent restart failed: {exc}"}
     _log({"event": "config_updated", "model": cfg.model, "num_ctx": cfg.num_ctx,
-          "skills": cfg.skills, "remote_only": cfg.remote_only})
-    return {"ok": True, "target_role": cfg.target_role, "model": cfg.model,
-            "num_ctx": cfg.num_ctx, "skills": cfg.skills,
-            "remote_only": cfg.remote_only, "role_suggestions": cfg.role_suggestions}
+          "skills": cfg.skills, "remote_only": cfg.remote_only,
+          "cities": cities, "roles": roles, "role": primary})
+    return {"ok": True, "target_role": primary, "roles": cfg.target_roles,
+            "model": cfg.model, "num_ctx": cfg.num_ctx, "skills": cfg.skills,
+            "remote_only": cfg.remote_only, "cities": cfg.preferred_cities,
+            "role_suggestions": cfg.role_suggestions}
 
 
 @app.post("/api/resume")
 async def upload_resume(file: UploadFile = File(...)):
     """Crunch a resume/CV into skill keywords, suggest roles for it, infer
-    the user's location/remote preference, and feed all of it to the agent."""
+    the user's location/remote preference, and feed all of it to the agent.
+
+    A new upload ADDS to the existing keyword set instead of replacing it —
+    multiple CVs/resumes accumulate (deduped), so the search keeps every
+    tool/language the user has ever listed."""
     data = await file.read()
     text = _extract_text(data, file.filename or "")
     if not text.strip():
         return {"ok": False, "error": "Could not read any text from that file."}
 
-    skills = await extract_skills(text, app.state.bundle.cfg.model,
-                                  app.state.bundle.cfg.num_ctx)
-    if not skills:
+    new_skills = await extract_skills(text, app.state.bundle.cfg.model,
+                                      app.state.bundle.cfg.num_ctx)
+    if not new_skills:
         return {"ok": False, "error": "No skills could be extracted.",
-                "skills": [], "preview": text[:300]}
+                "skills": list(app.state.bundle.cfg.skills),
+                "preview": text[:300]}
 
-    suggestions = [{**s, "role": f"{s['role']} / entry-level, remote"} for s in suggest_roles(skills)]
+    cfg = app.state.bundle.cfg
+    existing = list(cfg.skills or [])
+    merged = _merge_skills(new_skills, existing)
+    # previous uploads (or manual chips) keep driving the role choice
+    first_upload = not existing
+    suggestions = [{**s, "role": f"{s['role']} / entry-level, remote"}
+                   for s in suggest_roles(merged)]
     inferred = infer_location(text)
-    remote_only = bool(suggestions)  # portfolios with real skills => remote hunt now
+    remote_only = bool(suggestions) or cfg.remote_only
     if inferred.get("remote_only"):
         remote_only = True
 
-    top_role = suggestions[0]["role"] if suggestions else app.state.bundle.cfg.target_role
+    top_role = (suggestions[0]["role"] if first_upload and suggestions
+                else cfg.target_role)
+    # Seed the city chips from the CV only on the FIRST upload — afterwards the
+    # user's manually chosen cities (or an earlier CV's city) stay put, and the
+    # "default Hyderabad" trap (stale resume_data asset) can't override them.
+    seen_c, cities = set(), []
+    for c_ in (cfg.preferred_cities + ([inferred["city"]] if
+               first_upload and inferred.get("city") else [])):
+        if c_ and c_.lower() not in seen_c:
+            seen_c.add(c_.lower())
+            cities.append(c_)
     app.state.bundle.cfg = replace(
-        app.state.bundle.cfg,
-        skills=skills,
-        resume_text=text,
-        role_suggestions=[s["role"] for s in suggestions],
+        cfg,
+        skills=merged,
+        resume_text=(cfg.resume_text + "\n\n" + text).strip()
+        if cfg.resume_text else text,
+        role_suggestions=[s["role"] for s in suggestions] or cfg.role_suggestions,
         target_role=top_role,
-        remote_only=remote_only,
+        target_roles=cfg.target_roles or [top_role],
+        indeed_query=top_role,
         indeed_location="Remote",
         indeed_domain="www.indeed.com",
+        remote_only=remote_only,
+        preferred_cities=cities,
     )
-    app.state.resume_text = text
+    app.state.resume_text = app.state.bundle.cfg.resume_text
     _log({"event": "resume_upload", "file": file.filename, "chars": len(text),
-          "skills": skills, "suggested_role": top_role, "inferred": inferred})
-    return {"ok": True, "skills": skills, "suggestions": suggestions,
+          "skills_added": len(new_skills), "skills_total": len(merged),
+          "first_upload": first_upload, "suggested_role": top_role,
+          "inferred": inferred, "cities": cities})
+    return {"ok": True, "skills": merged, "suggestions": suggestions,
             "inferred": inferred, "target_role": top_role,
-            "preview": text[:400], "chars": len(text)}
+            "cities": cities, "preview": text[:400], "chars": len(text),
+            "skills_added": len(new_skills)}
 
 
 @app.post("/api/resume/gen")

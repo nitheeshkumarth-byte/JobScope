@@ -72,6 +72,30 @@ SENIORITY_FILTER = re.compile(
     r"senior|lead\b|manager|principal|staff|architect|director|head of",
     re.IGNORECASE,
 )
+
+# Plain-language board names a user might type ("only linkedin", "just
+# indeed"). When one is detected in the request, the boards tool is told to
+# scrape ONLY that platform — one board asked for means one board in the deck.
+BOARD_ALIASES = {
+    "Indeed": r"\bindeed\b",
+    "LinkedIn": r"\blinked\s*in\b|\blinkedin\b",
+    "Naukri": r"\bnaukri\b",
+    "Glassdoor": r"\bglassdoor\b",
+    "Foundit": r"\bfoundit\b|\bmonster\b",
+    "Internshala": r"\binternshala\b",
+    "WeWorkRemotely": r"\bwework(?:remotely)?\b|\bwe\s+work\s+remote(?:ly)?\b|\bwwr\b",
+    "Remotive": r"\bremotive\b",
+    "Arbeitnow": r"\barbeitnow\b",
+}
+
+
+def _detect_board(text: str) -> str | None:
+    """First board name mentioned in free-form user text, canonicalized to the
+    scraper's BOARDS keys (None when no board was explicitly requested)."""
+    for canonical, pattern in BOARD_ALIASES.items():
+        if re.search(pattern, text, re.I):
+            return canonical
+    return None
 EXPERIENCE_FILTER = re.compile(r"\b(?:[5-9]|\d{2,})\+\s*(?:years|yrs)\b", re.IGNORECASE)
 
 # Messages that read like a job hunt trigger the deterministic parallel
@@ -118,6 +142,10 @@ class AgentConfig:
     days_back: int = 60
     max_results: int = 10
     indeed_query: str = "Junior Data Analyst"
+    # All the roles the user is open to (multi-select in Settings). target_role
+    # stays the PRIMARY one that focuses the board query; the full list is used
+    # for matching and context so every chosen role gets coverage.
+    target_roles: list[str] = field(default_factory=list)
     indeed_location: str = "Remote"
     indeed_domain: str = "www.indeed.com"
     # Skill keywords (typically extracted from the user's resume/CV). When
@@ -128,6 +156,11 @@ class AgentConfig:
     # Remote / geography constraints (inferred from the CV).
     remote_only: bool = True
     exclude_locations: list[str] = field(default_factory=list)
+    # Cities the user is open to working in/from (chosen in Settings; seeded
+    # from the CV city on first upload). When remote_only is off they set the
+    # boards' location; with remote_only on the location stays "Remote" and
+    # these cities just contextualize the hunt + the resume's contact block.
+    preferred_cities: list[str] = field(default_factory=list)
     # Role titles suggested from the resume's skills (dashboard displays them).
     role_suggestions: list[str] = field(default_factory=list)
     # "template" (default) builds the final summary in code — instant. "llm"
@@ -318,16 +351,23 @@ def system_message(cfg: AgentConfig) -> SystemMessage:
         )
     if cfg.remote_only:
         extra += "\nConstraint: only remote roles NOT based in India."
-    return SystemMessage(content=f"{SYSTEM_PROMPT}{extra}\nTarget role: {cfg.target_role}")
+    roles = cfg.target_roles or [cfg.target_role]
+    return SystemMessage(
+        content=f"{SYSTEM_PROMPT}{extra}\nTarget roles: {', '.join(r for r in roles if r)}"
+    )
 
 
 def search_query_from(cfg: AgentConfig) -> str:
-    """Keyword-driven search query: prefer the strongest skill keywords, then
-    fall back to the plain role title."""
+    """Keyword-driven search query: the PRIMARY role plus the strongest skill
+    keywords (the whole explicit 'Technical Skills' list is used for matching;
+    the query keeps the top few so board searches stay focused)."""
+    terms: list[str] = []
     if cfg.skills:
-        # top 3 skills make a good factual search, title ensures relevance
-        return " ".join(cfg.skills[:3])
-    return cfg.indeed_query
+        terms.extend(cfg.skills[:5])
+    role = (cfg.target_roles[0] if cfg.target_roles else cfg.target_role).strip()
+    if role and role.lower() not in " ".join(terms).lower():
+        terms.insert(0, role)
+    return " ".join(terms) or cfg.target_role
 
 
 def default_task_messages(cfg: AgentConfig):
@@ -388,19 +428,30 @@ async def create_agent(cfg: AgentConfig | None = None) -> "AgentBundle":
     # with a plain, unbound instance of the same model.
     llm_summary = ChatOllama(model=cfg.model, num_ctx=min(cfg.num_ctx, 4096))
 
-    def _collect_message() -> AIMessage:
+    def _collect_message(state: AgentState) -> AIMessage:
         """Deterministic first step of a hunt: emit ONE AIMessage whose
         parallel tool_calls hit the board scraper AND every Gmail alert sender
         simultaneously. Zero LLM inference, so results arrive as fast as the
-        slowest network call instead of an LLM deciding + a sequential fallback."""
+        slowest network call instead of an LLM deciding + a sequential fallback.
+        If the user named a specific board ("only linkedin"), that board is
+        passed to the scraper so the deck comes from it alone."""
         calls = []
         try:
             board = _find_tool(tools, "search_job_boards")
+            human = next(
+                (_text_content(getattr(m, "content", "")) for m in reversed(state["messages"])
+                 if isinstance(m, HumanMessage)),
+                "",
+            )
+            args = {"query": search_query_from(cfg),
+                    "location": cfg.indeed_location,
+                    "remote_only": cfg.remote_only}
+            requested = _detect_board(human)
+            if requested:
+                args["board"] = requested
             calls.append({
                 "id": "c0", "type": "tool_call", "name": board.name,
-                "args": {"query": search_query_from(cfg),
-                         "location": cfg.indeed_location,
-                         "remote_only": cfg.remote_only},
+                "args": args,
             })
         except RuntimeError:
             pass  # scraper server missing — boards search will be skipped
@@ -425,7 +476,7 @@ async def create_agent(cfg: AgentConfig | None = None) -> "AgentBundle":
         if not has_tool_msgs and not state.get("fallback_used") and any(
                 HUNT_HINT.search(_text_content(getattr(m, "content", m)))
                 for m in state["messages"]):
-            return {"messages": [_collect_message()]}
+            return {"messages": [_collect_message(state)]}
         if not (has_tool_msgs or state.get("fallback_used")):
             return {"messages": [llm.invoke(state["messages"])]}
         if cfg.summary_mode != "llm":

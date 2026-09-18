@@ -112,7 +112,7 @@ with multiple MCP tool servers and a deterministic fallback
         API.
   \item \textbf{Tool protocol:} Model Context Protocol (MCP) over stdio — each
         server is a Python subprocess that the agent's client launches.
-  \item \textbf{Job sources:} six job boards via a multi-board scraper, plus a
+  \item \textbf{Job sources:} nine job boards via a multi-board scraper, plus a
         Gmail IMAP fallback.
   \item \textbf{Constraint:} the user lives in India and only wants
         \textbf{remote} jobs that are \textbf{not} based in India. This is
@@ -134,7 +134,7 @@ with multiple MCP tool servers and a deterministic fallback
   \archnode{dash}{indigo}{FastAPI dashboard\\\scriptsize (dashboard.py)}{3.4cm}
   \archnode{agent}{violet}{LangGraph agent\\\scriptsize (agent.py)}{3.0cm}
   \archnode{mcp}{teal}{MCP servers (stdio subprocesses)\\ \scriptsize github \textbar\ scraper \textbar\ gmail}{4.4cm}
-  \archnode{boards}{gray!70}{Job boards (Ind./Lkd/Naukri/GD/Foundit/IS/WWR)\\ \scriptsize WWR static $\Rightarrow$ works; rest blocked $\Rightarrow$ fallback}{4.6cm}
+  \archnode{boards}{gray!70}{Job boards (Ind/Lkd/Nk/GD/Fit/IS/WWR/Remo/Arb)\\ \scriptsize WWR+Remo+Arb+IS-WFH live $\Rightarrow$ mixed deck; big 6 walled $\Rightarrow$ fallback}{4.6cm}
   \archnode{mail}{gray!70}{Gmail IMAP job alerts}{3.2cm}
   \archnode{ollama}{violet!60}{Ollama LLM\\ \scriptsize localhost:11434}{2.8cm}
 
@@ -293,7 +293,7 @@ Every server declares tools with \tool{@mcp.tool()} and runs with
 \textbf{Server} & \textbf{Tools} & \textbf{Notes}\\
 \midrule
 \file{mcp\_server\_github.py} & \tool{list\_github\_repos}, \tool{get\_repo\_readme} & GitHub API + PAT\\
-\file{mcp\_server\_indeed\_scraper.py} & \tool{search\_job\_boards} & 6 boards, per-source blocked status\\
+\file{mcp\_server\_indeed\_scraper.py} & \tool{search\_job\_boards} & 9 boards, per-source blocked status\\
 \file{mcp\_server\_gmail.py} & \tool{search\_job\_emails} & IMAP, 15\,s connect timeout\\
 \bottomrule
 \end{tabular}
@@ -301,12 +301,16 @@ Every server declares tools with \tool{@mcp.tool()} and runs with
 
 \subsection{Multi-board scraper}
 \tool{search\_job\_boards(query, location="Remote", remote\_only=True)} tries
-Indeed, LinkedIn, Naukri, Glassdoor, Foundit, Internshala and WeWorkRemotely
-concurrently in a loop, dedupes results, drops senior/5+-year listings,
-applies the India filter, and reports each board as \emph{a number of
-listings} or \emph{blocked (reason)}. Most boards bot-wall a plain HTTP
-client (403/CAPTCHA or connection refusal), but WeWorkRemotely serves static
-HTML and is ranked by keyword overlap, so real listings usually come back.
+Indeed, LinkedIn, Naukri, Glassdoor, Foundit, Internshala, WeWorkRemotely,
+Remotive and Arbeitnow concurrently (one pool, one DNS was the hang), dedupes
+results, drops senior/5+-year listings, applies the India filter (work-from-
+home roles are exempted), and reports each board as \emph{a number of
+listings} or \emph{blocked (reason)}. A hard deadline caps the whole hunt so
+a stuck fetch can never hang the run. Most big Indian boards still bot-wall
+a plain HTTP client (403/CAPTCHA or connection refusal), but WeWorkRemotely
+serves static HTML and Remotive + Arbeitnow expose keyless JSON feeds, and
+Internshala's work-from-home internships page scrapes cleanly — so a mixed,
+multi-source deck is the norm rather than the Gmail fallback.
 Output ends with a machine-readable block:
 
 \begin{lstlisting}[language=Python]
@@ -336,8 +340,13 @@ The dashboard turns a CV (pdf/txt/md) into the agent's search terms:
 
 \begin{enumerate}
   \item \tool{\_extract\_text} — text from PDF (\tool{pypdf}) or plain text decode.
-  \item \tool{extract\_skills} — LLM-first extraction with a deterministic
-        lexicon fallback (list of $\sim$30 known skills).
+  \item \tool{extract\_skills} — in the default \file{strict} mode it takes
+        \textbf{only} keywords that literally appear in the CV: every entry of
+        the ``Technical Skills'' block if one exists (colons, pipe-separated
+        table rows or bullets), otherwise known skills found verbatim in the
+        text. No invented/norexternal terms; \tool{RESUME\_EXTRACT\_MODE}
+        \file{auto} re-enables lexicon enrichment and \file{llm} forces the
+        local model.
   \item \tool{suggest\_roles} — a rubric scores role titles against the skills
         (e.g.\ \tool{sql python power bi tableau} \(\to\) \emph{Data Analyst}).
   \item \tool{infer\_location} — regex/city lookup on the CV text; the inferred
@@ -456,6 +465,8 @@ A single HTML file (Inter + JetBrains Mono fonts with CDN fallback) that:
 \file{OLLAMA\_MODEL} & Ollama model name & \file{llama3.1}\\
 \file{OLLAMA\_NUM\_CTX} & model context window (tokens) & \file{8192}\\
 \file{TARGET\_ROLE} & role the agent matches listings to & \emph{Junior Data Analyst}\,…\\
+\file{RESUME\_EXTRACT\_MODE} & \file{strict} (keywords only from the CV, no invented extras), \file{auto} (also enriches with a known-skill lexicon), \file{fast} (lexicon only), \file{llm} & \file{strict}\\
+\file{AGENT\_SUMMARY\_MODE} & final answer: \file{template} (instant, in-code) or \file{llm} (local model) & \file{template}\\
 \file{JOB\_DAYS\_BACK} & email search window & \file{60}\\
 \file{JOB\_MAX\_RESULTS} & emails per sender & \file{10}\\
 \file{GITHUB\_TOKEN} & GitHub PAT (public reads) & ---\\
@@ -534,9 +545,11 @@ Common situations:
 
 \subsection{Known limitations}
 \begin{itemize}
-  \item Most boards bot-wall a plain HTTP client; the Gmail fallback is the
-        backup path, and it rarely fires now that WeWorkRemotely serves real
-        listings. A Playwright browser-scraper would fix the rest.
+  \item Some boards (Indeed/LinkedIn/Naukri/Glassdoor/Foundit) bot-wall a plain
+        HTTP client; WeWorkRemotely, Remotive, Arbeitnow and Internshala-WFH
+        return live listings every run, so the Gmail fallback is the backup for
+        a fully-blocked run, not the norm. A Playwright browser-scraper would
+        unlock the rest.
   \item Scrapers return page 1 only.
   \item Gmail IMAP is a blunt \tool{FROM sender} search; Google's own alerts
         are loose matches.
