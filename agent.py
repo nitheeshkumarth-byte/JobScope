@@ -163,6 +163,10 @@ class AgentConfig:
     preferred_cities: list[str] = field(default_factory=list)
     # Role titles suggested from the resume's skills (dashboard displays them).
     role_suggestions: list[str] = field(default_factory=list)
+    # GitHub link used in the LaTeX resume header. Auto-filled from the
+    # uploaded resume when one is found; the user can also set it per session
+    # (Settings drawer / resume modal). Empty -> the generator's own default.
+    github_url: str = ""
     # "template" (default) builds the final summary in code — instant. "llm"
     # runs the local Ollama model instead (slower but more conversational).
     summary_mode: str = "template"

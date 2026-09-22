@@ -4,15 +4,24 @@ dashboard.py — FastAPI backend for the JobScope dashboard.
 Serves static/index.html and streams agent runs to the browser over SSE.
 
 Endpoints
-  GET  /             dashboard UI
-  GET  /api/config   current agent configuration + tools
-  POST /api/config   rebuild the agent with new settings (role, model, skills…)
-  POST /api/resume   upload a resume/CV (txt, md, pdf…) -> skill keywords,
-                     role suggestions and location inference (India / remote)
-  POST /api/resume/gen   build a job-tailored LaTeX resume (+ HTML preview)
-                     for a single listing (see resume_generator.py)
-  POST /api/run      run the agent; SSE stream of token/tool/jobs/error events
-  GET  /api/logs     recent run history + errors (for the History drawer)
+  GET  /                    dashboard UI
+  GET  /api/config          current agent configuration + tools
+  POST /api/config          rebuild the agent with new settings (role, model,
+                            skills, github link…)
+  GET  /api/profiles        sidebar sessions — one profile per CV
+  POST /api/profiles        create a new (empty) profile/session and open it
+  POST /api/profiles/activate   switch to another saved profile
+  POST /api/profiles/delete delete a saved profile
+  POST /api/resume          upload a resume/CV (txt, md, pdf…) -> skill keywords,
+                            role suggestions, location + GitHub link inference
+  POST /api/resume/gen      build a job-tailored LaTeX resume (+ HTML preview)
+                            for a single listing (see resume_generator.py)
+  POST /api/run             run the agent; SSE stream of token/tool/jobs/error events
+  GET  /api/logs            recent run history + errors (for the History drawer)
+
+Sessions: each uploaded CV becomes a profile in the sidebar; switching a
+profile swaps the active search/resume context back into it. Profiles are
+persisted to profiles.json so they survive server restarts.
 
 Logging: every run and every error is appended as JSONL under logs/
 (logs/runs-YYYYMMDD.jsonl and logs/errors.jsonl) so you can audit failures
@@ -52,6 +61,7 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 MAX_CTX_LEN = 10000          # resume text cap sent to the skill extractor
 MAX_RUNS_KEPT = 60           # in-memory run history
+PROFILES_FILE = os.path.join(HERE, "profiles.json")   # sidebar sessions store
 
 # Fallback skill lexicon (used when the local LLM extraction fails).
 FALLBACK_SKILLS = [
@@ -134,6 +144,7 @@ class ResumeGenRequest(BaseModel):
     location: str = ""
     link: str = ""
     source: str = ""
+    github_url: str = ""   # optional override; falls back to the profile's
 
 
 class ConfigRequest(BaseModel):
@@ -146,6 +157,136 @@ class ConfigRequest(BaseModel):
     remote_only: bool = True
     cities: list[str] = []
     roles: list[str] = []
+    github_url: str = ""
+
+
+class ProfileRequest(BaseModel):
+    name: str = ""
+
+
+class ProfileIdRequest(BaseModel):
+    id: str = "default"
+
+
+def _new_profile_id() -> str:
+    return uuid.uuid4().hex[:10]
+
+
+def _load_profiles() -> dict:
+    """Read the sidebar-session store (best-effort; missing/corrupt -> {})."""
+    try:
+        with open(PROFILES_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_profiles(profiles: dict) -> None:
+    """Persist the sidebar-session store; never let a write failure crash."""
+    try:
+        with open(PROFILES_FILE, "w", encoding="utf-8") as f:
+            json.dump(profiles, f, ensure_ascii=False, indent=2)
+    except OSError:
+        pass
+
+
+def _active_profile(app) -> dict:
+    """The currently-open session as the stored dict (created on demand)."""
+    pid = getattr(app.state, "profile_id", None) or "default"
+    profiles = app.state.profiles
+    if pid not in profiles:
+        profiles[pid] = {"id": pid, "name": "Default", "created_at":
+                         time.strftime("%Y-%m-%dT%H:%M:%S"), "resume_text": "",
+                         "github_url": "", "skills": [], "cities": [],
+                         "roles": [], "remote_only": True}
+        _save_profiles(profiles)
+    return profiles[pid]
+
+
+def _snapshot_active_profile(app, skills=None, roles=None, cities=None,
+                             remote_only=None, resume_text=None, github_url=None) -> str:
+    """Record the live agent's choices into the open session (returns the id)."""
+    pid = (getattr(app.state, "profile_id", None) or "default")
+    profile = _active_profile(app)
+    cfg = app.state.bundle.cfg
+    if skills is not None: profile["skills"] = list(skills)
+    if roles is not None: profile["roles"] = list(roles)
+    if cities is not None: profile["cities"] = list(cities)
+    if remote_only is not None: profile["remote_only"] = bool(remote_only)
+    if resume_text is not None: profile["resume_text"] = resume_text
+    if github_url is not None: profile["github_url"] = github_url
+    if not profile.get("name") or profile["name"] in ("Default",):
+        profile["name"] = resume_generator.extract_contact(
+            profile.get("resume_text") or cfg.resume_text or "")["name"] or "Default"
+    _save_profiles(app.state.profiles)
+    return pid
+
+
+def _apply_profile(app, pid: str):
+    """Open a saved session: rebuild the agent with that profile's resume,
+    skills, roles and cities. Preserves the user's model/context/perf picks."""
+    profiles = app.state.profiles
+    if pid not in profiles:
+        pid = "default"
+    snap = profiles[pid]
+    base = app.state.bundle.cfg
+    # NOTE: fall back to PRISTINE neutral defaults (empty lists / remote-only
+    # True), never to `base` — `base` is the *live previous session* and would
+    # leak its role/cities/remote choices into a fresh session. Each session
+    # keeps only the data that was saved for it.
+    roles = [r for r in (snap.get("roles") or []) if r]
+    primary = roles[0] if roles else ""
+    cities = [c for c in (snap.get("cities") or []) if c]
+    skills = [s for s in (snap.get("skills") or []) if s]
+    resume_text = snap.get("resume_text") or ""
+    app.state.bundle.cfg = replace(
+        base,
+        target_role=primary, target_roles=roles, indeed_query=primary,
+        skills=skills, resume_text=resume_text,
+        remote_only=snap.get("remote_only", True),
+        indeed_location=cities[0] if (cities and not snap.get("remote_only")) else "Remote",
+        preferred_cities=cities,
+        role_suggestions=[s for s in (snap.get("role_suggestions") or []) if s],
+        github_url=snap.get("github_url") or "",
+    )
+    if pid != getattr(app.state, "profile_id", None):
+        app.state.profile_id = pid
+    return pid
+
+
+# --------------------------------------------------------------------------
+# Link inference from a resume's plain text (GitHub / LinkedIn / portfolio).
+# --------------------------------------------------------------------------
+
+_GITHUB_LINK_RE = re.compile(
+    r"https?://(?:www\.)?github\.com/([A-Za-z0-9_.-]+)", re.I)
+_LINKEDIN_LINK_RE = re.compile(
+    r"https?://(?:www\.)?linkedin\.com/in/([A-Za-z0-9_-]+)", re.I)
+_HTTP_LINK_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
+_PORTFOLIO_SKIP_RE = re.compile(
+    r"(facebook|instagram|twitter|x\.com|t\.me|wa\.me|youtube|shorts|"
+    r"api\.|schema\.org|w3\.org|\.png|\.jpg|\.jpeg|\.gif|\.svg|mailto|"
+    r"linkedin|github|indeed|glassdoor|naukri|monster)", re.I)
+
+
+def detect_links(text: str) -> dict:
+    """Pull profile links out of resume text: first GitHub and LinkedIn URL,
+    then the first other http(s) URL that isn't a social/cdn/binary asset."""
+    t = text or ""
+    out = {"github": "", "linkedin": "", "portfolio": ""}
+    gh = _GITHUB_LINK_RE.search(t)
+    if gh:
+        out["github"] = resume_generator._normalize_url(gh.group(0))
+    li = _LINKEDIN_LINK_RE.search(t)
+    if li:
+        out["linkedin"] = resume_generator._normalize_url(li.group(0))
+    for m in _HTTP_LINK_RE.finditer(t):
+        url = m.group(0).rstrip(".,;)")
+        if not _PORTFOLIO_SKIP_RE.search(url):
+            out["portfolio"] = resume_generator._normalize_url(url)
+            break
+    return {k: v for k, v in out.items() if v}
 
 
 # --------------------------------------------------------------------------
@@ -175,13 +316,31 @@ def _remember_run(summary: dict) -> None:
 # --------------------------------------------------------------------------
 
 def _extract_text(data: bytes, filename: str) -> str:
-    """Best-effort text extraction from txt/md/csv/html/pdf uploads."""
+    """Best-effort text extraction from txt/md/csv/html/pdf/docx/rtf uploads
+    (DOCX via docx2txt and RTF via striprtf, both soft-imported so the app
+    still runs if pip install was skipped)."""
     name = (filename or "").lower()
     if name.endswith(".pdf"):
         try:
             from pypdf import PdfReader
             reader = PdfReader(io.BytesIO(data))
             text = "\n".join((page.extract_text() or "") for page in reader.pages)
+            if text.strip():
+                return text
+        except Exception:
+            pass
+    elif name.endswith(".docx"):
+        try:
+            import docx2txt
+            text = docx2txt.process(io.BytesIO(data))
+            if text.strip():
+                return text
+        except Exception:
+            pass
+    elif name.endswith(".rtf"):
+        try:
+            from striprtf.striprtf import rtf_to_text
+            text = rtf_to_text(data.decode("latin-1"))
             if text.strip():
                 return text
         except Exception:
@@ -407,9 +566,13 @@ async def extract_skills(resume_text: str, model: str, num_ctx: int = 8192) -> l
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan hook: build the shared agent (boots the MCP server
-    subprocesses) once at startup and release it on shutdown."""
+    subprocesses) once at startup and release it on shutdown. Also restores
+    the sidebar sessions (profiles.json) so prior CVs stay in the app."""
     app.state.bundle = await create_agent()
     app.state.resume_text = ""
+    app.state.profiles = _load_profiles()
+    app.state.profile_id = "default"
+    _active_profile(app)  # ensures a "default" session always exists
     yield
     app.state.bundle = None
 
@@ -455,6 +618,9 @@ async def get_config():
         "location": bundle.cfg.indeed_location,
         "cities": bundle.cfg.preferred_cities,
         "roles": bundle.cfg.target_roles or [bundle.cfg.target_role],
+        "github_url": bundle.cfg.github_url or "",
+        "profile_id": getattr(app.state, "profile_id", None) or "default",
+        "profile_name": (_active_profile(app).get("name") or "Default"),
         "tools": [t.name for t in bundle.tools],
     }
 
@@ -478,6 +644,7 @@ async def update_config(req: ConfigRequest):
     if not roles:
         roles = ["Junior Data Analyst / entry-level, 0-2 years experience"]
     primary = roles[0]
+    github_url = resume_generator._normalize_url(req.github_url)
     try:
         cfg = AgentConfig(
             target_role=primary,
@@ -496,28 +663,116 @@ async def update_config(req: ConfigRequest):
             indeed_location=cities[0] if (cities and not req.remote_only) else "Remote",
             preferred_cities=cities,
             role_suggestions=previous.role_suggestions,
+            github_url=github_url,
         )
         app.state.bundle = await create_agent(cfg)
+        _snapshot_active_profile(app, skills=cfg.skills, roles=cfg.target_roles,
+                                 cities=cfg.preferred_cities,
+                                 remote_only=cfg.remote_only,
+                                 github_url=cfg.github_url or None)
     except Exception as exc:
         _log({"event": "config_restart_error", "detail": str(exc)}, kind="errors")
         return {"ok": False, "error": f"Agent restart failed: {exc}"}
     _log({"event": "config_updated", "model": cfg.model, "num_ctx": cfg.num_ctx,
           "skills": cfg.skills, "remote_only": cfg.remote_only,
-          "cities": cities, "roles": roles, "role": primary})
+          "cities": cities, "roles": roles, "role": primary,
+          "profile": getattr(app.state, "profile_id", None),
+          "github_url": cfg.github_url})
     return {"ok": True, "target_role": primary, "roles": cfg.target_roles,
             "model": cfg.model, "num_ctx": cfg.num_ctx, "skills": cfg.skills,
             "remote_only": cfg.remote_only, "cities": cfg.preferred_cities,
-            "role_suggestions": cfg.role_suggestions}
+            "role_suggestions": cfg.role_suggestions,
+            "github_url": cfg.github_url}
+
+
+@app.get("/api/profiles")
+async def list_profiles():
+    """Sidebar sessions: every saved profile with a compact summary and which
+    one is currently open."""
+    profiles = _active_profile(app)
+    _ = profiles  # ensure a default exists
+    pid = getattr(app.state, "profile_id", None) or "default"
+    rows = [{
+        "id": p["id"], "name": p.get("name") or p["id"][:8],
+        "created_at": p.get("created_at", ""),
+        "skills": len(p.get("skills") or []),
+        "resume_chars": len(p.get("resume_text") or ""),
+        "github": p.get("github_url") or "",
+        "active": p["id"] == pid,
+    } for p in sorted(app.state.profiles.values(),
+                      key=lambda p: (p["id"] != "default", p["created_at"]))]
+    return {"profiles": rows, "active": pid}
+
+
+@app.post("/api/profiles")
+async def create_profile(req: ProfileRequest | None = None):
+    """A fresh, empty session in the sidebar (optionally named) and open it.
+    Accepts a bodyless POST (the UI sends `POST /api/profiles` with no JSON) so
+    the + New button always works even if the client sends no name."""
+    app.state.bundle  # ensure the agent is up before we switch
+    pid = _new_profile_id()
+    app.state.profiles[pid] = {
+        "id": pid, "name": ((req.name if req else "") or "New session").strip(),
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "resume_text": "",
+        "github_url": "", "skills": [], "cities": [], "roles": [],
+        "remote_only": True,
+    }
+    _save_profiles(app.state.profiles)
+    _apply_profile(app, pid)
+    return {"ok": True, "id": pid,
+            "name": (req.name if req else "") or "New session"}
+
+
+@app.post("/api/profiles/activate")
+async def activate_profile(req: ProfileIdRequest):
+    """Switch to a saved session: current choices are snapshotted back into
+    the open profile first, then the target's resume/skills are loaded."""
+    # stash the live (possibly unsaved) role/city/skill chips into the session
+    live = app.state.bundle.cfg
+    _snapshot_active_profile(app, skills=live.skills, roles=live.target_roles,
+                             cities=live.preferred_cities,
+                             remote_only=live.remote_only,
+                             resume_text=live.resume_text,
+                             github_url=live.github_url or None)
+    pid = _apply_profile(app, req.id)
+    try:
+        app.state.bundle = await create_agent(app.state.bundle.cfg)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    app.state.resume_text = app.state.bundle.cfg.resume_text
+    cfg = app.state.bundle.cfg
+    _log({"event": "profile_loaded", "profile": pid, "skills": len(cfg.skills)})
+    return {"ok": True, "profile_id": pid, "target_role": cfg.target_role,
+            "skills": cfg.skills, "roles": cfg.target_roles or [cfg.target_role],
+            "cities": cfg.preferred_cities, "remote_only": cfg.remote_only,
+            "github_url": cfg.github_url or ""}
+
+
+@app.post("/api/profiles/delete")
+async def delete_profile(req: ProfileIdRequest):
+    """Remove a saved session. Deleting the open one falls back to Default."""
+    profiles = app.state.profiles
+    pid = req.id
+    if pid in ("default",):
+        return {"ok": False, "error": "The Default session can't be deleted."}
+    profiles.pop(pid, None)
+    _save_profiles(profiles)
+    if (getattr(app.state, "profile_id", None)) == pid:
+        _apply_profile(app, "default")
+    return {"ok": True}
 
 
 @app.post("/api/resume")
 async def upload_resume(file: UploadFile = File(...)):
-    """Crunch a resume/CV into skill keywords, suggest roles for it, infer
-    the user's location/remote preference, and feed all of it to the agent.
+    """Crunch a resume/CV into skill keywords for it, suggest roles for it,
+    infer the user's location/remote preference, and feed all of it to the
+    agent.
 
-    A new upload ADDS to the existing keyword set instead of replacing it —
-    multiple CVs/resumes accumulate (deduped), so the search keeps every
-    tool/language the user has ever listed."""
+    Every upload starts its OWN fresh session (exactly like the sidebar
+    "+ New" session): the sidebar keeps every previous CV/session untouched
+    with its own skills/roles/cities, and this new CV opens a brand-new blank
+    session fed by exactly this file — none of the old cross-session merge /
+    accumulate logic applies anymore."""
     data = await file.read()
     text = _extract_text(data, file.filename or "")
     if not text.strip():
@@ -531,51 +786,75 @@ async def upload_resume(file: UploadFile = File(...)):
                 "preview": text[:300]}
 
     cfg = app.state.bundle.cfg
-    existing = list(cfg.skills or [])
-    merged = _merge_skills(new_skills, existing)
-    # previous uploads (or manual chips) keep driving the role choice
-    first_upload = not existing
+    # Every upload = its OWN fresh session: the previous sessions keep their
+    # CV/skills/roles untouched in the sidebar, and this new CV starts a blank
+    # session (a clean slate fed by exactly this file — no cross-session carry-
+    # over, no stale "Hyderabad" resume_data asset). None of the old merge /
+    # accumulate logic applies anymore.
     suggestions = [{**s, "role": f"{s['role']} / entry-level, remote"}
-                   for s in suggest_roles(merged)]
+                   for s in suggest_roles(new_skills)]
     inferred = infer_location(text)
-    remote_only = bool(suggestions) or cfg.remote_only
+    remote_only = bool(suggestions) or True
     if inferred.get("remote_only"):
         remote_only = True
 
-    top_role = (suggestions[0]["role"] if first_upload and suggestions
-                else cfg.target_role)
-    # Seed the city chips from the CV only on the FIRST upload — afterwards the
-    # user's manually chosen cities (or an earlier CV's city) stay put, and the
-    # "default Hyderabad" trap (stale resume_data asset) can't override them.
-    seen_c, cities = set(), []
-    for c_ in (cfg.preferred_cities + ([inferred["city"]] if
-               first_upload and inferred.get("city") else [])):
-        if c_ and c_.lower() not in seen_c:
-            seen_c.add(c_.lower())
-            cities.append(c_)
-    app.state.bundle.cfg = replace(
-        cfg,
-        skills=merged,
-        resume_text=(cfg.resume_text + "\n\n" + text).strip()
-        if cfg.resume_text else text,
-        role_suggestions=[s["role"] for s in suggestions] or cfg.role_suggestions,
-        target_role=top_role,
-        target_roles=cfg.target_roles or [top_role],
-        indeed_query=top_role,
-        indeed_location="Remote",
-        indeed_domain="www.indeed.com",
-        remote_only=remote_only,
-        preferred_cities=cities,
-    )
+    top_role = (suggestions[0]["role"] if suggestions
+                else cfg.target_role or "")
+    # Seed ONLY this CV's own city — not a carry-over from another upload, not
+    # a stale asset default, not the previous session's manually chosen cities.
+    cities = ([inferred["city"]] if inferred.get("city") else [])
+
+    # Pull the GitHub (and other profile) link out of the CV text so the LaTeX
+    # resume header carries the real one instead of a hardcoded copy.
+    detected_links = detect_links(text)
+    github_url = detected_links.get("github") or ""
+
+    # Build a brand-new profile for this upload (skills/roles/cities come from
+    # THIS CV alone — nothing is merged in from other sessions) and open it,
+    # exactly like the sidebar "+ New" session would, then hand the CV to it.
+    pid = _new_profile_id()
+    try:
+        name = resume_generator.extract_contact(text)["name"] or "New session"
+    except Exception:
+        name = "New session"
+    app.state.profiles[pid] = {
+        "id": pid, "name": name, "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "resume_text": text, "github_url": github_url, "skills": list(new_skills),
+        "cities": cities, "roles": [s["role"] for s in suggestions],
+        "remote_only": remote_only,
+    }
+    _save_profiles(app.state.profiles)
+    _apply_profile(app, pid)
     app.state.resume_text = app.state.bundle.cfg.resume_text
+
     _log({"event": "resume_upload", "file": file.filename, "chars": len(text),
-          "skills_added": len(new_skills), "skills_total": len(merged),
-          "first_upload": first_upload, "suggested_role": top_role,
-          "inferred": inferred, "cities": cities})
-    return {"ok": True, "skills": merged, "suggestions": suggestions,
+          "skills_added": len(new_skills), "skills_total": len(new_skills),
+          "suggested_role": top_role, "inferred": inferred, "cities": cities,
+          "links": detected_links, "profile": pid})
+    return {"ok": True, "skills": list(new_skills), "suggestions": suggestions,
             "inferred": inferred, "target_role": top_role,
             "cities": cities, "preview": text[:400], "chars": len(text),
-            "skills_added": len(new_skills)}
+            "skills_added": len(new_skills), "github": github_url,
+            "links": detected_links, "profile_id": pid}
+
+
+@app.post("/api/resume/detect")
+async def detect_resume_github():
+    """Pull profile links out of the resume/CV we already hold on disk.
+
+    The *Detect* buttons in the Settings drawer call this: it re-runs
+    detect_links() over the resume text that's stored with the active
+    profile (the same text an upload just processed), so a user can grab
+    their GitHub / LinkedIn / portfolio link at any time — even without
+    re-uploading the file.
+    """
+    cfg = app.state.bundle.cfg
+    text = cfg.resume_text or ""
+    links = detect_links(text) if text.strip() else {}
+    return {"ok": True,
+            "github_url": links.get("github") or "",
+            "linkedin": links.get("linkedin") or "",
+            "portfolio": links.get("portfolio") or ""}
 
 
 @app.post("/api/resume/gen")
@@ -592,15 +871,18 @@ async def generate_resume(req: ResumeGenRequest):
     try:
         desc = await asyncio.to_thread(resume_generator.desc_snippet, req.link)
         cfg = app.state.bundle.cfg
+        github_url = resume_generator._normalize_url(
+            req.github_url or getattr(cfg, "github_url", ""))
         tex, fname = await asyncio.to_thread(
-            resume_generator.build_resume, cfg, job, desc)
+            resume_generator.build_resume, cfg, job, desc, github_url)
         preview = await asyncio.to_thread(resume_generator.tex_to_html, tex)
     except Exception as exc:
         _log({"event": "resume_gen_error", "detail": str(exc)}, kind="errors")
         return {"ok": False, "error": str(exc)}
-    _log({"event": "resume_generated", "job": job, "desc_chars": len(desc)})
+    _log({"event": "resume_generated", "job": job, "desc_chars": len(desc),
+          "github_url": github_url})
     return {"ok": True, "filename": fname, "tex": tex, "preview": preview,
-            "desc_fetched": bool(desc)}
+            "desc_fetched": bool(desc), "github_url": github_url}
 
 
 @app.get("/api/logs")
@@ -632,7 +914,8 @@ async def _run_stream(message: str, run_id: str, t0: float):
                   "message": "Agent starting…"})
     _log({"run": run_id, "event": "start", "message": message,
           "skills": skills, "model": bundle.cfg.model,
-          "remote_only": bundle.cfg.remote_only})
+          "remote_only": bundle.cfg.remote_only,
+          "profile": getattr(app.state, "profile_id", None) or "default"})
 
     payload = {"messages": [system_message(bundle.cfg),
                             HumanMessage(content=message)]}

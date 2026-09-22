@@ -68,7 +68,6 @@ button { font: inherit; cursor: pointer; }
 input, textarea { font: inherit; color: var(--text); }
 
 .app { max-width: 900px; margin: 0 auto; padding: 0 18px 36px; height: 100vh; display: flex; flex-direction: column; }
-main.chat { flex: 1; overflow-y: auto; padding: 18px 4px 8px; scroll-behavior: smooth; }
 main.chat::-webkit-scrollbar { width: 8px; }
 main.chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
 
@@ -249,6 +248,25 @@ header { display: flex; align-items: center; gap: 12px; padding: 16px 2px 0; }
 .drawer label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin: 16px 0 6px; }
 .drawer input[type=text], .drawer input[type=number], .drawer textarea { width: 100%; border: 1px solid var(--border); background: var(--surface-2); border-radius: 9px; padding: 8px 10px; outline: none; }
 .drawer input:focus, .drawer textarea:focus { border-color: var(--accent); }
+
+/* ---------- sidebar (sessions) ---------- */
+.sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 262px; background: var(--surface); border-right: 1px solid var(--border); z-index: 40; display: flex; flex-direction: column; transform: translateX(-105%); transition: transform .22s ease; }
+.sidebar.show { transform: translateX(0); }
+.shead { display: flex; align-items: center; gap: 8px; padding: 14px 14px; border-bottom: 1px solid var(--border); }
+.shead h2 { font-size: 14px; margin: 0; flex: 1; }
+.sbody { flex: 1; overflow-y: auto; padding: 10px 10px; }
+.srow { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 8px; cursor: pointer; }
+.srow:hover { background: var(--surface-2); }
+.srow.on { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+.srow .sname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.srow .smeta { flex-basis: 100%; font-size: 11px; color: var(--muted); padding-left: 10px; }
+.srow .sdel { opacity: 0; transition: opacity .15s; }
+.srow:hover .sdel { opacity: 1; }
+.sdelx { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 14px; padding: 2px 6px; }
+.sdelx:hover { color: var(--danger, #e5484d); }
+.snew { margin: 4px 10px 0; }
+.sfoot { padding: 12px 14px; border-top: 1px solid var(--border); }
+@media (min-width: 901px) { body.sidebar-on { padding-left: 262px; } }
 .drop { border: 1.5px dashed var(--border); border-radius: 10px; padding: 14px; text-align: center; color: var(--muted); font-size: 13px; cursor: pointer; transition: all .15s; }
 .drop:hover, .drop.drag { border-color: var(--accent); color: var(--accent); }
 .chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
@@ -300,9 +318,21 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
   <div class="spacer"></div>
   <div id="status" class="status"><span class="pulse"></span><span id="statusText">Connecting…</span><span class="modeltag" id="modelTag"></span></div>
   <button class="iconbtn" id="themeBtn" title="Toggle theme">Dark</button>
-  <button class="iconbtn" id="logsBtn" title="Run logs">History</button>
-  <button class="iconbtn" id="settingsBtn" title="Role, skills, model">Settings</button>
+<button class="iconbtn" id="sidebarBtn" title="Saved sessions / profiles">Sessions</button>
+<button class="iconbtn" id="logsBtn" title="Run logs">History</button>
+<button class="iconbtn" id="settingsBtn" title="Role, skills, model">Settings</button>
 </header>
+
+<aside class="sidebar" id="sidebar">
+  <div class="shead">
+    <h2>Sessions</h2>
+    <button class="btn ghost" id="sessNewBtn" title="Start a fresh session">＋ New</button>
+  </div>
+  <div class="slist" id="sessList"></div>
+  <div class="sfoot">
+    <div class="sub">Each session keeps its own profile, agent config &amp; resume. Switch freely — tweaks to the active one are saved when you restart.</div>
+  </div>
+</aside>
 
 <div class="app">
   <div class="circuit">
@@ -368,7 +398,11 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
     <div class="addrow"><input type="text" id="cityAdd" placeholder="Add a city…"><button class="btn ghost" id="cityAddBtn">Add</button></div>
     <div class="sub">Seeded from your CV on first upload; leave empty to search anywhere (remote).</div>
 
-    <label>Skills → search keywords</label>
+    <label>GitHub profile link</label>
+    <div class="addrow"><input type="text" id="cfgGithub" placeholder="https://github.com/yourname"><button class="btn ghost" id="githubDetectBtn" title="Auto-pull from your resume / CV">🪄 Detect</button></div>
+    <div class="sub">Shown in the top-right corner of every LaTeX resume you generate. Leave blank and it stays empty; *Detect* grabs one from your resume or CV. Overwrite it here when your CV doesn't carry one.</div>
+
+    <div class="section-title">Resume / CV</div>
     <div class="drop" id="dropResume">Upload resume / CV (.pdf, .txt, .md) — skills, role suggestions &amp; location are extracted automatically</div>
     <input type="file" id="resumeFile" hidden accept=".pdf,.txt,.md">
     <div class="chips" id="skillChipsEdit"></div>
@@ -417,6 +451,7 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
       <span class="rdesc" id="rDesc"></span>
       <button class="btn ghost" id="rCopy" title="Copy the .tex to your clipboard">Copy LaTeX</button>
       <button class="btn primary" id="rDownload" style="width:auto" title="Save the .tex file">Download .tex</button>
+      <button class="btn primary" id="rDownloadPv" style="width:auto" title="Save the rendered resume preview as a standalone .html">Download preview</button>
     </div>
   </div>
 </div>
@@ -569,6 +604,39 @@ $("rDownload").onclick = () => {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   toast("Downloading " + a.download);
 };
+$("rDownloadPv").onclick = () => {
+  const pv = $("rBodyPreview");
+  if (!pv || !pv.innerHTML.trim()) { toast("Nothing to download yet"); return; }
+  const css = "<style>" + Array.from(document.styleSheets).flatMap(s => {
+    try { return Array.from(s.cssRules || []).map(r => r.cssText); }
+    catch { return []; }
+  }).join("\n") + "</style>";
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(_rFile.replace(/\.tex$/i, ""))} — preview</title>${css}</head>
+<body style="margin:0;padding:18px;background:#eef1f5">${pv.innerHTML}</body></html>`;
+  const blob = new Blob([html], { type: "text/html" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = _rFile.replace(/\.tex$/i, "") + "-preview.html";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast("Downloading " + a.download);
+};
+$("rDownloadPv").onclick = () => {
+  const pv = $("rBodyPreview").querySelector(".resume-preview");
+  if (!pv) { toast("Nothing to download yet — generate a resume first."); return; }
+  const html = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+    + "<title>" + esc(_rFile.replace(/\.tex$/i, "")) + " — preview</title>"
+    + "<style>" + (document.querySelector("style") ? Array.from(document.querySelectorAll("style,link[rel=stylesheet]")).map(s => s.outerHTML).join("") : "") + "</style>"
+    + "</head><body style=\"background:#eef1f5;padding:18px;margin:0\">" + "<div class=\"wrap\"><div class=\"resume-preview\">" + pv.innerHTML + "</div></div></body></html>";
+  const blob = new Blob([html], { type: "text/html" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = _rFile.replace(/\.tex$/i, ".html") || "Resume-preview.html";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast("Downloading rendered preview " + a.download);
+};
 
 function openResume(job) {
   $("rModalTitle").textContent = (job.title || "Job") + (job.company ? " \u2014 " + job.company : "");
@@ -587,7 +655,7 @@ function openResume(job) {
 async function generateResume(job) {
   try {
     const res = await fetch("/api/resume/gen", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: job.title || "", company: job.company || "", location: job.location || "", link: job.link || "", source: job.source || "" }) });
+      body: JSON.stringify({ title: job.title || "", company: job.company || "", location: job.location || "", link: job.link || "", source: job.source || "", github_url: $("cfgGithub").value.trim() || "" }) });
     const r = await res.json();
     if (!r.ok) {
       $("rBodyPreview").innerHTML = '<div class="empty">Failed to build resume — ' + esc(r.error || "server error") + "</div>";
@@ -715,10 +783,56 @@ $("themeBtn").onclick = () => {
 
 /* ---------- settings / resume / suggestions ---------- */
 function openDrawer(id) { $(id).classList.add("show"); $("overlay").classList.add("show"); }
-function closeDrawers() { document.querySelectorAll(".drawer").forEach(d => d.classList.remove("show")); $("overlay").classList.remove("show"); }
+function closeDrawers() {
+  document.querySelectorAll(".drawer").forEach(d => d.classList.remove("show"));
+  $("sidebar").classList.remove("show"); document.body.classList.remove("sidebar-on");
+  $("overlay").classList.remove("show");
+}
 $("overlay").onclick = closeDrawers;
 document.querySelectorAll("[data-close]").forEach(b => b.onclick = closeDrawers);
 $("settingsBtn").onclick = () => openDrawer("settingsDrawer");
+
+/* ---------- sessions / profiles sidebar ---------- */
+function openDrawer(id) { $(id).classList.add("show"); $("overlay").classList.add("show"); }
+function openSidebar() { $("sidebar").classList.add("show"); $("overlay").classList.add("show"); document.body.classList.add("sidebar-on"); }
+function closeDrawers() {
+  document.querySelectorAll(".drawer, .sidebar").forEach(d => d.classList.remove("show"));
+  document.body.classList.remove("sidebar-on");
+  $("overlay").classList.remove("show");
+}$("sidebarBtn").onclick = () => { if ($("sidebar").classList.contains("show")) { closeDrawers(); } else { openSidebar(); } };
+
+async function loadSessions() {
+  const r = await (await fetch("/api/profiles", { cache: "no-store" })).json();
+  const box = $("sessList"); box.innerHTML = "";
+  if (!r.ok) { box.innerHTML = '<div class="sub" style="color:var(--danger)">⚠ ' + esc(r.error || "could not load sessions") + "</div>"; return; }
+  (r.profiles || []).forEach(p => {
+    const row = document.createElement("div"); row.className = "srow" + (p.id === r.active ? " on" : "");
+    row.onclick = () => activateSession(p.id);
+    const n = document.createElement("div"); n.className = "sname"; n.textContent = p.name || "Session " + (p.created_at || "").slice(0, 16); n.title = p.id;
+    const del = document.createElement("button"); del.className = "sdel"; del.textContent = "🗑"; del.title = "Delete this session / profile";
+    del.onclick = (e) => { e.stopPropagation(); deleteSession(p.id); };
+    row.append(n, del); box.appendChild(row);
+  });
+  if (!(r.profiles || []).length) box.innerHTML = '<div class="sub">One session is created for you on first run — tweak the active profile in Settings, then Save &amp; restart.</div>';
+}
+async function newSession() {
+  const r = await (await fetch("/api/profiles", { method: "POST" })).json();
+  if (!r.ok) { toast(r.error || "could not create session"); return; }
+  await loadSessions(); toast("New session created — open Settings to set it up."); openSidebar();
+}
+async function activateSession(id) {
+  const r = await (await fetch("/api/profiles/activate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })).json();
+  if (!r.ok) { toast(r.error || "could not switch"); return; }
+  await loadSessions(); await loadConfig(); toast("Switched to session " + id.slice(0, 6));
+}
+async function deleteSession(id) {
+  if (!confirm("Delete this session and its profile / resume?")) return;
+  const r = await (await fetch("/api/profiles/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })).json();
+  if (!r.ok) { toast(r.error || "delete failed"); return; }
+  await loadSessions(); if (r.active) { await loadConfig(); } toast("Session deleted");
+}
+$("sessNewBtn").onclick = newSession;
+loadSessions();
 $("logsBtn").onclick = () => { openDrawer("logsDrawer"); loadLogs(); };
 
 async function loadConfig() {
@@ -729,6 +843,7 @@ async function loadConfig() {
     $("cfgDays").value = r.days_back || 60;
     $("cfgMax").value = r.max_results || 10;
     $("cfgRemote").checked = r.remote_only !== false;
+    $("cfgGithub").value = r.github_url || "";
     $("modelTag").textContent = r.model || "";
     renderSuggestions(r.role_suggestions || []);
     renderSkillChips(r.skills || []);
@@ -824,10 +939,26 @@ async function uploadResume(file) {
       if (r.inferred.remote_only !== undefined) $("cfgRemote").checked = !!r.inferred.remote_only;
     }
     renderCityChips(r.cities || []);
-    $("resumeState").textContent = "✔ " + r.skills.length + " skills · suggested roles ready — Save & restart to lock in.";
-    toast("Resume analyzed: " + r.skills.length + " skills");
+    // This CV = its OWN fresh session (the backend already built + opened it).
+    // Reload the sidebar so the new session appears with its own skills/roles
+    // and shows as the open one — the previous session keeps ITS data in the
+    // sidebar untouched, so nothing from before carries over to this CV.
+    await loadSessions();
+    $("resumeState").textContent = "✔ " + r.skills.length + " skills · new session opened (previous CVs stay saved in the sidebar)";
+    toast("Resume analyzed — new session opened: " + r.skills.length + " skills");
   } catch (e) { $("resumeState").textContent = "⚠ Upload failed: " + e.message; }
 }
+
+$("githubDetectBtn").onclick = async () => {
+  $("cfgState").textContent = '<span class="spin"></span> Scanning resume for GitHub…';
+  try {
+    const r = await (await fetch("/api/resume/detect", { method: "POST" })).json();
+    if (!r.ok) throw new Error(r.error || "detect failed");
+    if (r.github_url) { $("cfgGithub").value = r.github_url; toast("Detected GitHub: " + r.github_url); }
+    else toast("No GitHub link found in your resume / CV");
+  } catch (e) { toast("Detect failed: " + e.message); }
+  setTimeout(() => { $("cfgState").textContent = ""; }, 4000);
+};
 
 $("saveCfg").onclick = async () => {
   $("cfgState").innerHTML = '<span class="spin"></span> Restarting agent…';
@@ -837,7 +968,7 @@ $("saveCfg").onclick = async () => {
       target_role: roles[0] || "", roles: roles, model: $("cfgModel").value,
       days_back: Number($("cfgDays").value) || 60, max_results: Number($("cfgMax").value) || 10,
       skills: currentSkills(), remote_only: $("cfgRemote").checked,
-      cities: currentCities()
+      cities: currentCities(), github_url: $("cfgGithub").value.trim() || ""
     };
     const res = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error("HTTP " + res.status);

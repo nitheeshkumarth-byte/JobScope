@@ -19,3 +19,6 @@ logs/*.jsonl
 *.log
 *.out
 *.synctex.gz
+
+# Sidebar session store (personal resume data)
+profiles.json

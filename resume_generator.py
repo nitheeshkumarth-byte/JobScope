@@ -16,10 +16,16 @@ Triggered by the dashboard's /api/resume/gen when the user clicks the
      so the browser can show it immediately (no TeX installation required).
 
 The produced .tex compiles with a plain pdflatex install (no extra classes).
+Everything that comes from the job boards (titles with emoji or rupee signs,
+descriptions, URLs) is ascii-folded and LaTeX-escaped before it enters the
+document, so the file also compiles as-is when pasted into Overleaf. The
+GitHub link in the header is taken from the resume (or a user-supplied URL)
+instead of a hardcoded copy.
 """
 
 import re
 import html as html_mod
+import unicodedata
 
 import requests
 
@@ -126,14 +132,64 @@ ATS_TEMPLATE = r"""% -----------------------------------------------------------
 
 
 def _lx(text: str) -> str:
-    """Escape LaTeX special chars so arbitrary CV/job text can't break the
-    generated document (common gotcha: %, &, $, #, _, braces, ~, ^)."""
+    r"""Escape LaTeX special chars so arbitrary CV/job text can't break the
+    generated document (common gotcha: %, &, $, #, _, braces, ~, ^, \)."""
     table = {
         "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#",
         "_": r"\_", "{": r"\{", "}": r"\}", "~": r"\textasciitilde{}",
-        "^": r"\textasciicircum{}",
+        "^": r"\textasciicircum{}", "\\": r"\textbackslash{}",
     }
     return "".join(table.get(ch, ch) for ch in str(text))
+
+
+def _lx_url(s: str) -> str:
+    """Escape a URL for a \\href{...} argument. pdflatex chokes on literal #, %
+    and & inside macro arguments even for hyperref — those must be escaped."""
+    return (str(s).strip()
+            .replace("\\", "/")
+            .replace("{", r"\{").replace("}", r"\}")
+            .replace("%", r"\%").replace("#", r"\#")
+            .replace("&", r"\&").replace("_", r"\_")
+            .replace("~", r"\~").replace("^", r"\^"))
+
+
+def _ascii_fold(text: str) -> str:
+    """Make arbitrary job/board text compile-safe for pdflatex.
+
+    Overleaf's default engine (pdflatex + utf8 inputenc) errors on characters
+    it has no mapping for — emoji (LinkedIn titles carry \U0001F30E globes),
+    the Indian rupee sign (\u20B9 from Indeed salaries), non-Latin scripts,
+    en/em dashes, etc. Unicode normalize, map the common symbols we actually
+    see, then drop whatever still isn't ASCII."""
+    t = str(text)
+    for src, dst in (("\u20b9", "Rs. "), ("\u20ac", "EUR "), ("\u00a3", "GBP "),
+                     ("\u00a5", "JPY "), ("\u00b0", "deg"), ("\u2013", "-"),
+                     ("\u2014", "-"), ("\u00d7", "x"), ("\ufeff", ""),
+                     ("\u2605", "*"), ("\u2606", "*"), ("\u2022", "-")):
+        t = t.replace(src, dst)
+    t = unicodedata.normalize("NFKD", t)
+    t = t.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[\x00-\x1f\x7f]", " ", t)
+
+
+def _normalize_url(url: str) -> str:
+    """Clean a user-supplied link: strip, drop protocol-less form's whitespace,
+    add https:// when missing, killing trailing junk."""
+    u = (url or "").strip().strip("\"'<>")
+    if not u:
+        return ""
+    if not re.match(r"^[a-z][a-z0-9+.-]*://", u, re.I):
+        u = "https://" + u
+    return u
+
+
+_GITHUB_RE = re.compile(r"https?://(?:www\.)?github\.com/([A-Za-z0-9_.-]+)", re.I)
+
+
+def _find_github(text: str) -> str:
+    """Pull the first GitHub URL out of a resume's plain text ('' if none)."""
+    m = _GITHUB_RE.search(text or "")
+    return m.group(0) if m else ""
 
 
 def extract_contact(text: str) -> dict:
@@ -213,33 +269,48 @@ def _rank_skills(job_text: str) -> tuple[list, list]:
     return ranked, uniq
 
 
-def build_resume(cfg, job: dict, desc: str = "") -> tuple[str, str]:
+def build_resume(cfg, job: dict, desc: str = "", github_url: str = "") -> tuple[str, str]:
     """Assemble the tailored .tex document.
 
     Returns (latex_source, suggested_filename). job carries the flashcard
     fields (title/company/location/link/source). If desc is '' the objective
-    leans on the role title + the canonical skill list instead."""
-    role = (job.get("title") or cfg.target_role or "the role").strip()
-    company = (job.get("company") or "").strip()
+    leans on the role title + the canonical skill list instead.
+
+    github_url is the header link for the GitHub entry: explicit argument >
+    agent config > found inside the resume text > the canonical default. An
+    empty override keeps whatever the resume/canonical data held. Everything
+    embedded into the .tex is ascii-folded so the doc compiles on Overleaf's
+    plain pdflatex even when a board's title contains emoji/rupee signs."""
+    role = _ascii_fold((job.get("title") or cfg.target_role or "the role").strip())
+    company = _ascii_fold((job.get("company") or "").strip())
+    desc = _ascii_fold(desc)
 
     job_text = f"{desc} {role} {company} {cfg.resume_text or ''}"
     ranked_skills, matched = _rank_skills(job_text)
 
     # Header contact + links (canonical, optionally overridden by the CV).
     contact = extract_contact(cfg.resume_text or "")
-    name = contact["name"] or resume_data.NAME
+    name = _ascii_fold(contact["name"] or resume_data.NAME)
     email = contact["email"] or resume_data.EMAIL
     phone = contact["phone"] or resume_data.PHONE
-    location = contact["location"] or resume_data.LOCATION
+    location = _ascii_fold(contact["location"] or resume_data.LOCATION)
 
     contact_line = " \\quad $\\vert$ \\quad ".join(
         p for p in (phone,
-                    f"\\href{{mailto:{_lx(email)}}}{{{_lx(email)}}}",
+                    f"\\href{{mailto:{_lx_url(email)}}}{{{_lx(email)}}}",
                     _lx(location)) if p)
+
+    links = dict(resume_data.LINKS)
+    gh = _normalize_url(github_url or getattr(cfg, "github_url", "")
+                        or _find_github(cfg.resume_text or ""))
+    if gh:
+        links["github"] = gh
     link_items = []
-    for url in resume_data.LINKS.values():
-        display = url.split("//", 1)[-1].rstrip("/")
-        link_items.append(f"\\href{{{url}}}{{{display}}}")
+    for url in links.values():
+        if not url:
+            continue
+        display = _ascii_fold(url.split("//", 1)[-1].rstrip("/"))
+        link_items.append(f"\\href{{{_lx_url(url)}}}{{{display}}}")
     links_line = " \\quad $\\vert$ \\quad ".join(link_items)
 
     # Objective: name the posting, map in the strongest matched skills.
@@ -306,8 +377,15 @@ def tex_to_html(tex: str) -> str:
 
     Consumes the *known macro set* the template emits (\\heading, \\subheading,
     \\section*, itemize, \\textbf/\\textit/\\href) with careful ordering —
-    high-level macros first so their internals never leak into the output."""
+    high-level macros first so their internals never leak into the output.
+
+    The template's own % comment lines are dropped entirely, and any escape
+    the shorter _lx set produced (including \\{ / \\}) is un-escaped, so a
+    user never sees raw LaTeX ("bits of code") in the preview."""
     h = tex.split("\\begin{document}")[-1].split("\\end{document}")[0]
+
+    # 0) template comments out of the preview before anything else (% lines)
+    h = re.sub(r"(?m)^[ \t]*%.*$", "", h)
 
     # 1) name block + section macro blocks (consume whole args)
     h = re.sub(r"\{\\Huge\s*\\textbf\{([^}]*)\}\}",
@@ -348,10 +426,12 @@ def tex_to_html(tex: str) -> str:
     h = h.replace(r"\#", "#").replace(r"\_", "_")
     h = h.replace("\\textasciitilde", "~").replace("\\textasciicircum", "^")
     h = h.replace(r"\textbackslash", "\\").replace(r"\cdot", "\u00b7")
+    h = h.replace(r"\{", "{").replace(r"\}", "}")
 
-    # 6) purge any remaining command + stray braces
-    h = re.sub(r"\\[a-zA-Z]+\s*", "", h)
+    # 6) purge any remaining command, brace-escape leftover, or stray brace
+    h = re.sub(r"\\[a-zA-Z]+", "", h)
     h = h.replace("{", "").replace("}", "")
+    h = re.sub(r"\\+", " ", h)       # any last lone backslashes -> plain space
     h = re.sub(r"(\s*\n){3,}", "\n", h)
     return h.strip()
 
