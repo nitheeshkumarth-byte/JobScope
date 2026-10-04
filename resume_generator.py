@@ -17,10 +17,13 @@ Triggered by the dashboard's /api/resume/gen when the user clicks the
 
 The produced .tex compiles with a plain pdflatex install (no extra classes).
 Everything that comes from the job boards (titles with emoji or rupee signs,
-descriptions, URLs) is ascii-folded and LaTeX-escaped before it enters the
-document, so the file also compiles as-is when pasted into Overleaf. The
-GitHub link in the header is taken from the resume (or a user-supplied URL)
-instead of a hardcoded copy.
+descriptions, URLs) and everything parsed out of an uploaded CV is ascii-folded
+and LaTeX-escaped before it enters the document, so the file also compiles as-is
+when pasted into Overleaf. That second half matters as much as the first: a CV
+summary is ordinary English to its author and routinely contains "R&D", "100%"
+and "C#", any of which breaks the build if it reaches the .tex raw. The GitHub
+link in the header is taken from the resume (or a user-supplied URL) instead of
+a hardcoded copy.
 """
 
 import re
@@ -30,6 +33,11 @@ import unicodedata
 import requests
 
 import resume_data
+
+# The geography rules own the list of places, so the location heuristic reuses
+# it instead of keeping a second, drifting copy. filters imports only re, so
+# this cannot cycle.
+import filters
 
 # Browser-ish UA so best-effort description fetches stand a chance of
 # being served server-rendered HTML instead of a CAPTCHA page.
@@ -43,8 +51,8 @@ _HEADERS = {
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 _PHONE_RE = re.compile(r"(\+?\d[\d\s().\-]{7,}\d)")
-_LOCATION_HINT_RE = re.compile(r"hyderabad|bangalore|bengaluru|mumbai|pune|"
-                               r"delhi|chennai|kolkata|india", re.I)
+_LOCATION_HINT_RE = re.compile(r"\b(?:hyderabad|bangalore|bengaluru|mumbai|pune|"
+                               r"delhi|chennai|kolkata|india)\b", re.I)
 _SKIP_HEADER_RE = re.compile(r"^(resume|cv|curriculum|name|profile|contact|"
                              r"email|phone|address|education|experience|"
                              r"skills|objective|summary|linkedin|github)\b",
@@ -183,13 +191,496 @@ def _normalize_url(url: str) -> str:
     return u
 
 
-_GITHUB_RE = re.compile(r"https?://(?:www\.)?github\.com/([A-Za-z0-9_.-]+)", re.I)
+# The scheme is optional and www. is stripped, matching dashboard's pattern:
+# a CV often prints the bare "github.com/handle", and requiring a scheme here
+# made the same link detectable by the upload path but not by this fallback.
+# The handle is still required, so the "Git" / "GitHub" skill words alone
+# never become a profile address.
+_GITHUB_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)", re.I)
 
 
 def _find_github(text: str) -> str:
     """Pull the first GitHub URL out of a resume's plain text ('' if none)."""
     m = _GITHUB_RE.search(text or "")
     return m.group(0) if m else ""
+
+
+# ---------------------------------------------------------------------------
+# Parsing an uploaded CV into the template's sections
+# ---------------------------------------------------------------------------
+# The generator used to emit resume_data's experience, projects, education
+# and certifications verbatim and read only name/email/phone/location/GitHub
+# out of the uploaded CV. So uploading a completely different CV changed the
+# header and nothing else - every generated resume was the canonical one. The
+# CV is now the CONTENT and this module is only the STRUCTURE: these headings
+# split the uploaded text into the blocks the template renders.
+CV_HEADINGS: tuple[tuple[str, re.Pattern], ...] = (
+    ("summary", re.compile(r"^(?:professional\s+|career\s+)?(?:summary|objective|"
+                          r"profile|about(?:\s+me)?|career\s+objective)\b", re.I)),
+    ("skills", re.compile(r"^(?:technical\s+|core\s+|key\s+)?skills?\b|"
+                          r"^(?:technical\s+)?(?:competenc\w+|stack|technolog\w+|"
+                          r"tool\s?kit)\b", re.I)),
+    ("experience", re.compile(r"^(?:work\s+|professional\s+|employment\s+|"
+                              r"industry\s+)?experience\b|^(?:employment|work\s+"
+                              r"history)\b", re.I)),
+    ("projects", re.compile(r"^(?:personal\s+|key\s+|academic\s+)?projects?\b", re.I)),
+    ("education", re.compile(r"^educat(?:ion|ional)\b|^academics?\b", re.I)),
+    ("certifications", re.compile(r"^(?:certifications?|licen[cs]es?|courses?|"
+                                  r"training|awards?)\b", re.I)),
+    ("languages", re.compile(r"^languages?\b", re.I)),
+    ("activities", re.compile(r"^(?:activities|extra[-\s]?curricular|achievements|"
+                              r"publications|awards|honors?|interests?|volunteer\w*)\b",
+                              re.I)),
+)
+# A heading is short and has no sentence punctuation; otherwise a bullet that
+# merely contains the word "projects" would split the document in half.
+_HEADING_OK = re.compile(r"^[A-Za-z][A-Za-z0-9 /&+()\-.]{0,40}$")
+_BULLET = re.compile(r"^\s*[••▪◦\-–—*·]\s*")
+# "Jul 2026 – Present", "2023 - 2024", "May 2025 – Nov 2025"
+_DATES = re.compile(r"\b(?:\d{4}\s*(?:[-–—to]+\s*\d{4}|[-–—to]+\s*(?:present|"
+                     r"current|now))|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|"
+                     r"nov|dec)[a-z]*\.?\s*\d{4}\s*(?:[-–—to]+.*)?)\b", re.I)
+# A wrapped bullet continuation starts mid-sentence, so it begins lowercase.
+# Used to tell "on debugging, code reviews" (part of the bullet above it)
+# from "Java Full Stack Developer (Training) May 2025 - Nov 2025" (the next
+# entry's heading) - both are non-bulleted lines in the same section.
+_CONTINUATION = re.compile(r"^[a-z(]")
+
+
+def _clean_cv_line(ln: str) -> str:
+    """Flatten a PDF text layer's pipe-separated table cells and collapse runs
+    of whitespace.
+
+    It does NOT try to rejoin words the layer glued across a line break
+    ("inai, api" / "theJavaScript") - those arrive already merged in the
+    stored text, with no separator left to key on. See _unsmash for why that
+    is not attempted here either.
+    """
+    s = ln.replace("|", " ").replace("\t", " ")
+    s = re.sub(r"[ \t]{2,}", " ", s).strip()
+    return s
+
+
+def _split_bullet(ln: str) -> tuple[bool, str]:
+    m = _BULLET.match(ln)
+    return (True, _clean_cv_line(ln[m.end():])) if m else (False, _clean_cv_line(ln))
+
+
+def _unsmash(text: str) -> str:
+    """Light whitespace tidy-up for text that came out of a PDF text layer.
+
+    Deliberately conservative. An earlier version tried to repair words the
+    text layer had glued across a line break ("developmentin"), but no
+    regex can tell that from a word boundary, so it split every camelCase
+    and lowercase run into letters. The stored CV text is what the rest of
+    the app already reads for skills and roles; mangling it here would make
+    the resume worse than the input. A PDF whose text layer glues words is a
+    problem for the extraction, not for the renderer.
+    """
+    out = re.sub(r"[ \t]{2,}", " ", str(text or ""))
+    out = re.sub(r"\s+([,.;:!?])", r"\1", out)
+    return out.strip()
+
+
+def parse_cv(text: str) -> dict:
+    """Split an uploaded CV into {contact, sections, links}.
+
+    Sections maps a name from CV_HEADINGS to its lines, in document order.
+    A CV whose headings we do not recognise still yields a contact block and
+    an `unheaded` section, so nothing is silently dropped: the caller falls
+    back to the canonical body only when there is genuinely nothing to use.
+    """
+    raw = [ln for ln in (text or "").splitlines()]
+    lines = [_clean_cv_line(ln) for ln in raw]
+    lines = [ln for ln in lines if ln]
+
+    sections: dict[str, list[str]] = {}
+    contact: list[str] = []
+    current = "header"
+    for ln in lines:
+        # A pipe-only remnant carries no information at all.
+        if not ln.strip():
+            continue
+        matched = None
+        if _HEADING_OK.match(ln) and len(ln.split()) <= 4:
+            for name, pat in CV_HEADINGS:
+                if pat.match(ln):
+                    matched = name
+                    break
+        if matched:
+            current = matched
+            sections.setdefault(current, [])
+            continue
+        if current == "header":
+            contact.append(ln)
+        else:
+            sections.setdefault(current, []).append(ln)
+
+    links = _find_links("\n".join(raw))
+    return {"contact": contact, "sections": sections, "links": links}
+
+
+_LINK_RE = re.compile(
+    # The lookbehind matters: without it the tail of
+    # "someone@gmail.com" matches as a bare domain and the CV's own email
+    # address comes back as the candidate's portfolio link.
+    r"(?<![@\w.\-])"
+    r"(?:https?://)?(?:www\.)?"
+    r"((?:github\.com/[A-Za-z0-9_.-]+"
+    r"|linkedin\.com/in/[A-Za-z0-9_.-]+"
+    # Subdomains included: hosted portfolios are common (name.vercel.app,
+    # user.github.io), and a single-label match never finds them.
+    r"|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*"
+    r"\.(?:dev|me|io|com|net|org|in|app|sh|ai|tech|xyz|page|site)"
+    r"(?:/[^\s|]*)?))",
+    re.I)
+
+
+def _find_links(text: str) -> dict:
+    """Every URL-ish string in the CV text, keyed by kind.
+
+    Values keep their scheme because the header has to render them as
+    \\href targets; whatever is found here is what the resume uses, so a CV
+    with no GitHub produces no GitHub line rather than a stale one.
+    """
+    out: dict[str, str] = {}
+    for m in _LINK_RE.finditer(text or ""):
+        raw = m.group(0).strip().rstrip(".,;:")
+        host = m.group(1).lower()
+        if host.startswith("github.com/"):
+            kind = "github"
+        elif host.startswith("linkedin.com/in/"):
+            kind = "linkedin"
+        else:
+            kind = "portfolio"
+        # First one of each kind wins, same as the dashboard's detection.
+        out.setdefault(kind, _normalize_url(raw))
+    return out
+
+
+def _skill_groups(lines: list[str]) -> list[tuple[str, str]]:
+    """Turn a CV's skills block into (label, values) pairs.
+
+    A PDF text layer prints "•Backend / Web:Django, Flask" with the colon
+    glued to the label. Splitting only on commas left "Backend / Web:Django"
+    as one "skill", so the section label became a search term and a bullet on
+    the finished resume. Split on the colon too, and keep the label as the
+    label.
+
+    An unlabelled line right after a group that ended in a comma is that
+    group's wrapped continuation ("Cloud/DevOps:...Docker," / "Git, GitHub"),
+    not a new skill. Merging it keeps a stray unlabelled bullet off the
+    finished resume.
+    """
+    groups: list[tuple[str, str]] = []
+    plain: list[str] = []
+    for ln in lines:
+        is_bullet, body = _split_bullet(ln)
+        if not body:
+            continue
+        m = re.match(r"^\s*([^:]{2,40}?)\s*:\s*(.+)$", body)
+        if m and not re.search(r"https?://", m.group(1)):
+            label, values = m.group(1).strip(), m.group(2).strip()
+            if values:
+                groups.append((label, _unsmash(values)))
+                continue
+        text = _unsmash(body)
+        if groups and groups[-1][1].endswith(",") and not m:
+            label, values = groups[-1]
+            groups[-1] = (label, f"{values} {text}")
+            continue
+        plain.append(text)
+    if plain:
+        groups.append(("", ", ".join(plain)))
+    return groups
+
+
+def _entry_bullets(lines: list[str], start: int) -> tuple[list[str], int]:
+    """Bullets belonging to the entry that starts at `start`.
+
+    Returns them plus the index of the first line that is NOT one, which is
+    where the next entry begins.
+
+    The continuation rule is narrow on purpose: a line continues the previous
+    bullet when it starts lowercase (or "(") - a PDF text layer wraps bullet
+    text onto its own line ("...collaborate" / "on debugging, code reviews") -
+    or when the previous line ends in a hyphen or slash, which is a word split
+    mid-token ("Flask-" / "Migrate migrations"). An entry's heading, employer
+    and technology lines all start with a capital and follow a complete line,
+    so treating those as continuations merged whole CV entries into one
+    giant bullet.
+    """
+    bullets: list[str] = []
+    i = start
+    while i < len(lines):
+        is_bullet, body = _split_bullet(lines[i])
+        if is_bullet:
+            if body:
+                bullets.append(_unsmash(body))
+            i += 1
+        elif bullets and bullets[-1].rstrip().endswith("-"):
+            # Hyphenated word split by the line break: "container-" / "ized" is
+            # "containerized". The hyphen is the typesetter's line-break
+            # hyphen, so it is dropped - keeping it (with or without a space)
+            # ships "container-ized" to the finished resume. Checked BEFORE
+            # the lowercase rule below, since "ized" is lowercase too.
+            bullets[-1] = bullets[-1].rstrip().rstrip("-") + _unsmash(body)
+            i += 1
+        elif bullets and _CONTINUATION.match(body):
+            bullets[-1] = f"{bullets[-1]} {_unsmash(body)}"
+            i += 1
+        elif bullets and bullets[-1].rstrip().endswith("/"):
+            bullets[-1] = f"{bullets[-1]} {_unsmash(body)}"
+            i += 1
+        else:
+            break
+    return bullets, i
+
+
+def _relevance_scores(texts: list[str], query: str) -> list[float]:
+    """BM25 relevance of each text against `query`, reusing rag_store's ranker.
+
+    Deliberately the same tokenizer and the same Okapi BM25 the document library
+    uses, so "which of my bullets does this posting care about" is answered by
+    exactly the scoring that decided which of my documents matched. Scoring the
+    bullets directly (rather than trying to match each bullet back to a chunk in
+    a possibly different uploaded document) also keeps this correct when the
+    library holds documents other than the CV being rendered.
+    """
+    from rag_store import _Doc, bm25_scores, tokenize
+
+    if not query.strip() or not texts:
+        return [0.0] * len(texts)
+    docs = []
+    for t in texts:
+        toks = tokenize(t)
+        docs.append(_Doc(chunk=None, tokens=toks, length=len(toks)))
+    return bm25_scores(query, docs)
+
+
+def _reorder_bullets(lines: list[str], query: str) -> list[str]:
+    """Reorder the bullets WITHIN each entry so JD-relevant ones lead.
+
+    Entry order is never touched: the most recent role stays first, because
+    chronology is a fact about the candidate, not a relevance signal, and
+    reordering roles by keyword match is how a resume starts looking wrong to a
+    human reader. Only the achievements inside a role are re-ranked, which is
+    the part a tailoring step is actually allowed to influence.
+
+    Reordering moves whole line SPANS, never re-emitted bullet text. An earlier
+    version rebuilt the lines from _entry_bullets()' cleaned bodies, which have
+    had their "- " marker stripped - so every reordered bullet stopped being a
+    bullet and _render_entries demoted it to a bold paragraph line. Scoring
+    still uses the merged text from _entry_bullets (it is the version with
+    hyphen splits and wrapped continuations repaired), while the lines that go
+    back into the document are the CV's own, untouched.
+
+    Stable: bullets that score equally keep their CV order, so building the same
+    resume twice produces the same document.
+    """
+    if not query.strip() or not lines:
+        return lines
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        is_bullet, _ = _split_bullet(lines[i])
+        if not is_bullet:
+            out.append(lines[i])
+            i += 1
+            continue
+        texts, nxt = _entry_bullets(lines, i)
+        # Within [i, nxt) every non-bullet line is, by the definition that
+        # produced nxt, a continuation of the bullet above it.
+        spans: list[list[str]] = []
+        for k in range(i, nxt):
+            starts_bullet, _ = _split_bullet(lines[k])
+            if starts_bullet or not spans:
+                spans.append([lines[k]])
+            else:
+                spans[-1].append(lines[k])
+        if len(spans) < 2 or len(spans) != len(texts):
+            # Fewer than two bullets means nothing to reorder, and a span/text
+            # mismatch means the two views of the entry disagree - in both
+            # cases emit the entry exactly as the CV wrote it.
+            out.extend(lines[i:nxt])
+            i = nxt
+            continue
+        scores = _relevance_scores(texts, query)
+        order = sorted(range(len(texts)), key=lambda k: (-scores[k], k))
+        for k in order:
+            out.extend(spans[k])
+        i = nxt
+    return out
+
+
+def _jd_match_line(rag_hits: list) -> str:
+    """A provenance line naming which uploaded documents the posting matched.
+
+    This is a record, not a claim: it says which of the candidate's own files
+    the tailoring drew on, so a reader (and the user, in the preview) can see
+    what was considered. It deliberately lists sources without restating their
+    content, so it cannot introduce a phrase the candidate did not write.
+    """
+    if not rag_hits:
+        return ""
+    sources: list[str] = []
+    for chunk, _score in rag_hits:
+        if chunk.doc_name not in sources:
+            sources.append(chunk.doc_name)
+    if not sources:
+        return ""
+    # A real newline, not a literal backslash-n: this is a normal (non-raw)
+    # string, so "\\n" would have printed a visible "\n" into the document.
+    return ("\\vspace{2pt}\\noindent\\textbf{\\color{accent}Tailored from:} "
+            + f"{_lx(', '.join(sources))}\n")
+
+
+def _render_entries(lines: list[str]) -> str:
+    """Render a section's lines without inventing structure.
+
+    Bullets become \\item (with wrapped continuations merged). Every other
+    line is either a short bold line - which is what an entry's title/date
+    row is in this layout - or a plain paragraph when it is too long to be a
+    title.
+
+    This deliberately does NOT split dates out of a line, pair a title with
+    the employer on the next line, or guess which words are a technology
+    list. Every one of those inferences was wrong on a real PDF upload: it
+    put the employer's city in the org slot, glued a tech list into the
+    project title, and turned a school line into its own degree. Showing the
+    CV's own lines is defensible; reinterpreting them is not.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        is_bullet, body = _split_bullet(lines[i])
+        if is_bullet:
+            bullets, i = _entry_bullets(lines, i)
+            if bullets:
+                items = "".join(f"  \\item {_lx(_ascii_fold(b))}\n" for b in bullets)
+                out.append(f"\\begin{{itemize}}\n{items}\\end{{itemize}}\n")
+            continue
+        if not body:
+            i += 1
+            continue
+        text = _ascii_fold(_unsmash(body))
+        if len(text) <= 90:
+            out.append(f"\\noindent\\textbf{{{_lx(text)}}}\\\\[2pt]\n")
+        else:
+            out.append(f"{_lx(text)}\n")
+        i += 1
+    return "\n".join(out)
+
+
+def _render_experience(lines: list[str]) -> str:
+    return _render_entries(lines)
+
+
+def _render_projects(lines: list[str]) -> str:
+    return _render_entries(lines)
+
+
+def _render_education(lines: list[str]) -> str:
+    """Education, with the one inference kept: a date range on its own line
+    belongs to the qualification named just before it, so it moves into the
+    template's date column."""
+    out: list[str] = []
+    for ln in lines:
+        is_bullet, body = _split_bullet(ln)
+        if is_bullet or not body:
+            continue
+        body = _ascii_fold(_unsmash(body))
+        m = _DATES.search(body)
+        if m:
+            dates = m.group(0).strip()
+            rest = (body[:m.start()] + " " + body[m.end():]).strip(" -–—,|")
+            out.append(f"\\heading{{{_lx(rest)}}}{{{_lx(dates)}}}{{}}{{}}\n")
+        else:
+            out.append(f"\\noindent\\textbf{{{_lx(body)}}}\\\\[2pt]\n")
+    return "\n".join(out)
+
+
+_US_STATE_RE = re.compile(r"^[A-Z]{2}\.?$")
+
+# Every country name the geography rules already recognise, lowercased. Built
+# once from filters.py so there is a single list of places in this project.
+_COUNTRY_LOOKUP = {name.lower() for name in filters.COUNTRIES}
+
+
+def _looks_like_city_name(part: str) -> bool:
+    """Shape check for the FIRST component of a "City, ST" pair.
+
+    Deliberately weaker than _looks_like_place: "Austin" is a perfectly good
+    city that this project has no list entry for. What matters is that the
+    *second* component vouches for the pair being a location at all.
+    """
+    p = part.strip()
+    return bool(p) and "@" not in p and not re.search(r"\d", p) and bool(
+        re.fullmatch(r"[A-Z][A-Za-z .'\-]{1,30}", p))
+
+
+def _looks_like_place(part: str) -> bool:
+    """Is this comma-separated component a place rather than a technology?
+
+    The test has to be positive rather than "capitalised words", because a CV's
+    skills lines are capitalised words too: "Git, GitHub" and "TensorFlow,
+    Keras" pass any purely-shape test and would then be printed as the
+    candidate's location.
+    """
+    p = part.strip().rstrip(".")
+    if not p or "@" in p or re.search(r"\d", p):
+        return False
+    if _US_STATE_RE.match(part.strip()):
+        return True
+    low = p.lower()
+    if low in _COUNTRY_LOOKUP:
+        return True
+    # "Toulouse, Occitanie, France" - a region between city and country.
+    return any(low == r or low == filters.REGIONS[r].lower()
+               for r in filters.REGIONS)
+
+
+def _location_from_line(line: str) -> str:
+    """Pull a place out of a line instead of trusting the whole line.
+
+    The old code used the city vocabulary purely as a yes/no test and then kept
+    the entire line, so any line merely *containing* a city became the
+    candidate's location. That is not hypothetical: the stored CVs for this
+    project contain the Experience line "Quiddity Infotech LLC Hyderabad", and
+    it was printed in the header contact row as the location, employer and all.
+
+    Returns "" when there is no recognisable place, which is the honest answer -
+    the header already omits a field it cannot fill.
+    """
+    # A PDF text layer glues fields together with pipes, tabs and runs of
+    # spaces; the place is in the first field.
+    s = re.split(r"[|\t]|\s{2,}", line.strip())[0].strip()
+    if not s:
+        return ""
+    # Drop a trailing parenthetical qualifier such as "(Remote)".
+    trimmed = re.sub(r"\s*[(\[][^)\]]*[)\]]\s*$", "", s).strip()
+    s = trimmed or s
+
+    m = _LOCATION_HINT_RE.search(s.lower())
+    if m:
+        # Start at the city itself, so a leading employer name is dropped.
+        return s[m.start():].strip(" ,;-–—")
+
+    # No known city. Accept the "City, ST" / "City, Country" shape only when the
+    # SECOND component is actually a place - a US state code, or a country or
+    # region this project already knows about. Requiring that is what keeps
+    # skills lines out: "Git, GitHub" and "Google Gemini API, TensorFlow,
+    # Keras" both look like a comma-separated pair of capitalised words, and
+    # both are skills.
+    parts = [p.strip() for p in s.split(",") if p.strip()]
+    # Any trailing component may be the one that vouches for the pair - a region
+    # can sit between the city and the country, as in "Toulouse, Occitanie,
+    # France". "Git, GitHub" and "TensorFlow, Keras" have no place anywhere.
+    if len(parts) >= 2 and _looks_like_city_name(parts[0]) \
+            and any(_looks_like_place(p) for p in parts[1:]):
+        return ", ".join(parts[:3])
+    return ""
 
 
 def extract_contact(text: str) -> dict:
@@ -208,16 +699,15 @@ def extract_contact(text: str) -> dict:
         s = line.strip()
         if not s or len(s) > 70:
             continue
-        low = s.lower()
         if "@" in s or _PHONE_RE.search(s) or _SKIP_HEADER_RE.match(s):
             continue
         if re.match(r"^[A-Z][A-Za-z' .\-]{2,60}$", s):
             name = s
             break
     for line in text.splitlines():
-        s = line.strip()
-        if _LOCATION_HINT_RE.search(s.lower()) and len(s) <= 60:
-            location = s
+        found = _location_from_line(line)
+        if found:
+            location = found
             break
     return {"name": name, "email": email, "phone": phone, "location": location}
 
@@ -269,49 +759,170 @@ def _rank_skills(job_text: str) -> tuple[list, list]:
     return ranked, uniq
 
 
-def build_resume(cfg, job: dict, desc: str = "", github_url: str = "") -> tuple[str, str]:
+def _rank_skill_groups(groups: list[tuple[str, str]], job_text: str) -> list[tuple[str, str]]:
+    """Reorder the CV's OWN skill groups by how much the posting mentions them.
+
+    The groups are the candidate's, not resume_data's - only their order
+    changes. A group the posting says nothing about sinks to the bottom
+    instead of being deleted, so nothing the user wrote is ever lost.
+    """
+    hay = (job_text or "").lower()
+
+    def score(pair: tuple[str, str]) -> int:
+        blob = f"{pair[0]} {pair[1]}".lower()
+        return sum(blob.count(k) for k in _POSTING_TERMS if k in hay)
+
+    return sorted(groups, key=score, reverse=True)
+
+
+# Words in a posting that actually signal a skill, used only to rank the
+# candidate's own groups. Deliberately short: this reorders, it never adds.
+_POSTING_TERMS = (
+    "python", "java", "javascript", "typescript", "sql", "react", "node",
+    "django", "flask", "aws", "azure", "gcp", "docker", "kubernetes", "k8s",
+    "terraform", "mysql", "postgres", "mongodb", "redis", "kafka", "spark",
+    "pandas", "numpy", "tensorflow", "pytorch", "llm", "rag", "nlp", "ml",
+    "machine learning", "deep learning", "devops", "cicd", "git", "linux",
+    "rest", "api", "graphql", "microservices", "power bi", "tableau", "excel",
+    "sap", "salesforce", "jira", "agile", "scrum", "testing", "selenium",
+)
+
+
+def build_resume(cfg, job: dict, desc: str = "", github_url: str = "",
+                 rag_hits: list | None = None,
+                 rag_source_text: str = "") -> tuple[str, str]:
     """Assemble the tailored .tex document.
 
     Returns (latex_source, suggested_filename). job carries the flashcard
-    fields (title/company/location/link/source). If desc is '' the objective
-    leans on the role title + the canonical skill list instead.
+    fields (title/company/location/link/source).
 
-    github_url is the header link for the GitHub entry: explicit argument >
-    agent config > found inside the resume text > the canonical default. An
-    empty override keeps whatever the resume/canonical data held. Everything
-    embedded into the .tex is ascii-folded so the doc compiles on Overleaf's
-    plain pdflatex even when a board's title contains emoji/rupee signs."""
+    WHICH CONTENT IS USED:
+    - An uploaded CV (cfg.resume_text) is the CONTENT. Everything below the
+      header - objective, skills, experience, projects, education,
+      certifications, languages - is parsed out of that file. This module is
+      only the STRUCTURE. This was not the case before: the canonical
+      experience/projects/education/certifications were emitted verbatim and
+      the CV only ever moved the header, so uploading a different CV produced
+      a document that still described the canonical resume.
+    - With NO CV at all, resume_data is used, so a fresh account with nothing
+      uploaded still gets a complete document instead of an empty page.
+
+    rag_hits is the optional output of rag_store.retrieve: (Chunk, score)
+    pairs from the candidate's own document library, ranked against the job
+    description. When supplied, the experience and project bullets are REORDERED
+    so the ones the posting asks for lead, and a JD_SUMMARY line records what
+    was matched. The bullet text itself is never rewritten or added - a chunk
+    can only move, never appear from nowhere. Omit the parameter (or pass an
+    empty list) and the document is byte-identical to the pre-RAG output, which
+    is what every existing caller and test relies on.
+
+    github_url is the header link for the GitHub entry: explicit argument > the
+    CV's own links > agent config. Unlike every other field it has NO
+    canonical fallback, so a CV without a GitHub produces no GitHub line
+    rather than a stale one from a previous upload. (The CV outranks the stored
+    setting on purpose: /api/resume/detect used to copy a link out of a
+    DIFFERENT saved CV, so a stale setting silently overrode the CV actually
+    being rendered.)
+
+    Everything candidate- or board-derived is ascii-folded and LaTeX-escaped
+    before it enters the document, so the file compiles on Overleaf's plain
+    pdflatex even when a board title carries emoji, a salary carries a rupee
+    sign, or a CV summary contains "R&D", "100%" or "C#"."""
     role = _ascii_fold((job.get("title") or cfg.target_role or "the role").strip())
     company = _ascii_fold((job.get("company") or "").strip())
     desc = _ascii_fold(desc)
+    cv_text = cfg.resume_text or ""
+    # No CV on the open profile, but the candidate HAS uploaded documents:
+    # build from the best-matching one rather than falling back to
+    # resume_data. Without this the document library was silently ignored for
+    # exactly the users who rely on it most, and the resume described
+    # resume_data's placeholder person instead.
+    borrowed = False
+    if not cv_text.strip() and rag_source_text.strip():
+        cv_text = rag_source_text
+        borrowed = True
 
-    job_text = f"{desc} {role} {company} {cfg.resume_text or ''}"
-    ranked_skills, matched = _rank_skills(job_text)
+    # Ranking compares the POSTING against the candidate's skills. The CV's
+    # own text must stay out of it: it names every skill the candidate has, so
+    # including it made each group match itself and "relevance" became noise.
+    posting_text = f"{desc} {role} {company}"
+    job_text = f"{posting_text} {cv_text}"
+    cv = parse_cv(cv_text) if cv_text.strip() else None
 
-    # Header contact + links (canonical, optionally overridden by the CV).
-    contact = extract_contact(cfg.resume_text or "")
-    name = _ascii_fold(contact["name"] or resume_data.NAME)
-    email = contact["email"] or resume_data.EMAIL
-    phone = contact["phone"] or resume_data.PHONE
-    location = _ascii_fold(contact["location"] or resume_data.LOCATION)
+    # Skills: the CV's own groups when there is a CV, else the canonical ones
+    # reordered by posting relevance (the original behaviour).
+    if cv:
+        groups = _skill_groups(cv["sections"].get("skills") or [])
+        # No recognisable skills heading: leave the section out entirely.
+        #
+        # This used to fall back to scanning the CV's prose for any word from
+        # _POSTING_TERMS and printing those as a Technical Skills list, which
+        # turned "I taught java classes and mentored a kubernetes club" into a
+        # claimed skill set. A resume that asserts skills the candidate never
+        # claimed is worse than one missing a section - it is a false claim
+        # about the person, printed on the document they send to employers.
+        # Every other section already follows that rule.
+        ranked_skills = _rank_skill_groups(groups, posting_text) if groups else []
+    else:
+        ranked_skills, matched = _rank_skills(job_text)
+    if cv:
+        matched = [k for k in _POSTING_TERMS if k in posting_text.lower()]
+
+    # Header contact + links. With a CV, the CV's own links are the whole
+    # truth; without one, the canonical set (minus github, which is never
+    # invented).
+    contact = extract_contact(cv_text)
+    if cv:
+        links = dict(cv["links"])
+        # Precedence: explicit per-request argument > the CV's own link > the
+        # stored profile setting. The stored value used to win, and since
+        # /api/resume/detect used to copy a link out of a DIFFERENT saved CV,
+        # a stale URL silently overrode the CV actually being rendered. A
+        # setting now only fills a gap the CV left.
+        gh = _normalize_url(github_url) or _normalize_url(links.get("github", "")) \
+            or _normalize_url(getattr(cfg, "github_url", ""))
+        if gh:
+            links["github"] = gh
+        else:
+            links.pop("github", None)
+        name = _ascii_fold(contact["name"] or _cv_name(cv["contact"]))
+        email = contact["email"]
+        phone = contact["phone"]
+        location = _ascii_fold(contact["location"] or _cv_location(cv["contact"]))
+    else:
+        links = dict(resume_data.LINKS)
+        gh = _normalize_url(github_url or getattr(cfg, "github_url", "") or "")
+        if gh:
+            links["github"] = gh
+        else:
+            links.pop("github", None)
+        name = _ascii_fold(contact["name"] or resume_data.NAME)
+        email = contact["email"] or resume_data.EMAIL
+        phone = contact["phone"] or resume_data.PHONE
+        location = _ascii_fold(contact["location"] or resume_data.LOCATION)
 
     contact_line = " \\quad $\\vert$ \\quad ".join(
         p for p in (phone,
                     f"\\href{{mailto:{_lx_url(email)}}}{{{_lx(email)}}}",
                     _lx(location)) if p)
 
-    links = dict(resume_data.LINKS)
-    gh = _normalize_url(github_url or getattr(cfg, "github_url", "")
-                        or _find_github(cfg.resume_text or ""))
-    if gh:
-        links["github"] = gh
     link_items = []
-    for url in links.values():
+    for kind, url in links.items():
         if not url:
             continue
         display = _ascii_fold(url.split("//", 1)[-1].rstrip("/"))
-        link_items.append(f"\\href{{{_lx_url(url)}}}{{{display}}}")
+        # The href *argument* is escaped by _lx_url, but the display slot is a
+        # separate argument and needs escaping too: a query string keeps its
+        # "&" and "#" here, and "a_b" keeps its underscore. Both are legal in
+        # the URL but not in LaTeX body text.
+        link_items.append(f"\\href{{{_lx_url(url)}}}{{{_lx(display)}}}")
     links_line = " \\quad $\\vert$ \\quad ".join(link_items)
+
+    if cv:
+        tex = _assemble_from_cv(cfg, cv, ranked_skills, role, company, desc,
+                                name, contact_line, links_line, rag_hits,
+                                borrowed=borrowed)
+        return tex, _slug(company, role)
 
     # Objective: name the posting, map in the strongest matched skills.
     skills_intro = (", ".join(matched[:6])
@@ -327,8 +938,14 @@ def build_resume(cfg, job: dict, desc: str = "", github_url: str = "") -> tuple[
         obj += r" \\[2pt] \textit{Role focus from the posting:} " + _lx(desc[:220])
 
     # Technical Skills — canonical groups, reordered by posting relevance.
+    # _ascii_fold first, like every other render path. resume_data.SKILLS is
+    # hand-written ASCII today, so this changes nothing for it - but the fold is
+    # applied here for the same reason it is applied to CV-derived skills: a
+    # future edit adding a typographic dash or an accented word should not be
+    # able to break the build.
     skill_tex = "".join(
-        f"  \\item \\textbf{{{_lx(g[0])}:}} {_lx(g[1])}\n" for g in ranked_skills)
+        f"  \\item \\textbf{{{_lx(_ascii_fold(g[0]))}:}} "
+        f"{_lx(_ascii_fold(g[1]))}\n" for g in ranked_skills)
 
     # Experience / Projects / Education / Certifications (canonical content).
     exp_blocks = []
@@ -351,7 +968,13 @@ def build_resume(cfg, job: dict, desc: str = "", github_url: str = "") -> tuple[
     cert_tex = "".join(
         f"  \\item {_lx(c)}\n" for c in resume_data.CERTIFICATIONS)
 
-    tex = (ATS_TEMPLATE
+    # An empty @LINKS@ would leave a blank line inside \begin{center}, and the
+    # [3pt] after the contact line would then be spacing against nothing.
+    header = ATS_TEMPLATE
+    if not links_line:
+        header = header.replace("  @LINKS@\n", "")
+
+    tex = (header
            .replace("@NAME@", _lx(name))
            .replace("@CONTACT@", contact_line)
            .replace("@LINKS@", links_line)
@@ -368,8 +991,202 @@ def build_resume(cfg, job: dict, desc: str = "", github_url: str = "") -> tuple[
            .replace("@SOURCE@", _lx(job.get("source") or "job board"))
            .replace("@LINK@", _lx(job.get("link") or "")))
 
+    return tex, _slug(company, role)
+
+
+def _slug(company: str, role: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", f"{company} {role}".lower()).strip("_") or "resume"
-    return tex, f"Resume_{slug[:60]}.tex"
+    return f"Resume_{slug[:60]}.tex"
+
+
+def _cv_name(header_lines: list[str]) -> str:
+    """The CV's own name: the first line that is a person's name and is not a
+    link, a contact detail or a heading."""
+    for ln in header_lines:
+        s = _clean_cv_line(ln)
+        if not s or _find_links(s):
+            continue
+        if "@" in s or re.search(r"\d{4}", s) or re.match(r"https?://", s, re.I):
+            continue
+        if re.fullmatch(r"[A-Z][A-Za-z'.\- ]{2,60}", s.strip()):
+            return s.strip()
+    return ""
+
+
+def _cv_location(header_lines: list[str]) -> str:
+    """A location from the header block: the trailing 'City, ST' / 'City, Country'
+    of a contact line, which is where a PDF text layer leaves it."""
+    bare: str = ""
+    for ln in header_lines:
+        line = _clean_cv_line(ln)
+        # Ask about the whole row first. _clean_cv_line drops the '|' that
+        # separates the fields, so "Jane Doe | Hyderabad, India" arrives as
+        # "Jane Doe Hyderabad, India" and splitting it here would yield only the
+        # trailing country. _location_from_line cuts at the known city and keeps
+        # everything after it, which gives the full pair.
+        whole = _location_from_line(line)
+        if whole:
+            return whole
+        for part in re.split(r"[,|]|\s{2,}", line):
+            s = part.strip()
+            # The comma is REQUIRED. It used to be written ",?" , which made a
+            # bare two-word name match, so a CV with no usable location fell
+            # back to printing the candidate's own name in the contact row
+            # ("Jane Doe" as their location). "City, ST" and "City, Country"
+            # are the shapes this is documented to look for, and both have one.
+            if "," in s and re.fullmatch(
+                    r"[A-Z][A-Za-z .'\-]{2,40},\s*[A-Z][A-Za-z .'\-]{2,40}", s):
+                return s
+            # A known city on its own is still a location, but remember it and
+            # keep looking: a full "City, ST" pair beats a bare city.
+            if not bare:
+                hint = _LOCATION_HINT_RE.search(s.lower())
+                if hint and hint.start() == 0:
+                    bare = s
+    return bare
+
+
+def _join_cv_text(lines: list[str], limit: int = 900) -> str:
+    """A CV paragraph as readable prose, for the summary section."""
+    parts: list[str] = []
+    for ln in lines:
+        _is_bullet, body = _split_bullet(ln)
+        if body:
+            parts.append(_unsmash(body))
+    out = " ".join(parts)
+    return out[:limit]
+
+
+def _assemble_from_cv(cfg, cv: dict, ranked_skills: list[tuple[str, str]],
+                      role: str, company: str, desc: str, name: str,
+                      contact_line: str, links_line: str,
+                      rag_hits: list | None = None,
+                      borrowed: bool = False) -> str:
+    """Build the document from the uploaded CV, using the template only for
+    structure.
+
+    A section the CV does not have is left out entirely - including its
+    heading. Falling back to resume_data for a missing section is exactly the
+    bug this path exists to remove: a half-parsed CV would otherwise sprout
+    the canonical person's internships.
+
+    rag_hits, when given, reorders the experience and project bullets so the
+    posting's terms decide which achievements lead. The bullet text is never
+    touched - only its position - so the no-invention rule is unaffected by
+    retrieval being switched on.
+    """
+    sections = cv["sections"]
+    body: list[str] = []
+    # The query is the posting plus the role being targeted: a thin JD still
+    # steers selection, and the role name is the one term guaranteed relevant.
+    query = f"{desc} {role}".strip()
+
+    summary = _join_cv_text(sections.get("summary") or [])
+    if summary:
+        # Escape the candidate's own words, and only those. The italics and
+        # line-break markup appended below is already LaTeX - running it
+        # through _lx() turned \\textit{...} into \\textbackslash{}textit\{...\},
+        # which is how the first pass emitted visible "\\textit{Targeting...}"
+        # text as literal body copy.
+        #
+        # Escaping has to happen here, on the summary alone, because a CV
+        # summary is exactly where the special characters live: "R&D" and
+        # "100% cheaper" and "C#" are ordinary English to the candidate. Left
+        # raw, "%" comments out the rest of the paragraph and "&" fails with
+        # "Misplaced alignment tab", so the document would not compile at all.
+        prose = _lx(_ascii_fold(summary))
+        prose += (f" \\textit{{Targeting the {_lx(role)} role"
+                  + (f" at {_lx(company)}" if company else "") + ".}")
+        if desc:
+            prose += (r" \\[2pt] \textit{Role focus from the posting:} "
+                      + _lx(desc[:220]))
+        body.append(f"\\section*{{Objective}}\n{prose}\n")
+
+    if ranked_skills:
+        # _ascii_fold before _lx, matching every other render path. Skill lines
+        # are copied straight out of the CV's text layer, so they arrive with
+        # whatever typographic characters the author used: "Node-js" with an
+        # en dash, curly quotes around a skill name, an accented word.
+        items = "".join(
+            (f"  \\item \\textbf{{{_lx(_ascii_fold(label))}:}} "
+             f"{_lx(_ascii_fold(values))}\n" if label
+             else f"  \\item {_lx(_ascii_fold(values))}\n")
+            for label, values in ranked_skills if values.strip())
+        if items:
+            body.append("\\section*{Technical Skills}\n\\begin{itemize}\n"
+                        + items + "\\end{itemize}\n")
+
+    exp = _render_experience(_reorder_bullets(
+        sections.get("experience") or [], query) if rag_hits else
+        (sections.get("experience") or []))
+    if exp.strip():
+        body.append(f"\\section*{{Experience}}\n{exp}")
+
+    projects = _render_projects(_reorder_bullets(
+        sections.get("projects") or [], query) if rag_hits else
+        (sections.get("projects") or []))
+    if projects.strip():
+        body.append(f"\\section*{{Projects}}\n{projects}")
+
+    edu = _render_education(sections.get("education") or [])
+    if edu.strip():
+        body.append(f"\\section*{{Education}}\n{edu}\n")
+
+    certs = []
+    for ln in (sections.get("certifications") or []):
+        _is_bullet, item = _split_bullet(ln)
+        if item:
+            certs.append(f"  \\item {_lx(_ascii_fold(_unsmash(item)))}\n")
+    if certs:
+        body.append("\\section*{Certifications}\n\\begin{itemize}\n"
+                    + "".join(certs) + "\\end{itemize}\n")
+
+    for extra in ("activities",):
+        lines = sections.get(extra) or []
+        if lines:
+            body.append("\\section*{" + extra.title() + "}\n"
+                        + _render_projects(lines))
+
+    langs = _join_cv_text(sections.get("languages") or [], limit=200)
+    if langs:
+        body.append("\\vspace{2pt}\\noindent\\textbf{\\color{accent}Languages:} "
+                    + f"\\, {_lx(langs)}\n")
+
+    match_line = _jd_match_line(rag_hits or [])
+    if match_line:
+        if borrowed:
+            match_line = match_line.replace(
+                "Tailored from:",
+                "Built from your uploaded document:")
+        body.append(match_line)
+
+    if not body:
+        # Nothing recognisable in the CV: emit the header and say so rather
+        # than quietly producing an empty document.
+        body.append("\\section*{No parsed content}\n"
+                    "This resume's uploaded CV could not be split into "
+                    "sections, so only the contact block above could be "
+                    "carried over.\n")
+
+    # Split the canonical template around its body so the hardcoded
+    # \section* headings and their placeholders cannot leak in.
+    # The template's opening banner carries @ROLE@ / @COMPANY@ / @SOURCE@ /
+    # @LINK@ tokens, and only the canonical build_resume() path fills them in.
+    # Reusing the preamble as-is shipped those to the candidate as literal
+    # "@ROLE@" text in the finished .tex, so start from \documentclass instead:
+    # this path rebuilds the header from the CV and has no job row to describe.
+    raw_preamble = ATS_TEMPLATE.split("% ---------- HEADER ----------")[0]
+    start = raw_preamble.find("\\documentclass")
+    preamble = raw_preamble[start:] if start != -1 else raw_preamble
+    tail = "\n\\end{document}\n"
+    header = (
+        "\\begin{center}\n"
+        f"  {{\\Huge \\textbf{{{_lx(name)}}}}}\\\\[6pt]\n"
+        + (f"  {contact_line}\\\\[3pt]\n" if contact_line else "")
+        + (f"  {links_line}\n" if links_line else "")
+        + "\\end{center}\n\n\\vspace{-12pt}\n\n"
+    )
+    return preamble + header + "\n".join(body) + tail
 
 
 def tex_to_html(tex: str) -> str:

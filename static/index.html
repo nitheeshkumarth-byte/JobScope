@@ -67,11 +67,25 @@ body::before {
 button { font: inherit; cursor: pointer; }
 input, textarea { font: inherit; color: var(--text); }
 
-.app { max-width: 900px; margin: 0 auto; padding: 0 18px 36px; height: 100vh; display: flex; flex-direction: column; }
+/* The shell is a full-height flex column so the composer stays pinned to the
+   bottom while only the transcript scrolls. min-height (not height) so a short
+   window can still grow the page instead of clipping the controls, and 100dvh
+   where supported: 100vh is the *largest* viewport height on mobile, so with
+   the browser's URL bar collapsed the composer sat under it. The bare 100vh
+   stays first as the fallback for browsers without dvh. */
+.app { max-width: 900px; margin: 0 auto; padding: 0 18px 36px; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
+/* Without flex + min-height:0 the transcript does not scroll on its own; it just
+   grows and pushes the composer off-screen on any short viewport. */
+main.chat { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 main.chat::-webkit-scrollbar { width: 8px; }
 main.chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
 
-header { display: flex; align-items: center; gap: 12px; padding: 16px 2px 0; }
+header { display: flex; align-items: center; gap: 12px; padding: 16px 2px 0; flex-wrap: wrap; row-gap: 10px; }
+/* On an ultrawide monitor a full-bleed header puts the brand hard against the
+   left edge and the controls hard against the right, far outside the column the
+   rest of the app is centred in. Capping the header at the same measure keeps
+   the two aligned instead of stretched. */
+header > * { max-width: 100%; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; letter-spacing: .2px; }
 .brand .dot { width: 12px; height: 12px; border-radius: 4px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
 .spacer { flex: 1; }
@@ -84,6 +98,11 @@ header { display: flex; align-items: center; gap: 12px; padding: 16px 2px 0; }
 .iconbtn { border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: 10px; padding: 7px 11px; font-size: 13.5px; transition: all .2s cubic-bezier(.22,.68,.35,1); }
 .iconbtn:hover { color: var(--accent); border-color: var(--accent); transform: translateY(-2px) rotate(-1.5deg); box-shadow: 0 6px 14px -8px var(--accent); }
 .iconbtn:active { transform: translateY(0) scale(.95); }
+/* Reset is destructive and irreversible, so it is tinted rather than neutral in
+   the top bar - it must read as "this one is different" without being the first
+   thing your eye lands on. */
+.iconbtn.dangerbtn { color: #e5484d; border-color: color-mix(in srgb, #e5484d 34%, transparent); background: color-mix(in srgb, #e5484d 8%, var(--surface)); }
+.iconbtn.dangerbtn:hover { color: #e5484d; border-color: #e5484d; box-shadow: 0 6px 14px -8px #e5484d; }
 
 /* ---------- circuit pipeline ---------- */
 .circuit { position: relative; margin: 16px 0 6px; padding: 4px 6px 2px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
@@ -103,6 +122,10 @@ header { display: flex; align-items: center; gap: 12px; padding: 16px 2px 0; }
 @keyframes ringpulse { 0% { transform: scale(.82); opacity: .8; } 100% { transform: scale(1.32); opacity: 0; } }
 .node.done .pill { border-color: var(--ok); color: var(--ok); background: rgba(21,128,61,.08); }
 .node.fail .pill { border-color: var(--danger); color: var(--danger); background: rgba(185,28,28,.07); }
+/* A one-shot pop as a node reaches a new state, so progress is visible at a
+   glance without any of it being permanent motion. */
+@keyframes nodepop { 0% { transform: scale(1); } 45% { transform: scale(1.13); } 100% { transform: scale(1); } }
+.node.popped .pill { animation: nodepop .32s cubic-bezier(.22,.68,.35,1); }
 .node.live .lbl { color: var(--accent); }
 .node.done .lbl { color: var(--ok); }
 .pop { position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); min-width: 190px; max-width: 240px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 11.5px; color: var(--muted); box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 30; white-space: normal; }
@@ -136,6 +159,9 @@ header { display: flex; align-items: center; gap: 12px; padding: 16px 2px 0; }
 /* ---------- tool cards ---------- */
 .toolcard { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin: 0 42px 12px; font-size: 13px; overflow: hidden; animation: rise .25s ease; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+/* New chat bubbles fade up; the typing placeholder is replaced by real text
+   mid-stream, so it must not animate or the swap looks like a flash. */
+.msg { animation: rise .26s cubic-bezier(.22,.68,.35,1) both; }
 .toolcard .head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; user-select: none; }
 .toolcard .head .o { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); flex: none; }
 .toolcard .head .name { font-family: 'JetBrains Mono', monospace; color: var(--text); font-size: 12.5px; }
@@ -180,6 +206,15 @@ header { display: flex; align-items: center; gap: 12px; padding: 16px 2px 0; }
 .dots i.on { background: var(--accent); width: 16px; border-radius: 4px; }
 .deckcount { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--muted); }
 
+/* Notes under a deck: repeats, and which sources refused to answer. */
+.decknotes { margin-top: 10px; display: flex; flex-direction: column; gap: 7px; }
+.decknote { font-size: 12px; line-height: 1.5; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; }
+.decknote.wall summary { cursor: pointer; color: var(--text); font-weight: 600; }
+.decknote.wall summary:hover { color: var(--accent); }
+.decknote.wall ul { margin: 8px 0 0; padding-left: 18px; }
+.decknote.wall li { margin: 3px 0; }
+.decknote.wall p { margin: 8px 0 0; }
+
 /* Ghost variant of .btnglow — the per-card "LaTeX resume" action. */
 .btnglow.ghost { flex: 0 0 auto; padding: 9px 13px; font-size: 12px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
 .btnglow.ghost:hover { border-color: var(--accent); color: var(--accent); box-shadow: 0 12px 24px -12px var(--accent); transform: translateY(-2px) scale(1.02); }
@@ -197,12 +232,31 @@ header { display: flex; align-items: center; gap: 12px; padding: 16px 2px 0; }
 .rmodal .rtab:hover { color: var(--accent); }
 .rmodal .rtab.on { color: var(--accent); border-color: var(--accent); border-bottom-color: var(--surface); }
 .rmodal .rbody { flex: 1; overflow-y: auto; padding: 16px; background: var(--surface-2); min-height: 220px; }
+/* Pasted job description: the reliable source for tailoring. Collapsed by
+   default so it does not compete with the preview it explains. */
+.rmodal .rjd { padding: 10px 16px 0; border-bottom: 1px solid var(--border); background: var(--surface); }
+.rmodal .rjdlab { display: flex; align-items: baseline; gap: 8px; font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+.rmodal .rjdhint { font-weight: 400; color: var(--muted); font-size: 11.5px; }
+.rmodal .rjdbox { width: 100%; resize: vertical; min-height: 62px; max-height: 34vh; border: 1px solid var(--border); border-radius: 9px; padding: 9px 11px; font-family: inherit; font-size: 12.5px; line-height: 1.5; color: var(--text); background: var(--surface-2); }
+.rmodal .rjdbox:focus { outline: none; border-color: var(--accent); }
+.rmodal .rjdraw { display: flex; align-items: center; gap: 10px; padding: 8px 0 10px; }
+.rmodal .rjdn { font-size: 11.5px; color: var(--muted); }
 #rBodyTex { margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
 .rmodal .rfoot { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface); }
 .rmodal .rdesc { font-size: 12px; color: var(--muted); flex: 1; }
 
 /* Rendered-preview styling (mirrors the ATS LaTeX layout, no tables). */
 .resume-preview { background: #fff; color: #16202e; border-radius: 6px; box-shadow: 0 6px 18px -8px rgba(0,0,0,.28); padding: 26px 30px; font-family: Georgia, "Times New Roman", serif; font-size: 13px; line-height: 1.5; max-width: 640px; margin: 0 auto; }
+.ocrbox { margin-top: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; font-size: 12px; color: var(--muted); background: var(--surface-2); }
+.ocrbox b { color: var(--text); font-weight: 600; }
+.ocrbox.ocrwarn { color: #b45309; }
+.ocrbox summary { cursor: pointer; color: var(--text); }
+.ocrbox pre { margin: 6px 0 0; max-height: 190px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: "JetBrains Mono", monospace; font-size: 11px; color: var(--text); }
+.docrow { display: flex; align-items: center; gap: 10px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); margin-top: 7px; }
+.docrow .dname { flex: 1; font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docrow .dmeta { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.docrow button { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: 6px; }
+.docrow button:hover { color: #b91c1c; background: rgba(185,28,28,.09); }
 .resume-preview .rh-name { text-align: center; font-size: 26px; font-weight: 700; letter-spacing: .5px; margin-bottom: 3px; }
 .resume-preview .rh-center { text-align: center; margin: 2px 0; font-size: 12.5px; color: inherit; }
 .resume-preview h2 { color: #1F4E79; font-size: 14.5px; border-bottom: 2px solid #1F4E79; padding-bottom: 2px; margin: 15px 0 6px; }
@@ -252,24 +306,46 @@ header { display: flex; align-items: center; gap: 12px; padding: 16px 2px 0; }
 /* ---------- sidebar (sessions) ---------- */
 .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 262px; background: var(--surface); border-right: 1px solid var(--border); z-index: 40; display: flex; flex-direction: column; transform: translateX(-105%); transition: transform .22s ease; }
 .sidebar.show { transform: translateX(0); }
-.shead { display: flex; align-items: center; gap: 8px; padding: 14px 14px; border-bottom: 1px solid var(--border); }
+/* The head and foot must not shrink, and the list between them must be the only
+   thing that scrolls. A flex child defaults to min-height:auto, i.e. its content
+   height, so an overflow-y:auto list will NOT shrink below its content and will
+   simply push the footer off the bottom of the fixed-height panel instead. That
+   is what made the sidebar look dead: past a handful of sessions the rows below
+   the fold were unreachable and the "New" result landed out of sight, while the
+   Reset button in the footer was pushed off-screen entirely. min-height: 0 is
+   what actually lets it scroll. */
+.shead { display: flex; align-items: center; gap: 8px; padding: 14px 14px; border-bottom: 1px solid var(--border); flex: none; }
 .shead h2 { font-size: 14px; margin: 0; flex: 1; }
-.sbody { flex: 1; overflow-y: auto; padding: 10px 10px; }
+/* Named .slist to match the markup; the old rule was .sbody and the element
+   never carried it, so the list had no sizing at all. */
+.slist { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 10px; scrollbar-width: thin; }
+.slist::-webkit-scrollbar { width: 8px; }
+.slist::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
 .srow { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 8px; cursor: pointer; }
 .srow:hover { background: var(--surface-2); }
 .srow.on { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
-.srow .sname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-.srow .smeta { flex-basis: 100%; font-size: 11px; color: var(--muted); padding-left: 10px; }
-.srow .sdel { opacity: 0; transition: opacity .15s; }
-.srow:hover .sdel { opacity: 1; }
-.sdelx { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 14px; padding: 2px 6px; }
-.sdelx:hover { color: var(--danger, #e5484d); }
-.snew { margin: 4px 10px 0; }
-.sfoot { padding: 12px 14px; border-top: 1px solid var(--border); }
+/* .stext stacks the name over its summary; the row itself is the flex line so
+   the ✕ stays centred against both lines rather than the top one. */
+.srow .stext { flex: 1; min-width: 0; }
+.srow .sname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.srow .smeta { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Partly visible rather than fully hidden: at opacity 0 there is nothing to
+   hover *onto*, so the delete affordance had to be discovered by accident. */
+.srow .sdel { opacity: .4; transition: opacity .15s; }
+.srow:hover .sdel, .srow .sdel:focus-visible { opacity: 1; }
+.sfoot { padding: 12px 14px; border-top: 1px solid var(--border); flex: none; }
 @media (min-width: 901px) { body.sidebar-on { padding-left: 262px; } }
+
 .drop { border: 1.5px dashed var(--border); border-radius: 10px; padding: 14px; text-align: center; color: var(--muted); font-size: 13px; cursor: pointer; transition: all .15s; }
 .drop:hover, .drop.drag { border-color: var(--accent); color: var(--accent); }
 .chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+/* Multi-select option chips (work type / region). Buttons, not spans, because
+   they are clickable state; .on mirrors data-selected so the styling can't
+   drift from what actually gets submitted. */
+.chips .toggle { font: inherit; font-size: 11.5px; font-family: 'JetBrains Mono', monospace; cursor: pointer; background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 4px 11px; transition: background .12s, color .12s, border-color .12s; }
+.chips .toggle:hover { color: var(--text); border-color: var(--accent); }
+.chips .toggle.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.chips .toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .chips .chip.editable { gap: 5px; align-items: center; display: inline-flex; }
 .chips .chip .x { opacity: .55; background: none; border: 0; color: inherit; padding: 0; font-size: 13px; line-height: 1; }
 .chips .chip .x:hover { opacity: 1; }
@@ -289,6 +365,8 @@ header { display: flex; align-items: center; gap: 12px; padding: 16px 2px 0; }
 .btn.small { padding: 5px 10px; font-size: 12px; border-radius: 8px; }
 .btn:active:not(:disabled) { transform: translateY(0) scale(.97); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.danger { margin-top: 10px; width: 100%; background: color-mix(in srgb, #e5484d 12%, transparent); color: #e5484d; border: 1px solid color-mix(in srgb, #e5484d 32%, transparent); }
+.btn.danger:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 20px -12px #e5484d; background: color-mix(in srgb, #e5484d 18%, transparent); }
 
 .logrow { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; font-size: 13px; }
 .logrow .lhead { display: flex; align-items: center; gap: 8px; }
@@ -307,8 +385,453 @@ header { display: flex; align-items: center; gap: 12px; padding: 16px 2px 0; }
 .spin { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%; animation: rot .8s linear infinite; vertical-align: -1px; }
 @keyframes rot { to { transform: rotate(360deg); } }
 .section-title { font-size: 13px; font-weight: 700; margin: 18px 0 4px; }
+/* Clear-all sits on the same line as its group heading and is deliberately
+   quiet: it is a reset, not a primary action. */
+.section-title, label { position: relative; }
+.linkbtn { float: right; font: inherit; font-size: 11.5px; font-weight: 600; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 2px 4px; border-radius: 6px; }
+.linkbtn:hover { color: var(--accent); background: var(--accent-soft); }
+.linkbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.linkbtn:disabled { opacity: .35; cursor: default; }
+.linkbtn:disabled:hover { color: var(--muted); background: none; }
 .sub { font-size: 12.5px; color: var(--muted); }
+
+/* Searchable country picker: a text input with a filtered dropdown. */
+.searchwrap { position: relative; margin-top: 8px; }
+.searchwrap input { width: 100%; box-sizing: border-box; border: 1px solid var(--border); background: var(--surface-2); border-radius: 9px; padding: 7px 10px; outline: none; font: inherit; font-size: 13px; }
+.searchwrap input:focus { border-color: var(--accent); }
+.menu { position: absolute; z-index: 40; left: 0; right: 0; top: calc(100% + 4px); max-height: 208px; overflow-y: auto; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 30px rgba(0, 0, 0, .38); padding: 4px; }
+.menu .opt { display: flex; justify-content: space-between; gap: 10px; width: 100%; text-align: left; font: inherit; font-size: 13px; background: none; border: 0; color: var(--text); padding: 6px 9px; border-radius: 7px; cursor: pointer; }
+.menu .opt:hover, .menu .opt.cursor { background: var(--accent-soft); color: var(--accent); }
+.menu .opt .reg { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.menu .opt.picked { opacity: .45; }
+.menu .none { padding: 8px 9px; font-size: 12.5px; color: var(--muted); }
 code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+
+/* ---------- account ---------- */
+/* The hidden attribute is only `display:none` in the UA sheet, so any explicit
+   display rule beats it. Several of the wrappers below set display, which
+   silently un-hides them; this makes hidden mean hidden. */
+[hidden] { display: none !important; }
+.acct { font-size: 12.5px; color: var(--muted); max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gate { position: fixed; inset: 0; z-index: 90; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 20px; overflow: auto; }
+.gate[hidden] { display: none; }
+.gatecard { width: 100%; max-width: 380px; }
+.gatetop { text-align: center; margin-bottom: 20px; }
+.gatesub { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+.gateform { display: flex; flex-direction: column; gap: 12px; }
+.gateform[hidden] { display: none; }
+.gateform label { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--muted); }
+.gateform input { padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text); font-size: 14px; font-family: inherit; }
+.gateform input:focus { outline: none; border-color: var(--accent); }
+.btn.wide { width: 100%; justify-content: center; padding: 11px; }
+.gerr { background: color-mix(in srgb, #e5484d 12%, transparent); color: #e5484d; border: 1px solid color-mix(in srgb, #e5484d 35%, transparent); border-radius: 8px; padding: 8px 11px; font-size: 12.5px; }
+.gerr[hidden] { display: none; }
+.gatecheck { font-size: 13.5px; line-height: 1.55; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; margin: 0; }
+.gatehint { font-size: 12px; color: var(--muted); background: var(--surface-2); border: 1px dashed var(--border); border-radius: 9px; padding: 10px 12px; word-break: break-all; }
+.gatehint[hidden] { display: none; }
+.gatehint a { color: var(--accent); }
+.gateswitch { display: flex; justify-content: space-between; gap: 12px; margin-top: 16px; font-size: 12.5px; }
+.gateswitch a { color: var(--accent); text-decoration: none; }
+.gateswitch a:hover { text-decoration: underline; }
+.gatefoot { text-align: center; margin-top: 18px; }
+
+/* ---------- motion ----------
+   The gate fades in over the app and the panel rises into place; the app
+   itself stays put underneath and is revealed on sign-in. Kept to opacity and
+   transform so nothing reflows, and disabled entirely for readers who ask for
+   reduced motion. */
+@keyframes gateIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes gateCardIn { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes stepIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes appIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes drawerSettle { from { opacity: .4; } to { opacity: 1; } }
+
+.gate { opacity: 1; transition: opacity .34s cubic-bezier(.22,.68,.35,1); }
+.gate.in { animation: gateIn .34s cubic-bezier(.22,.68,.35,1) both; }
+.gate.in .gatecard, .gate.in .gatetop { animation: gateCardIn .42s cubic-bezier(.22,.68,.35,1) both; }
+.gate.in .gatetop { animation-delay: .04s; }
+.gateform.step, .gatecheck.step { animation: stepIn .3s cubic-bezier(.22,.68,.35,1) both; }
+
+html.gated .app, html.gated header { filter: blur(3px); transition: filter .34s ease, opacity .34s ease; }
+body.booted .app, body.booted header { animation: appIn .5s cubic-bezier(.22,.68,.35,1) both; }
+body.booted header { animation-delay: .06s; }
+/* The drawers already slide in via .drawer/.drawer.show; this only adds a
+   small settle so the content does not arrive perfectly rigid. */
+.drawer.show { animation: drawerSettle .28s cubic-bezier(.22,.68,.35,1) both; }
+
+/* =====================================================================
+   Job-role dropdown
+   A native <select> cannot be styled: the OS paints the popup, so there
+   is nowhere to put a transition and the list cannot be filtered. This is
+   a real combobox instead - styled trigger, filter box, staggered list -
+   because the catalog has ~66 entries. The choice still does nothing on
+   its own: a role only reaches the search when "Add role" is pressed.
+   ===================================================================== */
+.roledd { position: relative; flex: 1 1 auto; min-width: 0; }
+.roledd-btn {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  padding: 8px 11px; font: inherit; font-size: 13px; text-align: left;
+  color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 11px;
+  transition: border-color .2s ease, box-shadow .22s ease,
+              transform .18s cubic-bezier(.22,.68,.35,1), background .2s ease;
+}
+.roledd-btn:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: 0 8px 18px -12px var(--accent); }
+.roledd-btn:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.roledd-btn .cap { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.roledd-btn .cap.ph { color: var(--muted); }
+.roledd-btn .caret { margin-left: auto; flex: none; color: var(--muted); transition: transform .3s cubic-bezier(.22,.68,.35,1), color .2s ease; }
+.roledd.open .roledd-btn { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.roledd.open .caret { transform: rotate(180deg); color: var(--accent); }
+.roledd-btn .count { flex: none; font-size: 10.5px; font-family: 'JetBrains Mono', monospace; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 1px 6px; }
+
+.roledd-menu {
+  position: absolute; z-index: 60; left: 0; right: 0; top: calc(100% + 6px);
+  padding: 7px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 13px;
+  box-shadow: var(--shadow);
+  transform-origin: top center;
+  opacity: 0; transform: translateY(-7px) scale(.97); pointer-events: none;
+  transition: opacity .18s ease, transform .22s cubic-bezier(.22,.68,.35,1);
+}
+.roledd.open .roledd-menu { opacity: 1; transform: none; pointer-events: auto; }
+.roledd-search { width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 7px 10px; font: inherit; font-size: 13px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; outline: none; transition: border-color .2s ease, box-shadow .2s ease; }
+.roledd-search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.roledd-list { max-height: 236px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; scrollbar-width: thin; }
+.roledd-list::-webkit-scrollbar { width: 8px; }
+.roledd-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+.roledd-opt {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 9px; font: inherit; font-size: 13px; text-align: left;
+  color: var(--text); background: none; border: 0; border-radius: 8px; cursor: pointer;
+  transition: background .14s ease, color .14s ease, padding-left .16s cubic-bezier(.22,.68,.35,1);
+}
+.roledd.open .roledd-opt { animation: roleddItem .26s cubic-bezier(.22,.68,.35,1) both; animation-delay: calc(var(--i, 0) * 13ms); }
+.roledd-opt:hover, .roledd-opt.cursor { background: var(--accent-soft); color: var(--accent); padding-left: 13px; }
+.roledd-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.roledd-opt .tick { margin-left: auto; flex: none; font-size: 11px; color: var(--ok); opacity: 0; transform: scale(.4); transition: opacity .18s ease, transform .24s cubic-bezier(.34,1.56,.64,1); }
+.roledd-opt.added .tick { opacity: 1; transform: none; }
+.roledd-opt.added { color: var(--muted); }
+.roledd-none { padding: 12px 10px; font-size: 12.5px; color: var(--muted); text-align: center; }
+@keyframes roleddItem { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+
+/* =====================================================================
+   Sign-in gate
+   A layered aurora + masked grid behind a glass panel, and a staggered
+   entrance. Only opacity/transform are animated (plus two background
+   positions on the loops) so the card never reflows mid-animation, and
+   both endless loops are switched off for reduced motion below.
+   ===================================================================== */
+.gate { position: fixed; inset: 0; z-index: 90; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 20px; isolation: isolate; }
+.gate::before {
+  content: ""; position: absolute; inset: -30%; z-index: -2;
+  background:
+    radial-gradient(620px at 18% 20%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 62%),
+    radial-gradient(560px at 82% 78%, color-mix(in srgb, var(--accent-2) 26%, transparent), transparent 62%),
+    radial-gradient(460px at 62% 10%, color-mix(in srgb, #22d3ee 20%, transparent), transparent 60%),
+    radial-gradient(520px at 28% 90%, color-mix(in srgb, #f472b6 16%, transparent), transparent 62%);
+  animation: aurora 26s ease-in-out infinite alternate;
+}
+.gate::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; opacity: .55;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--text) 7%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--text) 7%, transparent) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 15%, transparent 78%);
+          mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 15%, transparent 78%);
+  animation: gridDrift 42s linear infinite;
+}
+@keyframes aurora { to { transform: translate3d(-4%, -3%, 0) scale(1.12) rotate(6deg); } }
+@keyframes gridDrift { to { background-position: 46px 92px, -46px 46px; } }
+
+.gatestage { position: relative; width: 100%; max-width: 420px; display: flex; flex-direction: column; align-items: center; }
+.gatecard {
+  width: 100%; padding: 28px 28px 22px;
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 22px;
+  box-shadow: 0 30px 70px -30px rgba(23,30,45,.5), 0 1px 0 rgba(255,255,255,.06) inset;
+}
+/* A gradient hairline around the panel, masked to the border only. */
+.gatecard::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px;
+  background: linear-gradient(140deg,
+    color-mix(in srgb, var(--accent) 70%, transparent), transparent 36%,
+    transparent 64%, color-mix(in srgb, var(--accent-2) 60%, transparent));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  opacity: .75; pointer-events: none;
+}
+
+.gatemark { position: relative; width: 54px; height: 54px; margin-bottom: 16px; display: grid; place-items: center; }
+.gatemark .ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0 22%, var(--accent) 40%, var(--accent-2) 58%, transparent 76%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+          mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  animation: rot 3.8s linear infinite;
+}
+.gatemark .core {
+  width: 26px; height: 26px; border-radius: 9px;
+  display: grid; place-items: center; color: #fff; font-size: 14px; font-weight: 800;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 6px 18px -6px var(--accent);
+  animation: corePulse 3.2s ease-in-out infinite;
+}
+@keyframes corePulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.14); } }
+
+.gatetop { text-align: center; margin-bottom: 20px; }
+.gatetop .brand { justify-content: center; font-size: 21px; }
+.gatetop .brand .dot { width: 14px; height: 14px; border-radius: 5px; box-shadow: 0 0 14px -2px var(--accent); animation: corePulse 3.2s ease-in-out infinite; }
+
+.gateform input {
+  transition: border-color .2s ease, box-shadow .22s ease, background .2s ease;
+}
+.gateform input:focus {
+  border-color: var(--accent); background: var(--surface);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+/* Errors shake once. The element is toggled with [hidden], so the animation
+   replays on every new message without any JS bookkeeping. */
+.gerr:not([hidden]) { animation: shake .4s cubic-bezier(.36,.07,.19,.97) both; }
+@keyframes shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
+/* The submit button gets the same travelling sheen as the other primaries. */
+#gSubmit, #gResetSubmit {
+  position: relative; overflow: hidden;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 12px 26px -14px var(--accent);
+  transition: transform .18s cubic-bezier(.22,.68,.35,1), box-shadow .2s ease, filter .2s ease;
+}
+#gSubmit::after, #gResetSubmit::after {
+  content: ""; position: absolute; top: 0; left: -120%; width: 55%; height: 100%;
+  background: linear-gradient(115deg, transparent, rgba(255,255,255,.45), transparent);
+  transform: skewX(-20deg); transition: left .5s ease;
+}
+#gSubmit:hover:not(:disabled), #gResetSubmit:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 18px 30px -14px var(--accent); filter: brightness(1.05); }
+#gSubmit:hover:not(:disabled)::after, #gResetSubmit:hover:not(:disabled)::after { left: 140%; }
+
+.gatecheck { position: relative; padding-left: 42px; }
+.gatecheck::before {
+  content: ""; position: absolute; left: 12px; top: 12px; width: 20px; height: 20px;
+  border-radius: 50%; background: color-mix(in srgb, var(--ok) 16%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok) 40%, transparent) inset;
+  animation: corePulse 2.4s ease-in-out infinite;
+}
+.gatecheck::after {
+  content: "✓"; position: absolute; left: 16.5px; top: 12px; width: 11px;
+  color: var(--ok); font-size: 12px; font-weight: 800; line-height: 20px; text-align: center;
+  opacity: 0; animation: tickIn .4s cubic-bezier(.34,1.56,.64,1) .18s both;
+}
+@keyframes tickIn { from { opacity: 0; transform: scale(.3) rotate(-25deg); } to { opacity: 1; transform: none; } }
+
+.gatefeats { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 14px; margin-top: 16px; font-size: 12px; color: var(--muted); }
+.gatefeats span { display: inline-flex; align-items: center; gap: 6px; animation: gateRowIn .5s cubic-bezier(.22,.68,.35,1) both; }
+.gatefeats span::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: none; }
+.gatefeats span:nth-child(1) { animation-delay: .5s; }
+.gatefeats span:nth-child(2) { animation-delay: .58s; }
+.gatefeats span:nth-child(3) { animation-delay: .66s; }
+
+.gateticker { position: absolute; left: 0; right: 0; bottom: 14px; overflow: hidden; -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); }
+.gateticker .gtrack { display: flex; gap: 26px; width: max-content; animation: ticker 34s linear infinite; }
+.gateticker span { font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--muted); opacity: .5; white-space: nowrap; }
+/* A board that a default sweep skips. Kept visible but faint: it is reachable
+   by name, so hiding it would suggest it is unsupported. */
+.gateticker span.skipped { opacity: .22; font-style: italic; }
+@keyframes ticker { to { transform: translateX(-50%); } }
+
+.gtheme { position: absolute; top: 16px; right: 16px; z-index: 2; }
+
+/* Staggered entrance. Scoped to #gateSign so the per-step .step animation
+   on a swapped form (sign-in -> reset -> check) still owns the form itself
+   and these child offsets do not fight it. */
+.gate.in .gatemark { animation: gateMarkIn .62s cubic-bezier(.34,1.4,.64,1) both; }
+.gate.in .gatetop .brand { animation: gateRowIn .5s cubic-bezier(.22,.68,.35,1) .1s both; }
+.gate.in .gatetop .gatesub { animation: gateRowIn .5s cubic-bezier(.22,.68,.35,1) .17s both; }
+.gate.in #gateSign > * { animation: gateRowIn .46s cubic-bezier(.22,.68,.35,1) both; animation-delay: calc(.24s + var(--d, 0) * 55ms); }
+.gate.in #gateSign > *:nth-child(1) { --d: 0; }
+.gate.in #gateSign > *:nth-child(2) { --d: 1; }
+.gate.in #gateSign > *:nth-child(3) { --d: 2; }
+.gate.in #gateSign > *:nth-child(4) { --d: 3; }
+.gate.in #gateSign > *:nth-child(5) { --d: 4; }
+.gate.in .gateswitch { animation: gateRowIn .5s cubic-bezier(.22,.68,.35,1) .44s both; }
+.gate.in .gatefoot { animation: gateRowIn .5s cubic-bezier(.22,.68,.35,1) .52s both; }
+.gate.in .gateticker { animation: fadeIn .6s ease .8s both; }
+@keyframes gateRowIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes gateMarkIn { from { opacity: 0; transform: translateY(14px) scale(.6) rotate(-40deg); } to { opacity: 1; transform: none; } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the state changes, drop the travel. */
+  .gate, .gate.in, .gate.in .gatecard, .gate.in .gatetop, .gateform.step,
+  .gatecheck.step, body.booted .app, body.booted header, .drawer.show,
+  html.gated .app, html.gated header, .node.popped .pill, .msg,
+  .gate.in .gatemark, .gate.in .gatetop .brand, .gate.in .gatetop .gatesub,
+  .gate.in #gateSign > *, .gate.in .gateswitch, .gate.in .gatefoot,
+  .gate.in .gateticker, .gatefeats span, .gerr:not([hidden]),
+  .gatecheck::after {
+    animation: none; transition: none; filter: none;
+  }
+  /* The endless loops are named by their selectors, not their keyframes:
+     the live-node ring, the typing dots, the spinner, and the two new
+     decorative gate loops plus the mark and the board ticker. */
+  .node.live .pill::after, .typing i, .spin,
+  .gate::before, .gate::after, .gatemark .ring, .gatemark .core,
+  .gatetop .brand .dot, .gatecheck::before, .gateticker .gtrack {
+    animation: none !important;
+  }
+  /* The list stagger uses animation-delay, which the global duration clamp
+     does not touch - without this the options would still crawl in one by
+     one with no motion at all. */
+  .roledd.open .roledd-opt { animation: none !important; }
+}
+/* =====================================================================
+   Responsive layout
+
+   Appended last on purpose: every rule below is a plain override, so putting
+   the whole block after the component styles is what makes it win on equal
+   specificity instead of needing !important.
+
+   What was actually broken before this block existed, for each breakpoint:
+     wide        The header is full-bleed while the app column is centred at
+                 900px, so on an ultrawide monitor the brand sat far left and
+                 the controls far right, nowhere near the content they control.
+     1040px      Five header controls plus the brand and the status pill stop
+                 fitting on one line and spill out of the viewport.
+     760px       The pipeline nodes are `justify-content: space-between` with
+                 nowrap labels, so they overflowed and forced a horizontal
+                 scroll on the WHOLE page - dragging the composer and every
+                 other control sideways with them.
+     600px       The 262px sidebar is 82% of a 320px screen; the deck's 42px
+                 side insets leave a ~180px card; the banner's three buttons
+                 do not fit in a row.
+     420px       Header controls and node labels no longer fit at all.
+     short       .gate is `overflow: hidden`, so on a landscape phone the
+                 sign-in card - which is taller than the screen - was clipped
+                 with the submit button unreachable. That is a lockout, not a
+                 cosmetic problem.
+   ===================================================================== */
+@media (min-width: 1600px) {
+  /* Align the header with the column it controls instead of stretching it
+     across the display. */
+  header { max-width: 1400px; margin: 0 auto; padding-inline: 18px; }
+}
+
+@media (max-width: 1040px) {
+  /* The model name is decorative here; Settings shows it properly. */
+  .status .modeltag { display: none; }
+  .acct { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+@media (max-width: 760px) {
+  .node .pill { width: 34px; height: 34px; border-radius: 10px; font-size: 14px; }
+  .node .lbl { font-size: 9.5px; }
+  .nodes { padding: 10px 8px 8px; }
+  .pop { min-width: 0; max-width: min(240px, 74vw); }
+  /* The left/right nudges that kept the first and last tooltips on screen were
+     tuned for five wide pills; at 34px they push them off the edge instead, so
+     anchor those two to the container. */
+  .node:first-child .pop { left: 0; right: auto; transform: none; }
+  .node:nth-child(2) .pop { transform: translateX(-25%, 0); }
+  .node:last-child .pop { left: auto; right: 0; transform: none; }
+}
+
+@media (max-width: 600px) {
+  header { gap: 8px; padding-top: 12px; }
+  .brand { font-size: 17px; }
+  .iconbtn { padding: 8px 10px; font-size: 13px; }
+  .status { padding: 5px 9px; font-size: 12px; }
+  .acct { display: none; }              /* the address is on the account screen */
+
+  .app { padding: 0 12px 24px; }
+  /* The deck is inset by 42px a side to give the rotated cards somewhere to
+     turn; on a phone that leaves a ~180px card, so drop the inset and spend the
+     height instead - a full-width card needs the vertical room for its links. */
+  .deck { margin: 2px 0 14px; }
+  .deckstage { height: 232px; }
+  .bubble { max-width: 90%; }
+  .starters { gap: 6px; }
+  .starter { font-size: 12.5px; padding: 7px 11px; }
+
+  .sidebar { width: min(300px, 88vw); }
+  .drawer { width: 100vw; border-left: 0; }
+
+  .banner { flex-wrap: wrap; }
+  .toast { left: 12px; right: 12px; transform: none; text-align: center; }
+  .toast.show { transform: none; }
+}
+
+@media (max-width: 420px) {
+  header { gap: 6px; row-gap: 8px; }
+  .iconbtn { padding: 7px 8px; font-size: 12.5px; border-radius: 9px; }
+  .brand { font-size: 16px; }
+  .brand .dot { width: 10px; height: 10px; }
+  .node .pill { width: 30px; height: 30px; font-size: 13px; }
+  .node .lbl { font-size: 9px; letter-spacing: 0; }
+  .gatecard, .gatestage { max-width: 100%; }
+  .gateswitch { flex-direction: column; gap: 8px; text-align: center; }
+  .bubble { max-width: 94%; padding: 10px 12px; font-size: 14px; }
+  .composer { padding: 8px 9px; }
+  .deckstage { height: 258px; }
+}
+
+/* Landscape phones: the sign-in card is taller than the viewport and .gate is
+   overflow:hidden, so it was clipped with no way to reach the submit button -
+   a lockout rather than a cosmetic problem. Let the gate scroll and drop the
+   decoration first, keeping every control. */
+@media (max-height: 560px) {
+  .gate { overflow-y: auto; align-items: flex-start; padding: 12px; }
+  .gatemark { display: none; }
+  .gatefeats { display: none; }
+  .gateticker { display: none; }
+  .gatefoot { margin-top: 10px; }
+}
+
+@media (max-height: 560px) and (max-width: 760px) {
+  .circuit { margin: 8px 0 4px; padding: 2px 4px; }
+  .skillsbar { margin-top: 4px; }
+}
+
+/* Touch: nothing interactive may depend on hover, because there is no hover.
+   The session ✕ sat at opacity .4 and the chip ✕ at .55, and the pipeline
+   tooltips are hover/focus-only, so all three were unreachable. */
+@media (hover: none) {
+  .srow .sdel { opacity: .65; }
+  .chips .chip .x { opacity: 1; }
+  .node .pop { display: none; }
+}
+
+@media (pointer: coarse) {
+  .srow .sdel { min-width: 32px; min-height: 32px; }
+  .decknav button { width: 38px; height: 38px; }
+  .sendbtn { width: 42px; height: 42px; }
+  .iconbtn { padding: 9px 12px; }
+}
+
+/* Notched phones: the fixed sidebar and drawers sit flush against the screen
+   edge, which puts their headers under the notch and their footers under the
+   home indicator. */
+@supports (padding: env(safe-area-inset-left)) {
+  .sidebar { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .drawer { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .app { padding-left: max(18px, env(safe-area-inset-left)); padding-right: max(18px, env(safe-area-inset-right)); }
+  .toast { bottom: calc(22px + env(safe-area-inset-bottom)); }
+  @media (max-width: 600px) {
+    .app { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  }
+}
+
+/* A long unbroken string (a confirmation URL, a company name, a listing title)
+   was forcing the whole page to scroll sideways. */
+.bubble, .decknote, .card, .gatehint { overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -317,10 +840,13 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
   <div class="brand"><span class="dot"></span>JobScope</div>
   <div class="spacer"></div>
   <div id="status" class="status"><span class="pulse"></span><span id="statusText">Connecting…</span><span class="modeltag" id="modelTag"></span></div>
+  <span class="acct" id="acct" title="Signed in"></span>
+  <button class="iconbtn" id="signOutBtn" title="Sign out" style="display:none">Sign out</button>
   <button class="iconbtn" id="themeBtn" title="Toggle theme">Dark</button>
 <button class="iconbtn" id="sidebarBtn" title="Saved sessions / profiles">Sessions</button>
 <button class="iconbtn" id="logsBtn" title="Run logs">History</button>
 <button class="iconbtn" id="settingsBtn" title="Role, skills, model">Settings</button>
+<button class="iconbtn dangerbtn" id="resetAllBtn" title="Delete every session, resume, skill and filter, and start completely empty">Reset</button>
 </header>
 
 <aside class="sidebar" id="sidebar">
@@ -331,6 +857,7 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
   <div class="slist" id="sessList"></div>
   <div class="sfoot">
     <div class="sub">Each session keeps its own profile, agent config &amp; resume. Switch freely — tweaks to the active one are saved when you restart.</div>
+    <div class="sub">Use <b>Reset</b> in the top bar to wipe every session, the uploaded resume, skills, roles and all filters. Your login stays.</div>
   </div>
 </aside>
 
@@ -346,7 +873,7 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
       <div class="node" data-node="agent"><div class="pill">◈</div><div class="lbl">Agent</div>
         <div class="pop"><b>Agent</b><span class="ptext">waiting for a run</span></div></div>
       <div class="node" data-node="boards"><div class="pill">⌕</div><div class="lbl">Job boards</div>
-        <div class="pop"><b>Job boards</b><span class="ptext">Indeed · LinkedIn · Naukri · Glassdoor · Foundit · Internshala · WeWorkRemotely · Remotive · Arbeitnow</span></div></div>
+        <div class="pop"><b>Job boards</b><span class="ptext" id="boardsPopup">waiting for a run</span></div></div>
       <div class="node" data-node="router"><div class="pill">⇄</div><div class="lbl">Router</div>
         <div class="pop"><b>Router</b><span class="ptext">decides: summarize now, or fall back to Gmail</span></div></div>
       <div class="node" data-node="gmail"><div class="pill">✉</div><div class="lbl">Gmail</div>
@@ -388,30 +915,67 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
     <div class="srole" id="suggestions"></div>
     <div class="sub" id="inferredRow"></div>
 
-    <div class="section-title">Target roles (pick as many as you like)</div>
+    <div class="section-title">Target roles (pick as many as you like)<button class="linkbtn" data-clear="roleChipsEdit">Clear all</button></div>
     <div class="chips" id="roleChipsEdit"></div>
-    <div class="addrow"><input type="text" id="roleAdd" placeholder="Add a role…"><button class="btn ghost" id="roleAddBtn">Add</button></div>
-    <div class="sub">First role drives the search query: click a suggested role above or type your own; every selected role is matched and reported on.</div>
+    <div class="addrow">
+      <div class="roledd" id="roleDd">
+        <button class="roledd-btn" id="roleSelect" type="button" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="roleList" aria-label="Job role list">
+          <span class="cap ph" id="roleCap">Select a job role…</span>
+          <span class="count" id="roleCount"></span>
+          <span class="caret">▾</span>
+        </button>
+        <div class="roledd-menu" role="presentation">
+          <input class="roledd-search" id="roleSearch" type="text" placeholder="Filter roles…" aria-label="Filter job roles" autocomplete="off">
+          <div class="roledd-list" id="roleList" role="listbox" aria-label="Job roles"></div>
+        </div>
+        <input type="hidden" id="rolePick" value="">
+      </div>
+      <button class="btn ghost" id="roleAddBtn" title="Add the selected role">Add role</button>
+    </div>
+    <div class="sub">The list only suggests roles — nothing is added to your search until you pick one and press <b>Add role</b>. First role drives the search query; every selected role is matched and reported on.</div>
+    <div class="sub" id="roleEmpty">No role chosen yet — this session starts empty. Add one here, upload your CV, or just tell the agent in chat what you are after.</div>
 
-    <label>Cities / locations you're open to</label>
+    <label>Cities / locations you're open to<button class="linkbtn" data-clear="cityChipsEdit">Clear all</button></label>
+    <div class="searchwrap">
+      <input type="text" id="citySearch" placeholder="Search cities… e.g. benga" autocomplete="off" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="cityMenu" aria-label="Search cities">
+      <div class="menu" id="cityMenu" role="listbox" aria-label="Cities" hidden></div>
+    </div>
     <div class="chips" id="cityChipsEdit"></div>
-    <div class="addrow"><input type="text" id="cityAdd" placeholder="Add a city…"><button class="btn ghost" id="cityAddBtn">Add</button></div>
-    <div class="sub">Seeded from your CV on first upload; leave empty to search anywhere (remote).</div>
+    <div class="sub">Seeded from your CV on first upload; leave empty to search anywhere (remote). Pick from the list or type any place — the first city you add is what on-site and hybrid searches look in.</div>
+
+    <div class="section-title">Work type (pick as many as you like)<button class="linkbtn" data-clear="workModeChips">Clear all</button></div>
+    <div class="chips" id="workModeChips"></div>
+    <div class="sub">Nothing selected = no work-type filtering. On-site and hybrid searches use your first city above.</div>
+
+    <div class="section-title">Countries (search and pick)<button class="linkbtn" data-clear="countryChips">Clear all</button></div>
+    <div class="searchwrap">
+      <input type="text" id="countrySearch" placeholder="Search countries… e.g. germ" autocomplete="off">
+      <div class="menu" id="countryMenu" hidden></div>
+    </div>
+    <div class="chips" id="countryChips"></div>
+    <div class="sub" id="countryState">Nothing selected = every country allowed. A country chip only keeps listings located in that country; "Remote, Worldwide" listings always pass.</div>
 
     <label>GitHub profile link</label>
     <div class="addrow"><input type="text" id="cfgGithub" placeholder="https://github.com/yourname"><button class="btn ghost" id="githubDetectBtn" title="Auto-pull from your resume / CV">🪄 Detect</button></div>
     <div class="sub">Shown in the top-right corner of every LaTeX resume you generate. Leave blank and it stays empty; *Detect* grabs one from your resume or CV. Overwrite it here when your CV doesn't carry one.</div>
 
     <div class="section-title">Resume / CV</div>
-    <div class="drop" id="dropResume">Upload resume / CV (.pdf, .txt, .md) — skills, role suggestions &amp; location are extracted automatically</div>
-    <input type="file" id="resumeFile" hidden accept=".pdf,.txt,.md">
+    <div class="drop" id="dropResume">Upload resume / CV (.pdf, .txt, .md, .png, .jpg) — skills, role suggestions &amp; location are extracted automatically</div>
+    <input type="file" id="resumeFile" hidden accept=".pdf,.txt,.md,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff">
     <div class="chips" id="skillChipsEdit"></div>
-    <div class="addrow"><input type="text" id="skillAdd" placeholder="Add a skill…"><button class="btn ghost" id="skillAddBtn">Add</button></div>
+    <div class="addrow"><input type="text" id="skillAdd" placeholder="Add a skill…"><button class="btn ghost" id="skillAddBtn">Add</button><button class="btn ghost" data-clear="skillChipsEdit" type="button">Clear all</button></div>
     <div class="sub" id="resumeState"></div>
+    <div id="ocrNotice"></div>
+
+    <div class="section-title">Document library</div>
+    <div class="sub">Everything here is searched when a resume is tailored to a job description. Add project write-ups, certificates and older CVs alongside the one above - passages are copied across <b>verbatim</b>, so they must be your own words.</div>
+    <div class="drop" id="dropDocs">Add documents to search (.pdf, .txt, .md, .docx, .png, .jpg)</div>
+    <input type="file" id="docFile" hidden multiple accept=".pdf,.txt,.md,.docx,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff">
+    <div class="sub" id="docState"></div>
+    <div id="docList"></div>
 
     <label>Language model (Ollama)</label>
     <input type="text" id="cfgModel" placeholder="llama3.1">
-    <div class="chkrow"><input type="checkbox" id="cfgRemote"><span>Remote jobs <b>outside India</b> only</span></div>
     <label>Options</label>
     <div style="display:flex;gap:10px">
       <input type="number" id="cfgDays" placeholder="60" title="Search window (days)">
@@ -445,7 +1009,15 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
       <button class="rtab on" id="rtabPv">Preview</button>
       <button class="rtab" id="rtabTex">LaTeX source</button>
     </div>
-    <div class="rbody" id="rBodyPreview"><div class="empty">Building LaTeX resume…</div></div>
+    <div class="rjd" id="rJdWrap">
+      <label class="rjdlab" for="rJd">Job description <span class="rjdhint">paste it to get the most faithful tailoring &mdash; it is used instead of the posting link</span></label>
+      <textarea id="rJd" class="rjdbox" rows="3" spellcheck="false" placeholder="Paste the full job description here&hellip;"></textarea>
+      <div class="rjdraw">
+        <button class="btn ghost" id="rJdRegen">Tailor to this description</button>
+        <span class="rjdn" id="rJdCount"></span>
+      </div>
+    </div>
+    <div class="rbody" id="rBodyPreview"><div class="empty">Building LaTeX resume&hellip;</div></div>
     <pre class="rbody" id="rBodyTex" style="display:none"></pre>
     <div class="rfoot">
       <span class="rdesc" id="rDesc"></span>
@@ -454,6 +1026,61 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
       <button class="btn primary" id="rDownloadPv" style="width:auto" title="Save the rendered resume preview as a standalone .html">Download preview</button>
     </div>
   </div>
+</div>
+
+<div class="gate" id="gate" hidden>
+  <button class="iconbtn gtheme" id="gTheme" title="Switch theme">Dark</button>
+  <div class="gatestage">
+  <div class="gatemark" aria-hidden="true"><span class="ring"></span><span class="core">J</span></div>
+  <div class="gatecard">
+    <div class="gatetop">
+      <div class="brand" style="justify-content:center"><span class="dot"></span>JobScope</div>
+      <p class="gatesub" id="gateSub">Sign in to your account</p>
+    </div>
+
+    <!-- sign in / create account -->
+    <form class="gateform" id="gateSign">
+      <label>Email<input type="email" id="gEmail" autocomplete="username" required placeholder="you@example.com"></label>
+      <label>Password<input type="password" id="gPass" autocomplete="current-password" required placeholder="••••••••"></label>
+      <label id="gPass2Wrap" hidden>Confirm password<input type="password" id="gPass2" autocomplete="new-password" placeholder="••••••••"></label>
+      <div class="gerr" id="gErr" hidden></div>
+      <button class="btn primary wide" id="gSubmit" type="submit">Sign in</button>
+    </form>
+
+    <!-- confirmation screen -->
+    <div class="gateform" id="gateCheck" hidden>
+      <p class="gatecheck" id="gateCheckMsg">Check your inbox for the confirmation link.</p>
+      <div class="gatehint" id="gateDevLink" hidden></div>
+      <button class="btn ghost wide" id="gResend" type="button">Send it again</button>
+    </div>
+
+    <!-- forgot / set a new password -->
+    <form class="gateform" id="gateReset" hidden>
+      <p class="gatesub" id="resetMsg">Enter your email and we will send a reset link.</p>
+      <label>Email<input type="email" id="gResetEmail" autocomplete="username" placeholder="you@example.com"></label>
+      <label id="gNewWrap" hidden>New password<input type="password" id="gNewPass" autocomplete="new-password" placeholder="••••••••"></label>
+      <label id="gNew2Wrap" hidden>Confirm new password<input type="password" id="gNewPass2" autocomplete="new-password" placeholder="••••••••"></label>
+      <div class="gerr" id="gErr2" hidden></div>
+      <button class="btn primary wide" id="gResetSubmit" type="submit">Send reset link</button>
+    </form>
+
+    <div class="gateswitch">
+      <a href="#" id="gToggleMode">Need an account? Create one</a>
+      <a href="#" id="gForgot">Forgot password?</a>
+    </div>
+    <div class="gatefoot sub" id="gateFoot"></div>
+  </div>
+  <div class="gatefeats" aria-hidden="true">
+    <span id="gateBoardCount">Job boards, one search</span>
+    <span>Matched to your skills</span>
+    <span>Everything stays on this machine</span>
+  </div>
+  </div>
+  <!-- Populated from /api/boards (the scraper's own registry) by fillBoardList,
+       which runs before sign-in. The list is duplicated so the translateX(-50%)
+       marquee loops seamlessly. Left empty here on purpose: a hardcoded list
+       drifted out of sync and advertised four sites this app cannot scrape. -->
+  <div class="gateticker" aria-hidden="true"><div class="gtrack" id="gateTrack"></div></div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -465,7 +1092,8 @@ const chat = $("chat"), input = $("input");
 
 const state = { settings: {}, busy: false, lastMsg: null,
                 theme: localStorage.getItem("js-theme") || "light",
-                deck: [], deckIdx: 0 };
+                deck: [], deckIdx: 0, skills: [], sessions: [],
+                resetAt: null };
 document.documentElement.dataset.theme = state.theme;
 $("themeBtn").textContent = state.theme === "light" ? "Dark" : "Light";
 
@@ -494,9 +1122,102 @@ function circ(node, cls, text) {
     el.classList.remove("live", "done", "fail");
     el.classList.add(cls);
     if (text != null) el.querySelector(".ptext").textContent = text;
+    // Re-trigger the arrival pop. The class is only re-added when it changes,
+    // so without the reflow a node updated to the same state twice in a row
+    // would not animate the second time.
+    if (el.dataset.state !== cls) {
+      el.dataset.state = cls;
+      el.classList.remove("popped");
+      void el.offsetWidth;
+      el.classList.add("popped");
+    }
   }
   paintLines();
 }
+// Decide whether the boards step worked.
+//
+// This used to be a regex over the tool's human-readable text looking for the
+// word "blocked". That was wrong twice over: the summary names a board as
+// blocked for several unrelated reasons, and it also says "blocked" about a
+// board that answered perfectly and simply had no posting matching the query.
+// One quiet board therefore turned a 250-listing hunt into "all boards blocked
+// - falling back to Gmail" in the pipeline display.
+//
+// Now: prefer the machine-readable payload the tool already returns, and fall
+// back to counting per-board result lines structurally rather than grepping
+// prose for a word.
+function boardsVerdict(output) {
+  const marker = output.indexOf("###JOBS_JSON###");
+  if (marker !== -1) {
+    try {
+      const p = JSON.parse(output.slice(marker + "###JOBS_JSON###".length).trim());
+      // A board that answered with a count of 0 was still *reached*, so it
+      // counts as working. "0 listings" is a search result, not an outage.
+      const src = p.sources || {};
+      const reached = Object.keys(src).filter(function (k) {
+        return typeof src[k] === "number";
+      });
+      const withListings = reached.filter(function (k) { return src[k] > 0; });
+      const total = p.total || 0;
+      if (total > 0 || withListings.length > 0) {
+        const quiet = (p.no_matches || []).length;
+        return { ok: true, text: total > 0
+          ? total + " listing" + (total === 1 ? "" : "s") + " from " + withListings.length + " board" + (withListings.length === 1 ? "" : "s")
+            + (quiet ? " (" + quiet + " had no match for this query)" : "")
+          : "boards reachable, nothing matched this query" };
+      }
+      if (reached.length > 0) {
+        return { ok: true, text: "boards reachable, nothing matched this query" };
+      }
+      const n = (p.blocked || []).length;
+      return { ok: false, text: n ? n + " board" + (n === 1 ? "" : "s") + " blocked — router will fall back"
+                                : "boards returned nothing" };
+    } catch (e) { /* fall through to the structural read */ }
+  }
+  // No parseable payload. Count "[Board] <number>" lines instead of searching
+  // for "blocked": a board reporting a count is a board that answered.
+  let ok = false;
+  output.split("\n").forEach(function (line) {
+    if (/^\[[^\]]+\]\s+\d+\s*$/.test(line.trim())) ok = true;
+  });
+  return ok ? { ok: true, text: "boards returned listings" }
+            : { ok: false, text: "boards returned nothing" };
+}
+// Paint the board names the app can actually search.
+//
+// Both the sign-in marquee and the pipeline popup used to carry their own
+// hardcoded copy of the list, which drifted: they advertised Wellfound,
+// StepStone, Bayt and Jooble - none of which this app can scrape - while
+// omitting Internshala, WeWorkRemotely, Remotive and Arbeitnow, which all work.
+// The names now come from the scraper's own registry via /api/config, so there
+// is one list with one owner.
+//
+// Boards that a default sweep skips are shown dimmed rather than hidden: they
+// are reachable by name, and saying so is the difference between "not searched"
+// and "not supported".
+function fillBoardList(boards, defaults) {
+  if (!boards || !boards.length) return;
+  const track = document.getElementById("gateTrack");
+  if (track && !track.childElementCount) {
+    const html = boards.map(function (b) {
+      const on = !defaults.length || defaults.indexOf(b) !== -1;
+      return '<span class="' + (on ? "" : "skipped") + '">' + esc(b) + "</span>";
+    }).join("");
+    // Twice, so the translateX(-50%) loop wraps without a visible seam.
+    track.innerHTML = html + html;
+  }
+  const count = document.getElementById("gateBoardCount");
+  if (count) {
+    // Say how many are actually searched, and how many more exist. "9 job
+    // boards" was simply untrue of a sweep that probes six.
+    count.textContent = defaults.length && defaults.length < boards.length
+      ? defaults.length + " job boards searched at once · " + boards.length + " available"
+      : boards.length + " job boards, one search";
+  }
+  const pop = document.getElementById("boardsPopup");
+  if (pop) pop.textContent = boards.join(" · ");
+}
+
 function paintLines() {
   // connector n is "live" once node[n] (0-based) has started and node[n+1] is pending-up-to
   for (let i = 1; i < NODEORDER.length; i++) {
@@ -522,8 +1243,58 @@ function appendMsg(kind, text, typing) {
 function markdown(t) { try { return M.parse(t || ""); } catch { return esc(t); } }
 
 /* ---------- flashcard deck ---------- */
-function renderDeck(jobs) {
-  if (!jobs || !jobs.length) return;
+/* Two things the deck used to hide, both of which made a search look broken:
+   how many of these listings you have already seen, and which boards refused
+   to answer. Both come from the scraper's JSON payload. */
+function deckNotes(p) {
+  const out = [];
+  const repeats = Number(p.repeats) || 0;
+  if (repeats) {
+    out.push('<div class="decknote">' + repeats + ' of these were already shown in an earlier search. ' +
+      'These boards do not paginate, so once their new postings run out the same listings come back.</div>');
+  }
+  const blocked = p.blocked_reasons && Object.keys(p.blocked_reasons).length
+    ? p.blocked_reasons : null;
+  if (blocked) {
+    const rows = Object.keys(blocked).map(function (k) {
+      return '<li><b>' + esc(k) + '</b> — ' + esc(blocked[k]) + '</li>';
+    }).join("");
+    out.push('<details class="decknote wall"><summary>' + Object.keys(blocked).length +
+      ' source' + (Object.keys(blocked).length > 1 ? "s" : "") +
+      ' could not be searched</summary><ul>' + rows +
+      '</ul><p class="sub">These sites block automated requests from this network. They are not broken in the app, and no search can pull from them until they change that.</p></details>');
+  }
+  return out.length ? '<div class="decknotes">' + out.join("") + "</div>" : "";
+}
+
+/* Remove the visible deck AND the state behind it. renderDeck([]) did not do
+   this: an empty array has no .jobs, so renderDeck took the non-deck branch
+   and returned at `if (!isDeck) return`, leaving both the old cards on screen
+   and state.deck populated. Nothing had actually been cleared. */
+function clearDeck() {
+  state.deck = []; state.deckIdx = 0;
+  const slot = document.querySelector(".deck");
+  if (slot) slot.remove();
+  const stage = $("deckStage");
+  if (stage) stage.innerHTML = "";
+}
+
+function renderDeck(payload) {
+  const isDeck = !!(payload && payload.jobs);
+  const jobs = isDeck ? payload.jobs : payload;
+  // An empty result still has to say something. Returning silently here is
+  // what made a fruitless hunt look like it had reused the previous run's
+  // cards - the deck was only ever replaced by a successful one.
+  if (!jobs || !jobs.length) {
+    if (!isDeck) return;
+    const slot = document.querySelector(".deck.empty");
+    if (slot) slot.remove();
+    const e = document.createElement("div");
+    e.className = "deck empty";
+    e.innerHTML = '<div class="decknote">No listings came back from this hunt.</div>';
+    chat.insertBefore(e, activeBubble ? activeBubble.closest(".msg") : chat.lastChild);
+    return;
+  }
   state.deck = jobs; state.deckIdx = 0;
   const slot = document.querySelector(".deck");
   if (slot) slot.remove();
@@ -531,7 +1302,8 @@ function renderDeck(jobs) {
   d.innerHTML =
     '<div class="deckhead"><b>' + jobs.length + '</b>&nbsp;jobs found&nbsp;&middot;&nbsp;<span class="deckcount" id="deckCount">1 / ' + jobs.length + '</span></div>' +
     '<div class="deckstage" id="deckStage"></div>' +
-    '<div class="decknav"><button id="deckPrev" title="Previous">‹</button><div class="dots" id="deckDots"></div><button id="deckNext" title="Next">›</button></div>';
+    '<div class="decknav"><button id="deckPrev" title="Previous">‹</button><div class="dots" id="deckDots"></div><button id="deckNext" title="Next">›</button></div>' +
+    (isDeck ? deckNotes(payload) : "");
   chat.insertBefore(d, activeBubble ? activeBubble.closest(".msg") : chat.lastChild);
   showCard(0);
   $("deckPrev").onclick = () => go(-1);
@@ -573,7 +1345,7 @@ function showCard(i) {
 function go(dir) { const n = state.deckIdx + dir; if (n < 0 || n >= state.deck.length) return; state.deckIdx = n; showCard(n); }
 
 /* ---------- LaTeX resume modal ---------- */
-let _rTex = "", _rFile = "Resume.tex";
+let _rTex = "", _rFile = "Resume.tex", _rJob = null;
 function closeResume() { $("resumeModal").classList.remove("show"); document.body.style.overflow = ""; }
 $("rModalBg").onclick = closeResume;
 $("rModalClose").onclick = closeResume;
@@ -639,6 +1411,7 @@ $("rDownloadPv").onclick = () => {
 };
 
 function openResume(job) {
+  _rJob = job;
   $("rModalTitle").textContent = (job.title || "Job") + (job.company ? " \u2014 " + job.company : "");
   $("rModalMeta").textContent = job.location || job.source || "";
   $("rDesc").textContent = "";
@@ -652,10 +1425,30 @@ function openResume(job) {
   generateResume(job);
 }
 
+/* The resume is built from the pasted description when there is one, and from
+   the posting link otherwise. Which one actually happened is reported back in
+   `jd_origin` and shown as-is - the old copy implied live tailoring had
+   occurred even when the posting had been blocked. */
+function _jdNote(r) {
+  var how = r.jd_origin === "pasted"
+    ? "Tailored to your pasted job description."
+    : r.desc_fetched
+      ? "Tailored from the live posting description."
+      : "Posting page blocked this network — tailored from role + skills only.";
+  var hits = (r.rag_hits || 0) > 0
+    ? " Matched " + r.rag_hits + " passage" + (r.rag_hits === 1 ? "" : "s") + " from "
+      + (r.rag_sources || []).join(", ") + "."
+    : " No matching passages found in your document library.";
+  return how + hits + " Compiles with pdflatex.";
+}
+
 async function generateResume(job) {
   try {
-    const res = await fetch("/api/resume/gen", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: job.title || "", company: job.company || "", location: job.location || "", link: job.link || "", source: job.source || "", github_url: $("cfgGithub").value.trim() || "" }) });
+    var jd = $("rJd").value.trim();
+    $("rJdCount").textContent = jd ? jd.length.toLocaleString() + " characters" : "";
+    $("rBodyPreview").innerHTML = '<div class="empty"><span class="spin"></span> Building LaTeX resume — ' + (jd ? "matching your pasted description" : "fetching posting") + " &amp; ranking skills…</div>";
+    const res = await api("/api/resume/gen", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: job.title || "", company: job.company || "", location: job.location || "", link: job.link || "", source: job.source || "", github_url: $("cfgGithub").value.trim() || "", jd_text: jd }) });
     const r = await res.json();
     if (!r.ok) {
       $("rBodyPreview").innerHTML = '<div class="empty">Failed to build resume — ' + esc(r.error || "server error") + "</div>";
@@ -667,12 +1460,18 @@ async function generateResume(job) {
       ? '<div class="resume-preview">' + r.preview + "</div>"
       : '<div class="empty">Preview unavailable — open the LaTeX tab.</div>';
     $("rBodyTex").textContent = _rTex;
-    $("rDesc").textContent = (r.desc_fetched ? "Tailored from the live posting description." : "Posting page blocked this network — tailored from role + skills.") + " Compiles with pdflatex.";
+    $("rDesc").textContent = _jdNote(r);
   } catch (e) {
     $("rBodyPreview").innerHTML = '<div class="empty">Request failed — ' + esc(e.message) + "</div>";
     $("rDesc").textContent = e.message;
   }
 }
+
+$("rJdRegen").onclick = () => { if (_rJob) generateResume(_rJob); };
+$("rJd").oninput = () => {
+  var n = $("rJd").value.trim().length;
+  $("rJdCount").textContent = n ? n.toLocaleString() + " characters" : "";
+};
 
 /* ---------- SSE / run ---------- */
 async function sendMessage(text) {
@@ -682,6 +1481,12 @@ async function sendMessage(text) {
   $("banner").classList.remove("show");
   circReset();
   circ("agent", "live", "starting the hunt");
+  /* Drop the previous run's deck up front. It used to survive until a new
+     "jobs" frame arrived, so a hunt that found nothing - or one aimed at a
+     different board - left the last run's cards sitting there looking like
+     this run's answer. No placeholder here: this run has not finished yet,
+     so "No listings came back" would be a claim we cannot make. */
+  clearDeck();
 
   appendMsg("user", text);
   const node = appendMsg("assistant", "", true);
@@ -690,7 +1495,7 @@ async function sendMessage(text) {
   let runFailed = null;
 
   try {
-    const res = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }) });
+    const res = await api("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }) });
     if (!res.ok) throw new Error("Server returned " + res.status);
     const reader = res.body.getReader();
     const dec = new TextDecoder();
@@ -720,17 +1525,17 @@ function emitFrame(fnLine) {
       if (activeBubble) { activeBubble._raw = (activeBubble._raw || "") + obj.text; activeBubble.innerHTML = markdown(activeBubble._raw); }
       break;
     case "tool_start":
-      if (/job_boards|scrape/.test(obj.name)) { circ("boards", "live", "searching 6 boards: " + (obj.args || "")); }
+      if (/job_boards|scrape/.test(obj.name)) { circ("boards", "live", "searching job boards: " + (obj.args || "")); }
       if (/job_emails|gmail/.test(obj.name)) { circ("gmail", "live", "reading job-alert emails"); }
       addToolCard(obj.name, obj.args);
       break;
     case "tool_end":
       if (activeCard) { activeCard.querySelector(".body pre").textContent = obj.output; activeCard.querySelector(".meta").textContent = "done"; }
       if (/job_boards|scrape/.test(obj.name)) {
-        const blocked = /403|blocked|captcha|js wall|bot wall|no results/i.test(obj.output || "");
-        circ("boards", blocked ? "fail" : "done", blocked ? "all boards blocked — router will fall back" : "boards returned listings");
-        if (blocked) circ("router", "live", "board search blocked — routing to Gmail fallback");
-        else circ("router", "done", "board search OK — summarizing");
+        const v = boardsVerdict(obj.output || "");
+        circ("boards", v.ok ? "done" : "fail", v.text);
+        if (v.ok) circ("router", "done", "board search OK — summarizing");
+        else circ("router", "live", "board search blocked — routing to Gmail fallback");
       }
       if (/job_emails|gmail/.test(obj.name)) circ("gmail", "done", "job alerts read");
       break;
@@ -739,7 +1544,7 @@ function emitFrame(fnLine) {
       circ("gmail", "live", "fetching job-alert emails");
       break;
     case "jobs":
-      renderDeck(obj.payload && obj.payload.jobs);
+      renderDeck(obj.payload);
       break;
     case "status":
       if (obj.stage === "done") { circ("gmail", "done", ""); circ("report", "done", "final match list ready"); }
@@ -774,12 +1579,19 @@ function addToolCard(name, args) {
 }
 
 /* ---------- theme ---------- */
-$("themeBtn").onclick = () => {
-  state.theme = state.theme === "light" ? "dark" : "light";
-  document.documentElement.dataset.theme = state.theme;
-  localStorage.setItem("js-theme", state.theme);
-  $("themeBtn").textContent = state.theme === "light" ? "Dark" : "Light";
-};
+/* Both buttons (header and gate) drive the same state, so a theme switched
+   before sign-in is not silently reverted by the header on first paint. */
+function applyTheme(next) {
+  state.theme = next;
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem("js-theme", next);
+  const label = next === "light" ? "Dark" : "Light";
+  $("themeBtn").textContent = label;
+  $("gTheme").textContent = label;
+}
+function toggleTheme() { applyTheme(state.theme === "light" ? "dark" : "light"); }
+$("themeBtn").onclick = toggleTheme;
+$("gTheme").onclick = toggleTheme;
 
 /* ---------- settings / resume / suggestions ---------- */
 function openDrawer(id) { $(id).classList.add("show"); $("overlay").classList.add("show"); }
@@ -802,55 +1614,286 @@ function closeDrawers() {
 }$("sidebarBtn").onclick = () => { if ($("sidebar").classList.contains("show")) { closeDrawers(); } else { openSidebar(); } };
 
 async function loadSessions() {
-  const r = await (await fetch("/api/profiles", { cache: "no-store" })).json();
+  const r = await (await api("/api/profiles", { cache: "no-store" })).json();
   const box = $("sessList"); box.innerHTML = "";
   if (!r.ok) { box.innerHTML = '<div class="sub" style="color:var(--danger)">⚠ ' + esc(r.error || "could not load sessions") + "</div>"; return; }
   (r.profiles || []).forEach(p => {
     const row = document.createElement("div"); row.className = "srow" + (p.id === r.active ? " on" : "");
     row.onclick = () => activateSession(p.id);
+    const text = document.createElement("div"); text.className = "stext";
     const n = document.createElement("div"); n.className = "sname"; n.textContent = p.name || "Session " + (p.created_at || "").slice(0, 16); n.title = p.id;
+    // The server already sends a per-session summary; showing it is what makes a
+    // list of identically-named "New session" rows tellable apart at a glance.
+    const bits = [];
+    if (p.resume_chars) bits.push("CV " + (p.resume_chars / 1000).toFixed(1) + "k");
+    bits.push(p.skills ? p.skills + (p.skills === 1 ? " skill" : " skills") : "no skills");
+    if (p.github) bits.push("GitHub");
+    const m = document.createElement("div"); m.className = "smeta"; m.textContent = bits.join(" · ");
+    text.append(n, m);
     const del = document.createElement("button"); del.className = "sdel"; del.textContent = "🗑"; del.title = "Delete this session / profile";
     del.onclick = (e) => { e.stopPropagation(); deleteSession(p.id); };
-    row.append(n, del); box.appendChild(row);
+    row.append(text, del); box.appendChild(row);
   });
   if (!(r.profiles || []).length) box.innerHTML = '<div class="sub">One session is created for you on first run — tweak the active profile in Settings, then Save &amp; restart.</div>';
+  return r;
+}
+/* Bring a row into view. New sessions append at the end of the list, so after
+   creating one the row that proves it happened can land below the fold and the
+   button looks like it did nothing. */
+function scrollSessionIntoView(id) {
+  const row = [...$("sessList").querySelectorAll(".srow")]
+    .find(el => (el.querySelector(".sname") || {}).title === id);
+  if (row) row.scrollIntoView({ block: "nearest" });
 }
 async function newSession() {
-  const r = await (await fetch("/api/profiles", { method: "POST" })).json();
+  const r = await (await api("/api/profiles", { method: "POST" })).json();
   if (!r.ok) { toast(r.error || "could not create session"); return; }
-  await loadSessions(); toast("New session created — open Settings to set it up."); openSidebar();
+  await loadSessions(); openSidebar(); scrollSessionIntoView(r.id);
+  toast("New session created — open Settings to set it up.");
 }
 async function activateSession(id) {
-  const r = await (await fetch("/api/profiles/activate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })).json();
-  if (!r.ok) { toast(r.error || "could not switch"); return; }
-  await loadSessions(); await loadConfig(); toast("Switched to session " + id.slice(0, 6));
+  const r = await (await api("/api/profiles/activate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })).json();
+  // Switching rebuilds the agent, which needs Ollama up. "could not switch" hid
+  // that, so the row just stopped responding and looked broken.
+  if (!r.ok) { toast(r.error || "could not switch — is Ollama running?"); return; }
+  await loadSessions(); await loadConfig(); openSidebar(); scrollSessionIntoView(id);
+  toast("Switched to session " + id.slice(0, 6));
 }
 async function deleteSession(id) {
   if (!confirm("Delete this session and its profile / resume?")) return;
-  const r = await (await fetch("/api/profiles/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })).json();
+  const r = await (await api("/api/profiles/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })).json();
   if (!r.ok) { toast(r.error || "delete failed"); return; }
   await loadSessions(); if (r.active) { await loadConfig(); } toast("Session deleted");
 }
+/* Wipe the account back to empty: every session, the uploaded resume, all
+   skills/roles/cities and all filters. The login is untouched. This is
+   destructive and irreversible, so it asks twice - once to confirm, once to
+   type the word - rather than sitting behind a single dialog next to the
+   harmless "+ New" button. */
+async function resetEverything() {
+  if (!confirm("Reset everything?\n\nThis deletes EVERY session, the uploaded resume, all skills, roles, cities and filters, and the run history shown here. It cannot be undone.\n\nYour login and password are kept.")) return;
+  const typed = prompt('To confirm, type RESET:');
+  if (typed === null) return;
+  if (typed.trim().toUpperCase() !== "RESET") { toast("Reset cancelled"); return; }
+  const r = await (await api("/api/reset", { method: "POST" })).json();
+  if (!r.ok) { toast(r.error || "reset failed"); return; }
+  // Local mirrors of server state have to go too, or the next paint shows
+  // the old session's chips again.
+  state.deck = []; state.deckIdx = 0; state.settings = {};
+  state.skills = []; state.sessions = [];
+  // Errors older than this belong to the audit trail, not to the fresh account.
+  state.resetAt = new Date().toISOString().slice(0, 19);
+  clearDeck();
+  $("chat").innerHTML = "";
+  $("banner").classList.remove("show");
+  $("logsBody").innerHTML = '<div class="empty">No runs yet.</div>';
+  await loadSessions();
+  await loadConfig();
+  closeDrawers();
+  toast("Everything reset — starting from empty");
+}
 $("sessNewBtn").onclick = newSession;
+$("resetAllBtn").onclick = resetEverything;
 loadSessions();
 $("logsBtn").onclick = () => { openDrawer("logsDrawer"); loadLogs(); };
 
+async function loadPublicBoards() {
+  /* The sign-in gate's board ticker. Unauthenticated by design - see
+     /api/boards - so this is what puts real board names on the first screen
+     instead of the bare "Job boards, one search". Signed-in refresh still goes
+     through loadConfig; fillBoardList will not double-render the track. */
+  try {
+    const r = await (await api("/api/boards", { cache: "no-store" })).json();
+    fillBoardList(r.boards || [], r.default_boards || []);
+  } catch (e) { /* offline or an older server: the gate just stays generic */ }
+}
+
 async function loadConfig() {
   try {
-    const r = await (await fetch("/api/config", { cache: "no-store" })).json();
+    const r = await (await api("/api/config", { cache: "no-store" })).json();
     state.settings = r;
     $("cfgModel").value = r.model || "";
     $("cfgDays").value = r.days_back || 60;
     $("cfgMax").value = r.max_results || 10;
-    $("cfgRemote").checked = r.remote_only !== false;
     $("cfgGithub").value = r.github_url || "";
     $("modelTag").textContent = r.model || "";
     renderSuggestions(r.role_suggestions || []);
     renderSkillChips(r.skills || []);
-    renderRoleChips(r.roles && r.roles.length ? r.roles : [r.target_role || ""]);
+    fillBoardList(r.boards || [], r.default_boards || []);
+    // No roles is the real state of a new session. Rendering an empty chip
+    // instead showed a blank pill the user had to delete.
+    renderRoleChips(r.roles && r.roles.length ? r.roles : []);
     renderCityChips(r.cities || []);
+    // Options come from the server so the chips and the filters that run
+    // server-side can never drift apart. An older server sends neither, and
+    // the fallback lists keep the drawer usable instead of empty.
+    renderToggleChips("workModeChips", r.work_mode_options || [
+      { key: "remote", label: "Remote" }, { key: "wfh", label: "Work From Home" },
+      { key: "hybrid", label: "Hybrid" }, { key: "onsite", label: "On-site / Office" }
+    ], r.work_modes || ["remote"]);
+    loadRoleOptions(r);
+    loadCityOptions(r);
+    loadCountryOptions(r);
+    renderCountryChips(r.countries || []);
+    syncClearButtons();
     $("status").className = "status online"; $("statusText").textContent = "Ready";
   } catch (e) { $("status").className = "status"; $("statusText").textContent = "Offline — is the server running?"; }
+}
+
+/* Multi-select option chips. Selection lives in a data-selected attribute
+   rather than a second array, so currentX() is the single source of truth
+   and a chip can never show as selected without being submitted. */
+function renderToggleChips(boxId, options, selected) {
+  const box = $(boxId); box.innerHTML = "";
+  const on = new Set((selected || []).map(s => String(s).toLowerCase()));
+  (options || []).forEach(o => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "toggle" + (on.has(String(o.key).toLowerCase()) ? " on" : "");
+    b.textContent = o.label;
+    b.dataset.key = o.key;
+    b.dataset.selected = on.has(String(o.key).toLowerCase()) ? "1" : "0";
+    b.onclick = () => {
+      const sel = b.dataset.selected === "1";
+      b.dataset.selected = sel ? "0" : "1";
+      b.classList.toggle("on", !sel);
+    };
+    box.appendChild(b);
+  });
+}
+function currentToggles(boxId) {
+  return [...$(boxId).querySelectorAll(".toggle[data-selected='1']")].map(b => b.dataset.key);
+}
+
+/* ---- Clear all --------------------------------------------------------
+   Every filter group gets one. Chips and toggles are cleared through the same
+   two helpers the save path reads, so a cleared group is guaranteed to submit
+   as empty rather than as whatever was on screen. A group that is already
+   empty disables its button instead of pretending there is something to undo. */
+function clearGroup(boxId) {
+  const box = $(boxId);
+  if (!box) return;
+  if (box.querySelector(".toggle")) {
+    box.querySelectorAll(".toggle").forEach(b => { b.dataset.selected = "0"; b.classList.remove("on"); });
+  } else {
+    box.innerHTML = "";
+  }
+  syncClearButtons();
+}
+function countSelections(box) {
+  if (!box) return 0;
+  return box.querySelector(".toggle")
+    ? box.querySelectorAll(".toggle[data-selected='1']").length
+    : box.querySelectorAll(".chip").length;
+}
+function syncClearButtons() {
+  document.querySelectorAll("[data-clear]").forEach(btn => {
+    btn.disabled = countSelections($(btn.dataset.clear)) === 0;
+  });
+  // "Clear all" empties the box directly, bypassing the chip ✕ handler, so the
+  // role hint is resynced here rather than at every individual call site.
+  syncRoleEmpty();
+}
+document.querySelectorAll("[data-clear]").forEach(btn => {
+  btn.addEventListener("click", () => clearGroup(btn.dataset.clear));
+});
+// Chips are added and removed all over the drawer (add buttons, ✕ on a chip,
+// render* after a save, uploading a CV), so the buttons track the chips through
+// a single observer instead of a sync call that some path would forget.
+new MutationObserver(syncClearButtons).observe(
+  $("settingsDrawer"), { childList: true, subtree: true, attributes: true,
+                         attributeFilter: ["data-selected"] });
+
+/* ---- Country picker ----------------------------------------------------
+   Region answers "where in the world"; this answers "which countries exactly",
+   so it searches a fixed list rather than accepting free text. Options and the
+   region each country belongs to come from the server so the picker can never
+   disagree with the filter that actually runs. */
+function loadCountryOptions(r) {
+  const opts = (r && r.country_options) || state.settings.country_options || [];
+  state.settings.country_options = opts;
+  state.regionByCountry = new Map(opts.map(o => [String(o.key).toLowerCase(), o.region || ""]));
+  state.countryLabels = new Map(
+    (state.settings.region_options || []).map(o => [o.key, o.label]));
+}
+/* Cities reuse the country picker's region labels, so a city reads the same way
+   a country does. Kept separate from regionByCountry because the two maps are
+   keyed by different names and overwriting one with the other would blank the
+   labels on the other picker. */
+function loadCityOptions(r) {
+  const opts = (r && r.city_options) || state.settings.city_options || [];
+  state.settings.city_options = opts;
+  state.regionByCity = new Map(
+    (state.settings.region_options || []).map(o => [o.key, o.label]));
+}
+function currentCountries() {
+  return [...$("countryChips").querySelectorAll(".chip.editable")]
+    .map(c => c.childNodes[0].textContent.trim()).filter(Boolean);
+}
+function appendCountryChip(v) {
+  const name = String(v).trim(); if (!name) return;
+  const box = $("countryChips");
+  if ([...box.querySelectorAll(".chip")].some(c => c.childNodes[0].textContent.trim().toLowerCase() === name.toLowerCase())) return;
+  const c = document.createElement("span"); c.className = "chip editable"; c.textContent = name;
+  const x = document.createElement("button"); x.className = "x"; x.textContent = "✕";
+  x.onclick = () => { c.remove(); syncClearButtons(); };
+  c.appendChild(x); box.appendChild(c);
+  syncClearButtons();
+}
+function renderCountryChips(list) {
+  $("countryChips").innerHTML = "";
+  (list || []).forEach(appendCountryChip);
+  syncClearButtons();
+}
+function countryMenu(query) {
+  const menu = $("countryMenu");
+  const have = new Set(currentCountries().map(c => c.toLowerCase()));
+  const q = String(query || "").trim().toLowerCase();
+  const opts = (state.settings.country_options || [])
+    .filter(o => !q || String(o.key).toLowerCase().includes(q));
+  menu.innerHTML = "";
+  if (!opts.length) { menu.innerHTML = '<div class="none">No country matches that.</div>'; return; }
+  opts.slice(0, 60).forEach(o => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "opt" + (have.has(String(o.key).toLowerCase()) ? " picked" : "");
+    const label = document.createElement("span"); label.textContent = o.key;
+    const reg = document.createElement("span");
+    reg.className = "reg";
+    reg.textContent = (state.countryLabels && state.countryLabels.get(o.region)) || "";
+    b.appendChild(label); b.appendChild(reg);
+    b.onclick = () => { appendCountryChip(o.key); $("countrySearch").value = ""; closeCountryMenu(); };
+    menu.appendChild(b);
+  });
+}
+function closeCountryMenu() { $("countryMenu").hidden = true; }
+$("countrySearch").addEventListener("input", e => { countryMenu(e.target.value); $("countryMenu").hidden = false; });
+$("countrySearch").addEventListener("focus", e => { countryMenu(e.target.value); $("countryMenu").hidden = false; });
+$("countrySearch").addEventListener("keydown", e => {
+  if (e.key === "Escape") { closeCountryMenu(); return; }
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  const first = $("countryMenu").querySelector(".opt");
+  if (first) first.click();
+});
+$("countrySearch").addEventListener("blur", () => setTimeout(closeCountryMenu, 120));
+document.addEventListener("click", e => {
+  if (!e.target.closest(".searchwrap")) { closeCountryMenu(); closeCityMenu(); }
+});
+
+/* Human summary of the two new filters, shown after a restart so a mistake is
+   visible without opening the drawer. */
+function describeFilters(r) {
+  const label = (keys, opts) => (keys || []).map(k => {
+    const hit = (opts || []).find(o => o.key === k);
+    return hit ? hit.label : k;
+  }).join(", ");
+  const bits = [];
+  const wm = label(r.work_modes, r.work_mode_options || state.settings.work_mode_options);
+  if (wm) bits.push("· " + wm); else bits.push("· any work type");
+  const cs = (r.countries || []).join(", ");
+  if (cs) bits.push("· in: " + cs);
+  return bits.join(" ");
 }
 
 function renderSuggestions(list) {
@@ -881,6 +1924,13 @@ function renderRoleChips(list) {
   const box = $("roleChipsEdit"); box.innerHTML = "";
   const seen = new Set();
   (list || []).forEach(r => { if (!r || seen.has(r.toLowerCase())) return; seen.add(r.toLowerCase()); appendRoleChip(r); });
+  syncRoleEmpty();
+  loadRoleOptions(state.settings);
+}
+/* The "no role yet" hint only makes sense while the list is actually empty. */
+function syncRoleEmpty() {
+  const hint = $("roleEmpty"); if (!hint) return;
+  hint.style.display = currentRoles().length ? "none" : "";
 }
 function currentRoles() { return [...$("roleChipsEdit").querySelectorAll(".chip.editable")].map(c => c.childNodes[0].textContent.trim()).filter(Boolean); }
 function appendRoleChip(v) {
@@ -889,25 +1939,228 @@ function appendRoleChip(v) {
   if ([...box.querySelectorAll(".chip")].some(c => c.childNodes[0].textContent.trim().toLowerCase() === name.toLowerCase())) return;
   const c = document.createElement("span"); c.className = "chip editable"; c.textContent = name;
   const x = document.createElement("button"); x.className = "x"; x.textContent = "✕";
-  x.onclick = () => c.remove();
+  x.onclick = () => { c.remove(); syncRoleEmpty(); loadRoleOptions(state.settings); };
   c.appendChild(x); box.appendChild(c);
+  syncRoleEmpty();
 }
-$("roleAddBtn").onclick = () => { const v = $("roleAdd").value.trim(); if (!v) return; appendRoleChip(v); $("roleAdd").value = ""; };
-$("roleAdd").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("roleAddBtn").click(); } });
-function renderCityChips(list) {
-  const box = $("cityChipsEdit"); box.innerHTML = "";
-  (list || []).forEach(c => appendCityChip(c));
+/* The role dropdown is a SUGGESTION list only. It never writes to the filter
+   set on its own — a role is added only when the user presses "Add role". */
+const ROLE_DD = { all: [], cursor: 0 };
+const ROLE_FALLBACK = [
+  "Software Developer", "Frontend Developer", "Backend Developer", "Full Stack Developer",
+  "Web Developer", "Mobile App Developer", "Android Developer", "iOS Developer",
+  "DevOps Engineer", "Cloud Engineer", "Site Reliability Engineer", "Platform Engineer",
+  "Data Analyst", "Data Scientist", "Data Engineer", "Machine Learning Engineer",
+  "AI Engineer", "Artificial Intelligence Engineer", "MLOps Engineer", "Business Intelligence Analyst",
+  "QA Engineer", "Test Automation Engineer", "SDET", "Security Engineer",
+  "Network Engineer", "Systems Administrator", "Database Administrator",
+  "Product Manager", "Project Manager", "Program Manager", "Business Analyst",
+  "Scrum Master", "Solution Architect", "Technical Architect", "Solutions Engineer",
+  "Salesforce Developer", "SAP Consultant", "ERP Consultant", "CRM Consultant",
+  "Software Engineering Intern", "Software Developer Intern", "Summer Internship",
+  "Graduate Software Engineer", "Junior Software Developer", "Associate Software Engineer",
+  "Frontend Developer Intern", "Backend Developer Intern", "Full Stack Developer Intern",
+  "Data Analyst Intern", "Data Science Intern", "QA Engineer Intern", "Business Analyst Intern"
+];
+function loadRoleOptions(r) {
+  const dd = $("roleDd"); if (!dd) return;
+  const list = (r && r.role_options) || ROLE_FALLBACK;
+  ROLE_DD.all = list.filter(Boolean);
+  $("roleCount").textContent = ROLE_DD.all.length + " roles";
+  $("roleCap").classList.add("ph");
+  $("rolePick").value = "";
+  renderRoleList("");
 }
-function currentCities() { return [...$("cityChipsEdit").querySelectorAll(".chip.editable")].map(c => c.childNodes[0].textContent.trim()).filter(Boolean); }
+/* The list is rebuilt on every open and on every keystroke so the stagger
+   replays, which is the whole point of the animation. */
+function renderRoleList(q) {
+  const listBox = $("roleList"); if (!listBox) return;
+  const term = (q || "").trim().toLowerCase();
+  const chosen = new Set(currentRoles().map(x => x.toLowerCase()));
+  const hits = term ? ROLE_DD.all.filter(r => r.toLowerCase().includes(term)) : ROLE_DD.all;
+  listBox.innerHTML = "";
+  if (!hits.length) {
+    const none = document.createElement("div");
+    none.className = "roledd-none";
+    none.textContent = 'No role matches "' + q.trim() + '"';
+    listBox.appendChild(none);
+    ROLE_DD.cursor = 0;
+    return;
+  }
+  hits.forEach((role, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "roledd-opt" + (chosen.has(role.toLowerCase()) ? " added" : "");
+    b.setAttribute("role", "option");
+    b.setAttribute("aria-selected", chosen.has(role.toLowerCase()) ? "true" : "false");
+    // Cap the stagger: past ~14 items the last one would arrive so late the
+    // menu looks broken rather than choreographed.
+    b.style.setProperty("--i", Math.min(i, 14));
+    b.appendChild(document.createTextNode(role));
+    const tick = document.createElement("span");
+    tick.className = "tick"; tick.textContent = "✓";
+    b.appendChild(tick);
+    b.onclick = () => pickRole(role);
+    listBox.appendChild(b);
+  });
+  ROLE_DD.cursor = 0;
+  markRoleCursor();
+}
+function markRoleCursor() {
+  const opts = [...$("roleList").querySelectorAll(".roledd-opt")];
+  opts.forEach((o, i) => o.classList.toggle("cursor", i === ROLE_DD.cursor));
+  const cur = opts[ROLE_DD.cursor];
+  if (cur) cur.scrollIntoView({ block: "nearest" });
+}
+function pickRole(role) {
+  // Picking is still not applying: it only stages the value for "Add role".
+  $("rolePick").value = role;
+  $("roleCap").textContent = role;
+  $("roleCap").classList.remove("ph");
+  roleDdClose();
+  $("roleAddBtn").focus();
+}
+function roleDdOpen() {
+  const dd = $("roleDd");
+  if (!dd || dd.classList.contains("open")) return;
+  dd.classList.add("open");
+  $("roleSelect").setAttribute("aria-expanded", "true");
+  renderRoleList($("roleSearch").value);
+  $("roleSearch").focus();
+}
+function roleDdClose() {
+  const dd = $("roleDd");
+  if (!dd || !dd.classList.contains("open")) return;
+  dd.classList.remove("open");
+  $("roleSelect").setAttribute("aria-expanded", "false");
+  $("roleSelect").focus();
+}
+$("roleSelect").onclick = () => {
+  $("roleDd").classList.contains("open") ? roleDdClose() : roleDdOpen();
+};
+$("roleSearch").oninput = e => renderRoleList(e.target.value);
+$("roleSearch").onkeydown = e => {
+  const opts = [...$("roleList").querySelectorAll(".roledd-opt")];
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if (!opts.length) return;
+    ROLE_DD.cursor = (ROLE_DD.cursor + (e.key === "ArrowDown" ? 1 : -1) + opts.length) % opts.length;
+    markRoleCursor();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (opts[ROLE_DD.cursor]) pickRole(opts[ROLE_DD.cursor].firstChild.textContent);
+  } else if (e.key === "Escape") {
+    e.preventDefault(); roleDdClose();
+  } else if (e.key === "Tab") {
+    roleDdClose();
+  }
+};
+$("roleSelect").onkeydown = e => {
+  if (["ArrowDown", "ArrowUp"].includes(e.key)) { e.preventDefault(); roleDdOpen(); }
+  else if (e.key === "Escape") roleDdClose();
+};
+/* A click anywhere else closes it, and Tab must not leave an invisible
+   popup holding focus. */
+document.addEventListener("click", e => {
+  if ($("roleDd") && $("roleDd").classList.contains("open") && !$("roleDd").contains(e.target)) roleDdClose();
+});
+$("roleAddBtn").onclick = () => {
+  const v = $("rolePick").value.trim();
+  if (!v) { toast("Pick a role from the list first"); $("roleSelect").focus(); return; }
+  appendRoleChip(v); $("rolePick").value = ""; loadRoleOptions(state.settings);
+  // Keep the typed/picked value visible so adding several in a row does not
+  // require re-opening the menu each time.
+  $("roleCap").textContent = "Select a job role…"; $("roleCap").classList.add("ph");
+  toast('Added "' + v + '"');
+};
+/* ---- City picker -------------------------------------------------------
+   Mirrors the country picker: a filtered dropdown over a server-owned
+   catalog. The catalog is a suggestion, NOT a whitelist — unlike countries, a
+   city is handed to the boards as a search string, so a place with no catalog
+   entry (a small town, a suburb, a spelling the boards use instead) is still a
+   legitimate answer. Typing one and pressing Enter adds it verbatim; only a
+   case-insensitive duplicate is refused. Dropping unknowns the way
+   normalize_countries does would make an on-site search quietly return
+   nothing while the filter looked like it had worked. */
+function currentCities() {
+  return [...$("cityChipsEdit").querySelectorAll(".chip.editable")]
+    .map(c => c.childNodes[0].textContent.trim()).filter(Boolean);
+}
 function appendCityChip(v) {
+  const name = String(v).trim(); if (!name) return;
   const box = $("cityChipsEdit");
-  const c = document.createElement("span"); c.className = "chip editable"; c.textContent = v;
+  if ([...box.querySelectorAll(".chip")].some(c => c.childNodes[0].textContent.trim().toLowerCase() === name.toLowerCase())) return;
+  const c = document.createElement("span"); c.className = "chip editable"; c.textContent = name;
   const x = document.createElement("button"); x.className = "x"; x.textContent = "✕";
-  x.onclick = () => c.remove();
+  x.onclick = () => { c.remove(); syncClearButtons(); };
   c.appendChild(x); box.appendChild(c);
+  syncClearButtons();
 }
-$("cityAddBtn").onclick = () => { const v = $("cityAdd").value.trim(); if (!v) return; appendCityChip(v); $("cityAdd").value = ""; };
-$("cityAdd").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("cityAddBtn").click(); } });
+function renderCityChips(list) {
+  $("cityChipsEdit").innerHTML = "";
+  (list || []).forEach(appendCityChip);
+  syncClearButtons();
+}
+function cityMenu(query) {
+  const menu = $("cityMenu");
+  const have = new Set(currentCities().map(c => c.toLowerCase()));
+  const q = String(query || "").trim().toLowerCase();
+  const opts = (state.settings.city_options || [])
+    .filter(o => !q || String(o.key).toLowerCase().includes(q));
+  menu.innerHTML = "";
+  if (!opts.length) {
+    // No catalog match is not a dead end: the typed text is still addable.
+    const raw = String(query || "").trim();
+    menu.innerHTML = '<div class="none">No city in the list matches that.</div>';
+    if (raw && !have.has(raw.toLowerCase())) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "opt";
+      const label = document.createElement("span"); label.textContent = raw;
+      const reg = document.createElement("span"); reg.className = "reg"; reg.textContent = "use as typed";
+      b.appendChild(label); b.appendChild(reg);
+      b.onclick = () => { appendCityChip(raw); $("citySearch").value = ""; closeCityMenu(); };
+      menu.appendChild(b);
+    }
+    return;
+  }
+  opts.slice(0, 60).forEach(o => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "opt" + (have.has(String(o.key).toLowerCase()) ? " picked" : "");
+    const label = document.createElement("span"); label.textContent = o.key;
+    const reg = document.createElement("span");
+    reg.className = "reg";
+    reg.textContent = (state.regionByCity && state.regionByCity.get(o.region || "")) || "";
+    b.appendChild(label); b.appendChild(reg);
+    b.onclick = () => { appendCityChip(o.key); $("citySearch").value = ""; closeCityMenu(); };
+    menu.appendChild(b);
+  });
+}
+/* One place that hides the menu, so the `hidden` attribute and the combobox's
+   aria-expanded can never disagree — a menu that is visually gone but still
+   reads aria-expanded="true" tells a screen reader it is open. */
+function closeCityMenu() {
+  $("cityMenu").hidden = true;
+  $("citySearch").setAttribute("aria-expanded", "false");
+}
+function showCityMenu(q) {
+  cityMenu(q);
+  $("cityMenu").hidden = false;
+  $("citySearch").setAttribute("aria-expanded", "true");
+}
+$("citySearch").addEventListener("input", e => showCityMenu(e.target.value));
+$("citySearch").addEventListener("focus", e => showCityMenu(e.target.value));
+$("citySearch").addEventListener("keydown", e => {
+  if (e.key === "Escape") { closeCityMenu(); return; }
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  const first = $("cityMenu").querySelector(".opt");
+  // No catalog hit ⇒ add exactly what was typed.
+  if (first) { first.click(); return; }
+  const raw = e.target.value.trim();
+  if (raw) { appendCityChip(raw); e.target.value = ""; closeCityMenu(); }
+});
+$("citySearch").addEventListener("blur", () => setTimeout(closeCityMenu, 120));
 function appendChip(v) {
   const box = $("skillChipsEdit");
   const c = document.createElement("span"); c.className = "chip editable"; c.textContent = v;
@@ -925,18 +2178,132 @@ drop.ondragleave = () => drop.classList.remove("drag");
 drop.ondrop = e => { e.preventDefault(); drop.classList.remove("drag"); if (e.dataTransfer.files.length) uploadResume(e.dataTransfer.files[0]); };
 fileInput.onchange = () => { if (fileInput.files.length) uploadResume(fileInput.files[0]); };
 
+const drop2 = $("dropDocs"), docInput = $("docFile");
+drop2.onclick = () => docInput.click();
+drop2.ondragover = e => { e.preventDefault(); drop2.classList.add("drag"); };
+drop2.ondragleave = () => drop2.classList.remove("drag");
+drop2.ondrop = e => { e.preventDefault(); drop2.classList.remove("drag"); if (e.dataTransfer.files.length) uploadDocs(e.dataTransfer.files); };
+docInput.onchange = () => { if (docInput.files.length) uploadDocs(docInput.files); };
+
+function _ago(ts) {
+  var s = Math.max(0, (Date.now() * 1000 - ts) / 1000);
+  if (s < 90) return "just now";
+  if (s < 5400) return Math.round(s / 60) + " min ago";
+  if (s < 172800) return Math.round(s / 3600) + " h ago";
+  return Math.round(s / 86400) + " d ago";
+}
+
+function renderDocs(docs) {
+  const host = $("docList");
+  host.innerHTML = "";
+  if (!docs || !docs.length) {
+    $("docState").textContent = "Nothing added yet.";
+    return;
+  }
+  $("docState").textContent = docs.length + " document" + (docs.length === 1 ? "" : "s") + " searchable.";
+  docs.forEach(d => {
+    const row = document.createElement("div");
+    row.className = "docrow";
+    // Names come from an upload, so they are escaped like any other
+    // document-derived string rather than dropped into innerHTML raw.
+    row.innerHTML = '<span class="dname"></span><span class="dmeta"></span>';
+    row.querySelector(".dname").textContent = d.name;
+    row.querySelector(".dmeta").textContent = (d.chars || 0).toLocaleString() + " chars \u00b7 " + _ago(d.updated_at);
+    const x = document.createElement("button");
+    x.type = "button"; x.title = "Remove from the library"; x.textContent = "\u00d7";
+    x.onclick = async () => {
+      x.disabled = true;
+      try {
+        const r = await (await api("/api/rag/docs/" + encodeURIComponent(d.id), { method: "DELETE" })).json();
+        renderDocs(r.docs || []);
+      } catch (err) { $("docState").textContent = "\u26a0 " + err.message; x.disabled = false; }
+    };
+    row.appendChild(x);
+    host.appendChild(row);
+  });
+}
+
+async function loadDocs() {
+  try { renderDocs((await (await api("/api/rag/docs")).json()).docs || []); }
+  catch (e) { /* library is optional context; a failure here must not break the page */ }
+}
+
+async function uploadDocs(files) {
+  const list = Array.from(files);
+  $("docState").innerHTML = '<span class="spin"></span> Reading ' + list.length + " document(s)\u2026";
+  const problems = [];
+  for (const f of list) {
+    try {
+      const fd = new FormData(); fd.append("file", f);
+      const r = await (await api("/api/rag/docs", { method: "POST", body: fd })).json();
+      if (!r.ok) problems.push(f.name + ": " + (r.error || "failed"));
+      else renderDocs(r.docs || []);
+    } catch (e) { problems.push(f.name + ": " + e.message); }
+  }
+  if (problems.length) $("docState").textContent = "\u26a0 " + problems.join(" | ");
+  docInput.value = "";
+  await loadDocs();
+}
+
+// OCR is a best-effort read of pixels, so the recognised text is shown rather
+// than trusted silently: a misread phone number or email is invisible
+// otherwise, and it is exactly the field the rest of the app then acts on.
+function renderOcrNotice(ocr, preview) {
+  const host = $("ocrNotice");
+  host.innerHTML = "";
+  if (!ocr || !ocr.attempted) return;
+  if (!ocr.used) {
+    host.innerHTML = '<div class="ocrbox"><b>OCR could not read that file.</b><br>' +
+      (ocr.detail || "Try a higher-resolution scan, or a text-based PDF.") + "</div>";
+    return;
+  }
+  const bits = [];
+  bits.push('<b>Read by OCR</b> — ' + ocr.pages + " page(s) in " + ocr.seconds +
+            "s, " + Math.round((ocr.confidence || 0) * 100) + "% confidence.");
+  if (ocr.email) bits.push("Email: <b>" + esc(ocr.email) + "</b>");
+  if (ocr.phone) bits.push("Phone: <b>" + esc(ocr.phone) + "</b>");
+  let html = '<div class="ocrbox">' + bits.join("<br>") + "</div>";
+  if ((ocr.warnings || []).length) {
+    html += '<div class="ocrbox ocrwarn">' + ocr.warnings.map(esc).join("<br>") + "</div>";
+  }
+  if (preview) {
+    // Recognised pixels, so it is untrusted text: escaped before it goes
+    // anywhere near innerHTML, same as any other document-derived string.
+    html += '<div class="ocrbox"><details><summary>Check the extracted text</summary>' +
+      "<pre>" + esc(preview) + "</pre></details></div>";
+  }
+  host.innerHTML = html;
+}
+
 async function uploadResume(file) {
+  // Images used to be refused here because the model behind /api/resume only
+  // takes text. It is no longer the only reader: the backend falls back to OCR
+  // for a scan or a phone photo, so a PNG/JPG is now a supported upload.
   $("resumeState").innerHTML = '<span class="spin"></span> Reading resume, extracting skills, suggesting roles…';
   try {
     const fd = new FormData(); fd.append("file", file);
-    const r = await (await fetch("/api/resume", { method: "POST", body: fd })).json();
-    if (!r.ok) { $("resumeState").textContent = "⚠ " + r.error; return; }
+    const r = await (await api("/api/resume", { method: "POST", body: fd })).json();
+    if (!r.ok) { $("resumeState").textContent = "⚠ " + r.error; renderOcrNotice(r.ocr, r.preview); return; }
     renderSkillChips(r.skills);
     renderSuggestions(r.suggestions && r.suggestions.map(s => s.role) || []);
     if (r.roles && r.roles.length) renderRoleChips(r.roles); else if (r.target_role) renderRoleChips([r.target_role]);
+    renderOcrNotice(r.ocr, r.ocr && r.ocr.used ? r.preview : "");
     if (r.inferred) {
-      $("inferredRow").textContent = "📍 " + (r.inferred.location || "—") + (r.inferred.remote_only ? " · remote-only hunt enabled" : "");
-      if (r.inferred.remote_only !== undefined) $("cfgRemote").checked = !!r.inferred.remote_only;
+      // Offer the detected country as ONE CLICK rather than pre-selecting it:
+      // a country chip is an active filter, so silently applying it would make
+      // the new session's first search come back empty.
+      const det = (r.inferred.country || "").trim();
+      const row = $("inferredRow");
+      row.textContent = "📍 " + (r.inferred.location || "—");
+      if (det && !currentCountries().some(c => c.toLowerCase() === det.toLowerCase())) {
+        const b = document.createElement("button");
+        b.className = "linkbtn";
+        b.type = "button";
+        b.style.float = "none";
+        b.textContent = "+ search in " + det;
+        b.onclick = () => { appendCountryChip(det); $("countrySearch").value = ""; b.remove(); };
+        row.appendChild(b);
+      }
     }
     renderCityChips(r.cities || []);
     // This CV = its OWN fresh session (the backend already built + opened it).
@@ -944,6 +2311,10 @@ async function uploadResume(file) {
     // and shows as the open one — the previous session keeps ITS data in the
     // sidebar untouched, so nothing from before carries over to this CV.
     await loadSessions();
+    // The upload opened a brand-new session, so re-read the config: otherwise
+    // the work-type chips would still show the PREVIOUS session's selection
+    // while the backend was already filtering with this one's.
+    await loadConfig();
     $("resumeState").textContent = "✔ " + r.skills.length + " skills · new session opened (previous CVs stay saved in the sidebar)";
     toast("Resume analyzed — new session opened: " + r.skills.length + " skills");
   } catch (e) { $("resumeState").textContent = "⚠ Upload failed: " + e.message; }
@@ -952,10 +2323,17 @@ async function uploadResume(file) {
 $("githubDetectBtn").onclick = async () => {
   $("cfgState").textContent = '<span class="spin"></span> Scanning resume for GitHub…';
   try {
-    const r = await (await fetch("/api/resume/detect", { method: "POST" })).json();
+    const r = await (await api("/api/resume/detect", { method: "POST" })).json();
     if (!r.ok) throw new Error(r.error || "detect failed");
-    if (r.github_url) { $("cfgGithub").value = r.github_url; toast("Detected GitHub: " + r.github_url); }
-    else toast("No GitHub link found in your resume / CV");
+    // Say which CV answered, and never clear a link the user already has:
+    // a scan that finds nothing should not wipe a good manual value.
+    const where = r.scanned ? " (from session " + r.scanned.slice(0, 6) + ")" : "";
+    if (r.github_url) {
+      $("cfgGithub").value = r.github_url;
+      toast("Detected GitHub: " + r.github_url + where);
+    } else {
+      toast("No GitHub link found" + (r.scanned ? where : " — upload your CV first"));
+    }
   } catch (e) { toast("Detect failed: " + e.message); }
   setTimeout(() => { $("cfgState").textContent = ""; }, 4000);
 };
@@ -967,14 +2345,21 @@ $("saveCfg").onclick = async () => {
     const body = {
       target_role: roles[0] || "", roles: roles, model: $("cfgModel").value,
       days_back: Number($("cfgDays").value) || 60, max_results: Number($("cfgMax").value) || 10,
-      skills: currentSkills(), remote_only: $("cfgRemote").checked,
-      cities: currentCities(), github_url: $("cfgGithub").value.trim() || ""
+      skills: currentSkills(),
+      cities: currentCities(), github_url: $("cfgGithub").value.trim() || "",
+      work_modes: currentToggles("workModeChips"),
+      countries: currentCountries()
     };
-    const res = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const res = await api("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const r = await res.json();
     if (!r.ok) throw new Error(r.error || "restart failed");
-    $("cfgState").textContent = "✔ Agent restarted · " + body.model + " · " + (r.roles ? r.roles.length : 0) + " role" + (r.roles.length > 1 ? "s" : "") + " · " + (r.skills.length || "role-title") + " keywords" + (r.remote_only ? " · remote" : "");
+    // Re-render from the response: the server drops unknown chip values, so
+    // the drawer shows what was actually stored rather than what was clicked.
+    renderToggleChips("workModeChips", r.work_mode_options || state.settings.work_mode_options, r.work_modes || []);
+    loadCountryOptions(r);
+    renderCountryChips(r.countries || []);
+    $("cfgState").textContent = "✔ Agent restarted · " + body.model + " · " + (r.roles ? r.roles.length : 0) + " role" + (r.roles.length > 1 ? "s" : "") + " · " + (r.skills.length || "role-title") + " keywords" + describeFilters(r);
     $("modelTag").textContent = r.model; renderSkillChips(r.skills); renderRoleChips(r.roles || []); toast("Agent restarted");
     setTimeout(() => { $("cfgState").textContent = ""; }, 4000);
   } catch (e) {
@@ -986,9 +2371,19 @@ $("saveCfg").onclick = async () => {
 /* ---------- logs ---------- */
 async function loadLogs() {
   try {
-    const r = await (await fetch("/api/logs")).json();
-    renderLogs(r.runs || [], r.errors || []);
+    const r = await (await api("/api/logs")).json();
+    renderLogs(r.runs || [], sinceReset(r.errors || []));
   } catch { }
+}
+/* The on-disk error log is a shared audit trail and reset deliberately leaves it
+   alone, so pre-reset errors come back on the next History open. They are not
+   part of the account's current state any more, though, and showing them under
+   a reset dashboard is what made the button look like it had not worked. The
+   records carry an ISO ts, and both sides of the comparison are the same
+   format, so a plain string compare orders them. */
+function sinceReset(errs) {
+  if (!state.resetAt) return errs;
+  return errs.filter(function (e) { return !e.ts || e.ts >= state.resetAt; });
 }
 function renderLogs(runs, errs) {
   const box = $("logsBody");
@@ -1034,8 +2429,287 @@ $("send").onclick = () => submit();
 function submit() { const t = input.value.trim(); if (!t || state.busy) return; retryMessage = t; input.value = ""; autosize(); sendMessage(t); }
 document.querySelectorAll(".starter").forEach(b => b.onclick = () => { retryMessage = b.textContent; sendMessage(b.textContent); });
 
+/* ---------- account ---------- */
+/* Every /api call goes through api() so a session that expired or lost
+   verification drops the user back to the gate instead of silently rendering
+   an empty deck. 401 = no session, 403 = signed in but the address is unconfirmed. */
+
+const GATE = { mode: "signin", busy: false, token: "" };
+
+function gateShow(mode, opts = {}) {
+  const gate = $("gate");
+  const wasHidden = gate.hidden;
+  gate.hidden = false;
+  // Fade the app out from under the gate instead of hard-blurring it, and
+  // re-run the entry animation whenever the gate comes back (a 401 mid-session
+  // re-opens it, and re-showing without the animation looks like a glitch).
+  if (wasHidden) {
+    gate.classList.remove("in");
+    void gate.offsetWidth;            // force reflow so the class re-triggers
+    gate.classList.add("in");
+    document.documentElement.classList.add("gated");
+  }
+  GATE.mode = mode;
+  $("gateSign").hidden = mode !== "signin" && mode !== "signup";
+  $("gateCheck").hidden = mode !== "check";
+  $("gateReset").hidden = mode !== "forgot" && mode !== "setpw";
+
+  const signup = mode === "signup";
+  $("gPass2Wrap").hidden = !signup;
+  $("gSubmit").textContent = signup ? "Create account" : "Sign in";
+  $("gPass").autocomplete = signup ? "new-password" : "current-password";
+  $("gateSub").textContent = signup ? "Create your account" : "Sign in to your account";
+  $("gToggleMode").textContent = signup ? "Have an account? Sign in" : "Need an account? Create one";
+  $("gForgot").hidden = signup;
+  $("resetMsg").textContent = mode === "setpw"
+    ? "Choose a new password."
+    : "Enter your email and we will send a reset link.";
+  $("gNewWrap").hidden = mode !== "setpw";
+  $("gNew2Wrap").hidden = mode !== "setpw";
+  $("gResetSubmit").textContent = mode === "setpw" ? "Set new password" : "Send reset link";
+  $("gateFoot").textContent = opts.foot || "";
+  gErr("");
+  gErr2("");
+  // Staggered entrance for whichever step is showing, so switching between
+  // sign-in / reset / check-inbox reads as one panel moving rather than a
+  // hard swap.
+  const shown = mode === "check" ? $("gateCheck")
+    : (mode === "forgot" || mode === "setpw") ? $("gateReset") : $("gateSign");
+  [shown, $("gateSub").parentElement].forEach((el, i) => {
+    if (!el) return;
+    el.classList.remove("step");
+    void el.offsetWidth;
+    el.style.animationDelay = (i * 70) + "ms";
+    el.classList.add("step");
+  });
+  if (mode === "check") {
+    $("gateCheckMsg").textContent = opts.msg
+      || "Check your inbox for the confirmation link.";
+    const box = $("gateDevLink");
+    if (opts.devLink) {
+      // No SMTP server configured, so the link is shown here instead of being
+      // mailed. It is the only way in during local development.
+      box.hidden = false;
+      box.innerHTML = "SMTP is not configured, so here is the link directly: <a href=\"" +
+        esc(opts.devLink) + "\">confirm this address</a>";
+    } else { box.hidden = true; box.innerHTML = ""; }
+  }
+  const focus = mode === "signup" || mode === "signin" ? "gEmail"
+    : mode === "setpw" ? "gNewPass" : "gResetEmail";
+  $(focus).focus();
+}
+
+function gateHide() {
+  const gate = $("gate");
+  // Let the fade-out finish before the element is display:none, otherwise the
+  // transition is cancelled and the app snaps in with no motion.
+  gate.classList.remove("in");
+  document.documentElement.classList.remove("gated");
+  gate.hidden = true;
+  document.querySelector(".app").style.filter = "";
+  document.querySelector("header").style.filter = "";
+  // Announce the app once on first paint so the dashboard content doesn't
+  // simply appear next to the gate that was covering it.
+  if (!document.body.classList.contains("booted")) {
+    document.body.classList.add("booted");
+  }
+}
+
+function gErr(msg) { const e = $("gErr"); e.textContent = msg; e.hidden = !msg; }
+function gErr2(msg) { const e = $("gErr2"); e.textContent = msg; e.hidden = !msg; }
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { credentials: "same-origin", ...opts });
+  if (res.status === 401) { gateShow("signin"); throw new Error("signed out"); }
+  if (res.status === 403) { gateShow("check"); throw new Error("unverified"); }
+  return res;
+}
+
+async function bootAuth() {
+  const qs = new URLSearchParams(location.search);
+
+  // A confirmation link from the welcome mail: consume it, then land back in
+  // the app. The token is dropped from the address bar so a refresh cannot try
+  // to redeem it twice.
+  if (qs.get("verify")) {
+    const v = qs.get("verify");
+    history.replaceState(null, "", location.pathname);
+    try {
+      const r = await (await fetch("/api/auth/verify?token=" + encodeURIComponent(v),
+        { credentials: "same-origin" })).json();
+      if (r.ok) { toast("Email confirmed - sign in to continue."); }
+      else { gateShow("signin", { foot: r.error || "That link has expired." }); return; }
+    } catch { gateShow("signin", { foot: "Could not reach the server." }); return; }
+  }
+
+  // A reset link: go straight to the new-password form, prefilled.
+  if (qs.get("token")) {
+    $("gResetEmail").value = (qs.get("email") || "").trim();
+    gateShow("setpw");
+    return;
+  }
+
+  let st;
+  try { st = await (await fetch("/api/auth/state", { credentials: "same-origin" })).json(); }
+  catch { gateShow("signin", { foot: "Cannot reach the server." }); return; }
+
+  if (st.needs_bootstrap) {
+    gateShow("signup", { foot: "First run: this account will own the saved CV sessions." });
+    return;
+  }
+  if (!st.authenticated) { gateShow("signin"); return; }
+  if (!st.verified) { gateShow("check", { msg: st.msg }); return; }
+  gateHide();
+  signedIn(st);
+}
+
+function signedIn(st) {
+  // Every path that ends up signed in goes through here, so this is the one
+  // place that takes the gate down. Doing it per-call site is how login ended
+  // up leaving the gate up until the next refresh.
+  gateHide();
+  $("acct").textContent = st.email || "";
+  $("acct").title = st.email || "";
+  $("signOutBtn").style.display = "";
+  loadConfig();
+  loadSessions();
+  loadDocs();
+}
+
+/* sign in / sign up */
+$("gateSign").onsubmit = async e => {
+  e.preventDefault();
+  if (GATE.busy) return;
+  const email = $("gEmail").value.trim();
+  const pass = $("gPass").value;
+  gErr("");
+  if (GATE.mode === "signup" && pass !== $("gPass2").value) {
+    gErr("The two passwords do not match."); return;
+  }
+  GATE.busy = true; $("gSubmit").disabled = true;
+  try {
+    const path = GATE.mode === "signup" ? "/api/auth/register" : "/api/auth/login";
+    const r = await (await api(path, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password: pass }) })).json();
+    if (r.ok === false) { gErr(r.error || "Could not sign you in."); return; }
+    if (GATE.mode === "signup") {
+      if (r.needs_verification) {
+        // The address has to be confirmed first. A session already exists, so
+        // "send it again" works; the app itself stays closed until then.
+        gateShow("check", { devLink: r.dev_link,
+          msg: "Confirm the address we just mailed to " + (r.email || "") + "." });
+        return;
+      }
+      // No working SMTP, so the server confirmed the address itself.
+      if (r.detail) toast(r.detail);
+      signedIn(r);
+      return;
+    }
+    signedIn(r);
+    loadConfig();
+  } catch (err) {
+    if (err.message !== "signed out" && err.message !== "unverified") {
+      gErr("Could not reach the server.");
+    }
+  } finally {
+    GATE.busy = false; $("gSubmit").disabled = false;
+  }
+};
+
+$("gToggleMode").onclick = e => {
+  e.preventDefault();
+  gateShow(GATE.mode === "signup" ? "signin" : "signup");
+};
+
+$("gForgot").onclick = e => {
+  e.preventDefault();
+  $("gResetEmail").value = $("gEmail").value.trim();
+  gateShow("forgot");
+};
+
+$("gResend").onclick = async () => {
+  gErr2("");
+  $("gResend").disabled = true;
+  try {
+    const r = await (await api("/api/auth/resend", { method: "POST" })).json();
+    if (r.already_verified) {
+      gateHide(); signedIn({ email: "" }); return;
+    }
+    $("gateCheckMsg").textContent = r.ok
+      ? "Sent - check your inbox for the confirmation link."
+      : ("Could not send it right now: " + (r.detail || "try again later"));
+    if (r.dev_link) {
+      const box = $("gateDevLink");
+      box.hidden = false;
+      box.innerHTML = "SMTP is not configured, so here is the link directly: <a href=\"" +
+        esc(r.dev_link) + "\">confirm this address</a>";
+    }
+  } finally { $("gResend").disabled = false; }
+};
+
+$("gateReset").onsubmit = async e => {
+  e.preventDefault();
+  gErr2("");
+  const pw = $("gNewPass").value;
+  if (GATE.mode === "setpw" && pw !== $("gNewPass2").value) {
+    gErr2("The two passwords do not match."); return;
+  }
+  const qs = new URLSearchParams(location.search);
+  // The token comes from the emailed link's query string, falling back to the
+  // one GATE.token holds for the no-SMTP dev link (which has no ?token= here).
+  const token = qs.get("token") || GATE.token || "";
+  const body = GATE.mode === "setpw"
+    ? { token, password: pw }
+    : { email: $("gResetEmail").value.trim() };
+  const path = GATE.mode === "setpw" ? "/api/auth/reset" : "/api/auth/forgot";
+  const r = await (await api(path, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body) })).json();
+  if (r.ok === false) { gErr2(r.error || "That did not work."); return; }
+  if (GATE.mode === "setpw") {
+    $("gPass").value = ""; $("gNewPass").value = ""; $("gNewPass2").value = "";
+    $("gEmail").value = (qs.get("email") || "").trim();
+    gateShow("signin", { foot: r.message || "Password updated. Sign in with it now." });
+    return;
+  }
+  // Deliberately the same wording whether or not the address has an account.
+  $("resetMsg").textContent = r.message
+    || "If that address has an account, a reset link is on its way.";
+  if (r.dev_link) {
+    // No SMTP, so the server hands back the link it would have mailed. Switch
+    // the form to "setpw" with that link's token: leaving the mode on "forgot"
+    // would post the email again on the next click and the reset could never
+    // complete.
+    const u = new URL(r.dev_link, location.origin);
+    GATE.mode = "setpw";
+    GATE.token = u.searchParams.get("token") || "";
+    $("gResetEmail").value = u.searchParams.get("email") || $("gResetEmail").value;
+    $("gNewWrap").hidden = false; $("gNew2Wrap").hidden = false;
+    $("gResetSubmit").textContent = "Set new password";
+    $("resetMsg").textContent = "SMTP is not configured. Set the new password here:";
+    $("gNewPass").focus();
+  }
+};
+
+$("signOutBtn").onclick = async () => {
+  await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+  $("acct").textContent = ""; $("signOutBtn").style.display = "none";
+  $("sessList").innerHTML = "";
+  $("chat").innerHTML = "";
+  clearDeck();
+  state.settings = {};
+  state.resetAt = null;
+  gateShow("signin");
+};
+
 /* ---------- init ---------- */
-loadConfig();
+/* The board list is public, so the sign-in gate can name the sites it scrapes
+   before anyone has an account. /api/config is authenticated and therefore
+   arrives too late for the gate, which is why this is a separate call. */
+loadPublicBoards();
+/* auth first: it decides whether the rest of the app is reachable at all */
+bootAuth();
 </script>
 </body>
 </html>

@@ -1,0 +1,7 @@
+# Dev/test dependencies (installed on top of requirements.txt)
+#   .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+#   .\.venv\Scripts\python.exe -m pytest tests -q
+#   .\.venv\Scripts\python.exe -m pyflakes <files>   # unused/dead names
+-r requirements.txt
+pytest>=8.0
+pyflakes>=3.0

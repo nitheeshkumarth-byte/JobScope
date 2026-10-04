@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "llama-ocr": "^0.0.6"
+  }
+}

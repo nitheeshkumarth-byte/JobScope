@@ -30,3 +30,31 @@ uvicorn==0.53.0
 
 # Resume/CV parsing (dashboard /api/resume) — PDF text extraction
 pypdf==6.19.0
+
+# Tier-2 OCR, for a CV with no text layer (cv_ocr.py). Only reached when the
+# normal extraction comes back with nothing readable, so a checkout without
+# these still runs and still handles every text-based CV.
+#
+# PyMuPDF renders the page pixels, RapidOCR reads them (PaddleOCR's models
+# compiled to ONNX), onnxruntime is the CPU runtime. Pure CPU, no torch, no
+# system binaries - a scan reads in about 4-5s a page.
+#
+# PyMuPDF is AGPL-3.0 / dual-licensed, which is fine for a locally run tool. If
+# this ever ships as a hosted service, swap the renderer for pypdfium2 (BSD-3) -
+# only cv_ocr._read_pdf touches it.
+pymupdf==1.28.2
+rapidocr==3.9.2
+onnxruntime==1.30.0
+
+# Job-board collection (boards.py). The [fetchers] extra is what brings in the
+# impersonated HTTP session (curl_cffi) and the real-Chromium path, and that is
+# what actually clears the 403 walls. Installed from the vendored source tree
+# so the pinned 0.4.15 is used rather than whatever happens to be on PyPI:
+#
+#   pip install -e "./Scrapling-main[fetchers]"
+#   python -m playwright install chromium
+#
+# mcp_server_indeed_scraper.py imports it inside a try/except and falls back to
+# the older regex scrapers, so the app still starts without it - just with far
+# fewer working boards.
+-e ./Scrapling-main[fetchers]

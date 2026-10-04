@@ -7,6 +7,30 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
+
+# Vendored Scrapling checkout. requirements.txt installs it with
+# `-e ./Scrapling-main[fetchers]`, so it has to be present before `pip install
+# -r requirements.txt` succeeds. It is a full third-party repository, so it is
+# not committed - see the Scrapling setup section of README.md for the clone
+# step that puts it here. Deleting it breaks the install, not just the tests.
+Scrapling-main/
+
+# JS tooling, only used to syntax-check the inline script in static/index.html
+node_modules/
+
+# Unrelated third-party checkout kept in the workspace for reference. Not used
+# by the app - cv_ocr.py runs RapidOCR/ONNX, not this. It is ~90MB, mostly a
+# demo GIF and a dev build of sglang, and its model needs an NVIDIA GPU this
+# project does not run on. Nothing here is imported.
+Unlimited-OCR-main/
+
+# Third-party Laya checkout (Apache-2.0, upstream NandhaKishorM/laya). Kept for
+# reading its fine-tuning and calibration docs; the app does not import it yet.
+# ~780 files including benchmark PNGs and a whole TypeScript SDK, so it must
+# not be committed. Upstream lives at github.com/NandhaKishorM/laya.
+laya-main/
+
 
 # Chainlit runtime artifacts
 .chainlit/
@@ -22,3 +46,9 @@ logs/*.jsonl
 
 # Sidebar session store (personal resume data)
 profiles.json
+
+# Accounts database: password hashes, session cookies and email tokens.
+# This is the most sensitive file in the repo - it must never be committed.
+users.db
+users.db-wal
+users.db-shm
