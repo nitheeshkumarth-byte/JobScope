@@ -205,23 +205,68 @@ def _text(blob: str) -> str:
     return re.sub(r"\s+", " ", html_mod.unescape(TAG_RE.sub(" ", blob))).strip()
 
 
-class Job:
-    __slots__ = ("source", "title", "company", "location", "salary", "link")
+def _clean_desc(blob, limit: int = 2500) -> str:
+    """Turn a feed's HTML description into a plain-text posting body.
 
-    def __init__(self, source, title, company="", location="", salary="", link=""):
+    The JSON feeds serve descriptions as HTML fragments (Remotive especially),
+    and list structure carries real signal - "Requirements", "Responsibilities"
+    are what tailoring reads - so block tags become newlines and only the
+    inline noise is flattened. Capped, because a full posting body for 20
+    listings would otherwise dominate the SSE frame the browser has to parse.
+    """
+    if not isinstance(blob, str) or not blob.strip():
+        return ""
+    # Recursive unescape: both feeds double-encode (Arbeitnow ships
+    # "&lt;div&gt;" that becomes "<div>" on one pass), so tags can survive a
+    # single strip and end up printed into the resume as visible markup.
+    for _ in range(3):
+        unescaped = html_mod.unescape(blob)
+        if unescaped == blob:
+            break
+        blob = unescaped
+    text = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", blob)
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</(p|div|li|h[1-6]|tr)>", "\n", text)
+    text = re.sub(r"(?i)<li[^>]*>", "  - ", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = html_mod.unescape(text)
+    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    text = re.sub(r"\n\s*\n\s*", "\n", text).strip()
+    if len(text) > limit:
+        text = text[:limit].rsplit(" ", 1)[0].rstrip() + " ..."
+    return text
+
+
+class Job:
+    __slots__ = ("source", "title", "company", "location", "salary", "link",
+                 "desc")
+
+    def __init__(self, source, title, company="", location="", salary="", link="",
+                 desc=""):
         """One normalized listing: which board it came from, plus the fields
-        the flashcard UI shows (company/location/salary) and the Apply link."""
+        the flashcard UI shows (company/location/salary) and the Apply link.
+
+        `desc` is the posting body when the source hands it over for free (the
+        JSON feeds do), left empty otherwise. It rides along so tailoring never
+        has to re-fetch a page the search already read - which is the step that
+        usually loses to a bot wall."""
         self.source = source
         self.title = title
         self.company = company
         self.location = location or ""
         self.salary = salary or ""
         self.link = link or ""
+        self.desc = desc or ""
 
     def to_dict(self):
-        return {"source": self.source, "title": self.title,
-                "company": self.company, "location": self.location,
-                "salary": self.salary, "link": self.link}
+        d = {"source": self.source, "title": self.title,
+             "company": self.company, "location": self.location,
+             "salary": self.salary, "link": self.link}
+        # Only when there is one: an empty desc would ride through the agent's
+        # JSON payload and the SSE frame as noise on every listing.
+        if self.desc:
+            d["desc"] = self.desc
+        return d
 
 
 def _fetch(url: str, timeout=(3.05, 12)):
@@ -453,21 +498,26 @@ def _foundit_legacy(query: str) -> list[Job]:
 def _select(jobs: list[Job], query: str, cap: int = MAX_JOBS) -> list[Job]:
     """Rank listings so titles matching the query's role/skill words lead.
 
-    Keeps raw order within the same score, and only fills in unmatched titles
-    when few matched (so niche skills don't zero out a whole board)."""
+    Keeps raw order within the same score. Unmatched titles are DE-RANKED, never
+    dropped: the old version appended them only while fewer than 8 titles had
+    matched, so the moment a board returned 8+ "python developer" hits, every
+    remaining listing was deleted outright - including "Software Engineer" roles
+    whose only python mention is in the description. Boards routinely return
+    16-75 rows, so that threshold was crossed on nearly every real search and a
+    hunt could report zero listings while the board was full of them.
+
+    A title is weak evidence, not proof of irrelevance, so it may only reorder.
+    """
     wanted = [w.lower() for w in (query or "").lower().split() if len(w) > 2]
     if not wanted:
         return jobs[:cap]
     scored = []
     for j in jobs:
-        low = j.title.lower()
+        low = f"{j.title} {j.company}".lower()
         scored.append((sum(1 for w in wanted if w in low), j))
     matched = sorted((s for s in scored if s[0] > 0), key=lambda t: t[0], reverse=True)
-    out = [j for _, j in matched]
-    if len(out) < 8:
-        rest = [j for s, j in scored if s == 0]
-        out += rest[: cap - len(out)]
-    return out[:cap]
+    rest = [j for s, j in scored if s == 0]
+    return ([j for _, j in matched] + rest)[:cap]
 
 
 def _remotive(query: str) -> list[Job]:
@@ -493,7 +543,8 @@ def _remotive(query: str) -> list[Job]:
             continue
         jobs.append(Job("Remotive", title,
                         company=str(j.get("company_name") or "").strip(),
-                        location=loc, salary=salary, link=link))
+                        location=loc, salary=salary, link=link,
+                        desc=_clean_desc(j.get("description"))))
     if not jobs:
         raise RuntimeError("empty API response")
     return jobs
@@ -517,7 +568,8 @@ def _arbeitnow(query: str) -> list[Job]:
             loc = "Remote"
         jobs.append(Job("Arbeitnow", title,
                         company=(it.get("company_name") or "").strip(),
-                        location=loc, link=link))
+                        location=loc, link=link,
+                        desc=_clean_desc(it.get("description"))))
     if not jobs:
         raise RuntimeError("empty API response")
     return jobs
@@ -581,10 +633,14 @@ def _weworkremotely_legacy(query: str) -> list[Job]:
         cm = re.search(r'new-listing__company-name">\s*([^<]+)', blob)
         rm = re.search(r'new-listing__company-headquarters">\s*([^<]+)', blob)
         title = _text(tm.group(1)) if tm else ""
-        low = title.lower()
+        low = f"{title} {_text(cm.group(1)) if cm else ''}".lower()
         score = sum(1 for w in wanted if w in low) if wanted else 1
-        if wanted and score == 0:
-            continue
+        # Rank, never drop. This used to `continue` on score == 0, and WWR has
+        # no fallback for it: the Scrapling path returns the ranked list even
+        # when empty (so the legacy scrape never ran), and the legacy path
+        # raised "no results on page", which probe() reported as "blocked" and
+        # then cached for 90s. Either way a healthy board full of roles
+        # reported zero listings.
         scored.append((score, Job("WeWorkRemotely", title,
                                   company=_text(cm.group(1)) if cm else "",
                                   location=_text(rm.group(1)) if rm else "Anywhere in the World",
@@ -728,17 +784,21 @@ def _weworkremotely(query: str) -> list[Job]:
 
 
 def _scrapling_rank_wwr(rows, query: str) -> list[Job]:
-    """Apply WWR's local title filter to Scrapling rows.
+    """Order WWR's Scrapling rows so query-word titles lead.
 
-    Needed because WWR ignores query params - it serves the same page for every
-    search, so the caller still has to narrow by title to stay relevant."""
+    WWR ignores query params - it serves the same page for every search - so the
+    ranking has to happen here. It used to DROP every title without a query word
+    (`if wanted and score == 0: continue`), which is worse than useless on this
+    board: a remote "Software Engineer" listing is a legitimate hit for
+    "python developer" and was discarded. Because this returns whatever it
+    ranked, an all-zero result also short-circuited the legacy fallback at the
+    call site and the board reported "0 (nothing matched this query)".
+    """
     wanted = [w.lower() for w in (query or "").lower().split() if len(w) > 2]
     scored = []
     for r in rows:
-        low = r.title.lower()
+        low = f"{r.title} {r.company}".lower()
         score = sum(1 for w in wanted if w in low) if wanted else 1
-        if wanted and score == 0:
-            continue
         scored.append((score, Job("WeWorkRemotely", r.title, r.company,
                                   r.location, r.salary, r.link)))
     jobs = [j for _, j in sorted(scored, key=lambda t: t[0], reverse=True)]

@@ -1180,8 +1180,11 @@ def test_every_id_the_script_touches_exists_in_the_markup():
     script = re.search(r"(?s)<script>(.*)</script>", html).group(1)
     markup = html[: html.index("<script>")]
     # deck* are built at runtime by the deck renderer, so they are not in the
-    # initial markup by design.
-    runtime_only = {"deckCount", "deckDots", "deckNext", "deckPrev", "deckStage"}
+    # initial markup by design. im*/avClose are the same: the identity dropdown
+    # and the avatar picker are injected when the user opens them, so they exist
+    # in the DOM only from that moment on.
+    runtime_only = {"deckCount", "deckDots", "deckNext", "deckPrev", "deckStage",
+                    "imNick", "imAvatar", "imOut", "avClose"}
     referenced = set(re.findall(r'\$\("([^"]+)"\)', script)) - runtime_only
     present = set(re.findall(r'\bid="([^"]+)"', markup))
     assert not (referenced - present), \
@@ -1324,6 +1327,21 @@ def _html():
     return (Path(d.STATIC_DIR) / "index.html").read_text(encoding="utf-8")
 
 
+def _script():
+    """The inline script block, for assertions about behaviour rather than markup.
+
+    Separate from _html because most of what needs testing here is in the
+    JavaScript - whether a function exists, which endpoint it calls, what it
+    clears - and grepping the whole file for a substring cannot tell an actual
+    call from a mention in a comment.
+    """
+    import re
+    html = _html()
+    m = re.search(r"(?s)<script>(.*)</script>", html)
+    assert m, "no inline script block in index.html"
+    return m.group(1)
+
+
 # --------------------------------------------------------------------------
 # Launcher: an occupied port
 #
@@ -1419,39 +1437,76 @@ def test_the_deck_reports_repeats_and_blocked_sources():
     body = html.split("function deckNotes(")[1].split("\n}")[0]
     assert "p.repeats" in body, "repeat count is never rendered"
     assert "p.blocked_reasons" in body, "blocked sources are never rendered"
-    # The deck must receive the whole payload, not just the jobs array.
+    # The deck must receive the whole payload, not just the jobs array, plus the
+    # search that produced it so stacked decks stay attributable.
     assert 'case "jobs":' in html
-    assert "renderDeck(obj.payload)" in html, \
+    assert "renderDeck(obj.payload, currentSearch)" in html, \
         "renderDeck needs the payload's repeat/blocked metadata, not jobs alone"
     # A plain array is still accepted so no caller has to change shape.
-    deck = html.split("function renderDeck(")[1].split("\n  const slot")[0]
+    deck = html.split("function renderDeck(")[1].split("\n  const msg")[0]
     assert "payload.jobs" in deck
 
 
-def test_the_previous_runs_deck_is_actually_removed_before_a_new_run():
-    """A hunt aimed at a different board must not leave the last run's cards
-    on screen looking like this run's answer.
+def test_each_run_keeps_its_own_deck_instead_of_destroying_the_last_one():
+    """The user reported two symptoms from one cause.
 
-    It called renderDeck([]), which did nothing: an array has no `.jobs`, so
-    renderDeck took the non-deck branch and returned at `if (!isDeck) return`.
-    Neither the DOM node nor state.deck was cleared, so the old deck survived
-    a run that found nothing AND a run that failed before its first frame.
+    sendMessage called clearDeck() on every new message and renderDeck removed
+    the existing .deck, so a second search destroyed the first search's cards.
+    That produced both complaints at once: results vanished when another input
+    was given, and a hunt that found nothing looked like it was re-showing the
+    previous run's output.
+
+    Decks must ACCUMULATE, each owning its own job list and cursor so paging one
+    never moves another, and each labelled with the query that produced it.
     """
     html = _html()
-    assert "function clearDeck(" in html, "there is no way to clear the deck"
-    clear = html.split("function clearDeck(")[1].split("\n}")[0]
-    assert "state.deck = []" in clear, "the deck state outlives the run"
-    assert ".deck" in clear and ".remove()" in clear, "the deck element stays on screen"
 
-    # The run-start path must use it, not renderDeck([]).
+    # The run-start path must NOT clear.
     send = html.split("async function sendMessage(")[1]
     start = send[:send.index("appendMsg(\"user\"")]
-    assert "clearDeck()" in start, "a new run does not clear the previous deck"
-    assert "renderDeck([])" not in start, \
-        "renderDeck([]) is a no-op for a bare array and must not be used to clear"
-    # And the "nothing came back" path must still be reachable, so a run that
-    # genuinely finds nothing says so.
+    assert "clearDeck()" not in start, \
+        "a new run still wipes the previous run's results"
+    assert "renderDeck([])" not in start
+
+    render = html.split("function renderDeck(")[1].split("\n}\n")[0]
+    # Strip JS comments first: the explanatory comments in this function name
+    # the very identifiers these assertions forbid, and a prose mention of
+    # chat.lastChild is not a use of it.
+    code = re.sub(r"/\*.*?\*/", "", render, flags=re.DOTALL)
+    code = re.sub(r"//[^\n]*", "", code)
+    # No querySelector(".deck").remove() - the old deck survives.
+    assert 'querySelector(".deck")' not in code, \
+        "renderDeck still deletes the previously rendered deck"
+    # The empty-result branch must add its own note, not remove a sibling.
+    assert 'querySelector(".deck.empty")' not in code
+    assert "place(e)" in code, "the empty note is not placed alongside old decks"
+
+    # Per-deck state, not one global: duplicate element ids across coexisting
+    # decks would make $("deckStage") return whichever came first.
+    assert 'id="deckStage"' not in code, "decks still use duplicate global ids"
+    assert 'id="deckCount"' not in code
+    for cls in ("deckstage", "deckcount", "dots", "deckprev", "decknext"):
+        assert 'class="%s"' % cls in code, "deck lost its %r hook" % cls
+
+    # Order matters: newest deck last. Anchoring to chat.lastChild inverted the
+    # transcript (B, C, A for renders A, B, C) because the previous deck had
+    # become the last child.
+    assert "chat.lastChild" not in code, \
+        "anchoring to chat.lastChild reverses the deck order"
+    assert "appendChild" in code
+
+    # Still reachable: a genuinely fruitless hunt has to say so.
     assert 'No listings came back' in html
+
+
+def test_clear_deck_still_exists_for_session_reset_only():
+    """Decks accumulate per message, but a reset/logout must wipe the lot."""
+    html = _html()
+    assert "function clearDeck(" in html
+    clear = html.split("function clearDeck(")[1].split("\n}")[0]
+    assert "state.deck = []" in clear
+    assert 'querySelectorAll(".deck")' in clear, \
+        "reset must remove EVERY deck, not just the first"
 
 
 def test_a_new_session_is_told_it_has_no_role_yet():
@@ -1471,24 +1526,36 @@ def test_reduced_motion_is_respected():
     html = _html()
     blocks = html.split("@media (prefers-reduced-motion: reduce)")
     assert len(blocks) > 1, "no reduced-motion query at all"
-    # The global clamp near the top of the stylesheet is what stops the
-    # decorative loops; the later block is the new entrance motion.
-    global_block = blocks[1].split("}")[1]
-    assert "animation-duration" in global_block
-    assert "transition-duration" in global_block
-    assert "!important" in global_block, \
-        "without !important the later rules keep the motion"
-    for looping in ("ringpulse", "typing i", "spin"):
-        assert looping in global_block or "animation-duration" in global_block
 
-    new_block = blocks[2].split("@keyframes")[0]
-    assert "animation: none" in new_block
-    assert "!important" in new_block, \
-        "the looping pulses need !important to actually be stopped"
-    # The endless loops are named by their selectors, not their keyframes:
-    # the live-node ring, the typing dots and the spinner.
-    for looping in (".node.live .pill::after", ".typing i", ".spin"):
-        assert looping in new_block, f"{looping} keeps animating under reduced motion"
+    # Search every reduced-motion block rather than a fixed index: the number of
+    # blocks is an implementation detail, and a positional lookup silently started
+    # asserting about whichever rule happened to land first.
+    motion = "".join(blocks[1:])
+
+    # A global clamp is what stops the decorative loops, including any added later.
+    assert "animation-duration" in motion, \
+        "no global animation-duration clamp under reduced motion"
+    assert "transition-duration" in motion
+    assert "!important" in motion, \
+        "without !important the later rules keep the motion"
+
+    # The endless loops are named by their selectors, not their keyframes, and
+    # each must be cancelled outright - a duration clamp alone leaves the
+    # transform-based ones running and does nothing to pseudo-elements.
+    for looping in ("ringpulse", ".typing i", ".spin",
+                    ".node.live .pill::after"):
+        assert looping in motion, f"{looping} keeps animating under reduced motion"
+    assert "animation: none" in motion
+
+    # The decorative background layers and the scroll affordance added with the
+    # session timer are covered too. Both are transform/position animation, so
+    # the clamp alone would leave them moving.
+    assert "body::before" in motion and "body::after" in motion, \
+        "the drifting background keeps moving under reduced motion"
+    assert ".scrollhint i" in motion
+    # Smooth scrolling is motion as well: an animated scroll position is exactly
+    # what this media query is asking to avoid.
+    assert "scroll-behavior: auto" in motion
 
 
 def test_the_gate_animates_in_and_out_without_js_timing():
@@ -1529,6 +1596,64 @@ def test_the_dev_reset_link_actually_switches_the_form():
 def _css():
     """Just the stylesheet - not the JS, which contains its own "<style>" string."""
     return _html().split("<style>")[1].split("</style>")[0]
+
+
+def test_the_drifting_background_is_strong_enough_to_actually_be_seen():
+    """The blobs were technically animating and technically invisible.
+
+    Measured in headless Chromium: two frames 3s apart differed by a MAXIMUM of
+    3/255 per channel, mean 0.135, with only 0.01% of the frame changing by even
+    2/255. That is under the just-noticeable threshold, so "the background is
+    fixed and drifting" was true in the stylesheet and false on screen - the
+    gradients were 8-13% alpha over a near-white #f4f6fb, and the drift moved
+    the layer ~0.5% of the viewport over the whole cycle.
+
+    These floors encode that measurement. A stylesheet check cannot judge
+    "pretty", but it can refuse the exact values that shipped invisible.
+    """
+    css = _css()
+    alphas = [float(a) for a in re.findall(r"rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\.(\d+)\s*\)", css)]
+    assert alphas, "no gradient alphas found in the stylesheet"
+    assert min(alphas) >= 0.18, (
+        f"weakest blob alpha {min(alphas)} is below the 0.18 floor; the "
+        f"background stops being perceptible against --bg"
+    )
+
+    # Each drift must travel far enough per cycle to be seen while it happens,
+    # not just somewhere over a full 22s round trip.
+    for name, keyframe in (("drift", "drift"), ("drift2", "drift2")):
+        m = re.search(r"@keyframes\s+%s\s*\{\s*to\s*\{([^}]*)\}" % keyframe, css)
+        assert m, f"@keyframes {keyframe} disappeared"
+        shifts = [float(v) for v in re.findall(r"translate\([^)]*?(-?[\d.]+)%", m.group(1))]
+        assert shifts and max(abs(s) for s in shifts) >= 6.0, (
+            f"{name} translates by under 6% - too small to read as motion"
+        )
+        scale = re.search(r"scale\(([\d.]+)\)", m.group(1))
+        assert scale and float(scale.group(1)) >= 1.10, (
+            f"{name} scales by under 1.10 - too small to read as motion"
+        )
+
+    # Still transform-only: animating width/height/top/left would make the
+    # fixed layer cost layout on every frame and could reintroduce a scrollbar.
+    # Scoped to the two background layers - plenty of unrelated UI legitimately
+    # transitions `left` (the sidebar, the drawer).
+    for selector in ("body::before", "body::after"):
+        m = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+        assert m, f"{selector} rule disappeared"
+        block = m.group(1)
+        assert "position: fixed" in block, (
+            f"{selector} is no longer position:fixed, so it scrolls with content"
+        )
+        anim = re.search(r"animation:\s*([^;]+)", block)
+        assert anim and anim.group(1).strip(), f"{selector} lost its animation"
+        assert not re.search(r"transition", block), (
+            f"{selector} gained a transition; a gradient blob should only drift"
+        )
+    for keyframe in ("drift", "drift2"):
+        block = re.search(r"@keyframes\s+%s\s*\{[^}]*\}" % keyframe, css).group(0)
+        assert not re.search(r"\b(width|height|top|left|right|bottom)\s*:", block), (
+            f"@keyframes {keyframe} animates a layout property"
+        )
 
 
 def _media_blocks(css):
@@ -1807,9 +1932,19 @@ def test_the_responsive_overrides_come_after_the_components_they_override():
         assert css.index(component) < banner, (
             f"{component!r} is defined after the responsive block and will beat it"
         )
-    # And it still has to be inside the stylesheet, not after it.
-    assert css.rstrip().endswith("overflow-wrap: anywhere; }"), (
-        "the responsive block is no longer the last thing in the stylesheet"
+    # And no component rule may creep in after the responsive block. The sheet
+    # now ends with the scrollbar-hiding override (it has to, for the same
+    # cascade reason: .slist/.roledd-list restate `scrollbar-width: thin`
+    # hundreds of lines below the first hide rule).
+    tail = css.rstrip()
+    assert tail.endswith(
+        ".gate::-webkit-scrollbar { width: 0; height: 0; display: none; }"
+    ), "the stylesheet no longer ends with the trailing override block"
+    assert css.rindex("scrollbar-width: none") > css.rindex(
+        "scrollbar-width: thin"
+    ), (
+        "the trailing scrollbar-width:none must come after every "
+        "scrollbar-width:thin or Firefox shows a thumb again"
     )
 
 
@@ -1821,3 +1956,229 @@ def test_the_responsive_overrides_come_after_the_components_they_override():
 # never touched it, so every posting stayed marked and the first hunt after a
 # reset came back with nothing fresh, falling back to repeats. That reads as a
 # broken search rather than a clean slate.
+# --------------------------------------------------------------------------
+# session countdown + identity UI
+# --------------------------------------------------------------------------
+
+def test_the_countdown_is_rendered_at_the_top_of_the_dashboard():
+    """The user has to be able to see the clock without scrolling or opening
+    anything, so it lives in the header rather than in the settings drawer."""
+    html = _html()
+    assert 'id="idlePill"' in html and 'id="idleClock"' in html
+    header = html.split("<header>")[1].split("</header>")[0]
+    assert "idlePill" in header, "the countdown is not in the header"
+
+
+def test_the_countdown_has_a_five_minute_extend_button():
+    html = _html()
+    assert 'id="idleExtend"' in html
+    assert "+5" in html
+    # and it posts to the route that actually moves the deadline
+    script = _script()
+    assert '"/api/auth/extend"' in script
+
+
+def test_the_extend_button_is_always_offered():
+    """It was hidden until two minutes remained, which made it undiscoverable
+    for the twenty-three minutes it was actually meant to be used."""
+    script = _script()
+    assert "idleExtend" in script
+    paint = script.split("function paintIdle(")[1][:900]
+    assert "idleExtend" not in paint.split("}")[0], \
+        "paintIdle still hides the extend button by default"
+
+
+def test_idling_out_calls_sign_out_and_clears_the_page():
+    """An auto-logout that leaves the previous user's results on screen is not
+    a logout."""
+    script = _script()
+    assert "function idleExpired(" in script
+    assert "signOutNow(" in script.split("function idleExpired(")[1][:400]
+    wipe = script.split("function signOutNow(")[1][:2000]
+    for stale in ("chat", "sessList", "rBodyPreview", "rBodyTex", "docList",
+                  "rJd", "identBtn", "idlePill"):
+        assert f'$("{stale}")' in wipe, f"signOutNow leaves {stale} on the page"
+
+
+def test_an_explicit_sign_out_and_an_idle_timeout_share_one_code_path():
+    """Two clear-down paths is how one of them ends up missing something."""
+    script = _script()
+    assert "function signOutNow(" in script
+    handler = script.split('$("signOutBtn").onclick')[1][:600]
+    assert "signOutNow(" in handler
+
+
+def test_the_identity_pill_replaces_the_raw_email_in_the_header():
+    html = _html()
+    assert 'id="identBtn"' in html and 'id="identAv"' in html
+    assert 'id="identWho"' in html
+    # The old element stays but is hidden: the address is still the login
+    # identity, it just is not what the header prints any more.
+    script = _script()
+    assert 'identBtn' in script
+    assert "display_name" in script, "the header does not use the display name"
+
+
+def test_the_logo_dropdown_offers_exactly_the_three_actions():
+    html = _html()
+    assert 'id="identMenu"' in html
+    script = _script()
+    menu = script.split("function identMenuOpen(")[1][:1200]
+    assert "imNick" in menu, "no way to change the nickname"
+    assert "imAvatar" in menu, "no way to change the logo"
+    assert "imOut" in menu, "no sign out in the dropdown"
+
+
+def test_the_avatar_picker_offers_several_options():
+    script = _script()
+    assert "function openAvatarPicker(" in script
+    assert "/api/auth/avatars" in script, \
+        "the picker is not driven by the server's list, so it can offer an id " \
+        "that set_identity would reject"
+
+
+def test_the_avatar_circle_carries_the_users_initials():
+    script = _script()
+    assert "function _initials(" in script
+    assert "linear-gradient" in script
+
+
+def test_the_nickname_is_offered_on_a_first_login():
+    """After sign-up the user has no nickname, and the header falls back to the
+    email local part - so the app has to mention the option."""
+    html = _html()
+    assert "function askNicknameOnce(" in _script()
+    assert "needs_nickname" in _script()
+
+
+def test_scrolling_is_smooth_and_the_scrollbar_is_hidden():
+    html = _html()
+    assert "scroll-behavior: smooth" in html
+    assert "scrollbar-width: none" in html
+    assert "::-webkit-scrollbar" in html
+
+
+def test_the_background_moves_without_the_content():
+    """Two independently timed layers is what makes it read as flow rather than
+    a pulsing blob, and they must be behind everything."""
+    html = _html()
+    assert "body::before" in html and "body::after" in html
+    before = html.split("body::before {")[1].split("}")[0]
+    assert "position: fixed" in before, "the background scrolls with the page"
+    assert "z-index: -2" in before
+    assert "@keyframes drift2" in html, "both layers share one animation"
+
+
+def test_the_session_endpoints_are_all_present():
+    paths = {r.path for r in d.app.routes}
+    for p in ("/api/auth/session", "/api/auth/extend", "/api/auth/identity",
+              "/api/auth/avatars"):
+        assert p in paths, f"{p} is missing"
+
+# --------------------------------------------------------------------------
+# background full-description fetch
+# --------------------------------------------------------------------------
+
+def test_the_background_fetch_notice_is_hidden_until_it_is_needed():
+    """The resume on screen is already usable, so a notice that is visible on
+    every modal would be noise - and a permanent spinner beside a working
+    preview reads as a failure."""
+    html = _html()
+    assert 'id="rJdFetch"' in html
+    assert 'id="rJdFetch" hidden' in html
+
+
+def test_a_late_description_offers_a_regenerate_rather_than_replacing_the_resume():
+    """Silently swapping the document under a user who may already have
+    downloaded it is worse than making them ask for the better version."""
+    assert 'id="rJdFetchRegen"' in _html()
+    script = _script()
+    assert "Regenerate with it" in script
+    # The ready branch must show the button, not call generateResume itself.
+    ready = script.split('r.status === "ready" && chars > _rDescChars')[1][:300]
+    assert "_descNotice(" in ready
+    assert "generateResume(" not in ready.split("return;")[0]
+
+
+def test_the_regenerate_button_is_wired_to_a_regeneration():
+    script = _script()
+    handler = script.split('$("rJdFetchRegen").onclick')[1][:200]
+    assert "generateResume(" in handler
+    assert "hideDescNotice()" in handler
+
+
+def test_the_poll_stops_on_either_terminal_answer():
+    """`empty` is terminal on purpose. A posting with no readable description is
+    not going to grow one, and re-asking a wall every few seconds is how a
+    client gets its address banned."""
+    script = _script()
+    tick = script.split("async function _descPollTick(")[1][:1400]
+    assert 'r.status === "empty"' in tick
+    after = tick.split('r.status === "empty"')[1][:120]
+    assert "return;" in after and "setTimeout" not in after
+
+
+def test_the_poll_gives_up_rather_than_running_forever():
+    script = _script()
+    assert "DESC_POLL_TRIES" in script
+    tick = script.split("async function _descPollTick(")[1][:1400]
+    assert "_rDescTries >= DESC_POLL_TRIES" in tick
+    assert "setTimeout" in tick
+
+
+def test_a_pasted_description_starts_no_poll():
+    """What the user typed is strictly better than anything we could fetch, so
+    spending a browser behind it would be pure waste."""
+    script = _script()
+    start = script.split("function startDescPoll(")[1][:500]
+    assert "!job || !job.link" in start
+    # The pasted-text check has to come before the poll is scheduled, and the
+    # function has to return rather than merely skip one line.
+    guard = start.split("$('rJd')")[0] if "$('rJd')" in start else None
+    assert '$("rJd").value.trim()' in start
+    after_guard = start.split('$("rJd").value.trim()')[1][:200]
+    assert "return;" in after_guard and "_descPollTick" not in after_guard.split("return;")[0]
+
+
+def test_the_poll_is_abandoned_when_a_different_posting_is_opened():
+    """Otherwise the poll for a posting the user has navigated away from can
+    land late and offer a regenerate for the wrong job."""
+    script = _script()
+    tick = script.split("async function _descPollTick(")[1]
+    assert "_rDescJob.link !== job.link" in tick
+
+
+def test_closing_the_modal_and_signing_out_both_stop_the_poll():
+    script = _script()
+    assert "stopDescPoll()" in script.split("function closeResume(")[1][:300]
+    wipe = script.split("function signOutNow(")[1][:2500]
+    assert "stopDescPoll()" in wipe, "a poll outlives sign-out and 401s into a gate"
+    assert 'hideDescNotice()' in wipe
+
+
+def test_the_resume_reports_the_text_length_it_was_built_from():
+    """Without this the client cannot tell whether a later fetch found anything
+    new, and would offer a regenerate that produces an identical document."""
+    script = _script()
+    assert "_rDescChars = (r.desc_chars || 0)" in script
+    assert "chars > _rDescChars" in script
+
+
+def test_the_cache_is_reported_as_its_own_description_source():
+    """`cache` is a fourth origin alongside pasted/listing/link, and the UI has
+    to name it - otherwise a resume tailored from cached posting text claims it
+    was built from something else."""
+    script = _script()
+    assert 'r.jd_origin === "cache"' in script
+
+
+def test_every_description_origin_is_named_in_the_footer():
+    """The note under the preview is the only place the user learns which text
+    the resume was actually built from, so each origin needs its own wording -
+    a generic fallback would quietly claim live tailoring that never happened."""
+    script = _script()
+    note = script.split("function _jdNote(")[1][:900]
+    for origin in ("pasted", "listing", "cache"):
+        assert f'r.jd_origin === "{origin}"' in note
+    assert "No posting text available" in note, \
+        "no wording for the case where there was no posting text at all"

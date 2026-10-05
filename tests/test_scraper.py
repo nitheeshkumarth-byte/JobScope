@@ -5,7 +5,92 @@ tested — but everything they hand to the filter layer is, which is where the
 silent data loss happened.
 """
 
+import re
+
 import mcp_server_indeed_scraper as scraper
+
+
+# --------------------------------------------------------------------------
+# Job.desc — the description the search already collected
+# --------------------------------------------------------------------------
+
+def test_a_job_carries_no_description_key_when_it_has_none():
+    """An empty desc would ride through the agent payload and the SSE frame as
+    noise on every listing that came from an HTML board."""
+    assert "desc" not in scraper.Job("Test", "Data Analyst").to_dict()
+
+
+def test_a_real_description_is_carried_through():
+    d = scraper.Job("Test", "Data Analyst", desc="Kafka and Spark").to_dict()
+    assert d["desc"] == "Kafka and Spark"
+
+
+def test_the_description_slots_field_exists():
+    # __slots__ means a typo in a board function raises instead of silently
+    # creating a stray attribute the payload never reads.
+    assert "desc" in scraper.Job.__slots__
+    assert not hasattr(scraper.Job("Test", "X"), "__dict__")
+
+
+# --------------------------------------------------------------------------
+# _clean_desc
+# --------------------------------------------------------------------------
+
+def test_clean_desc_strips_markup_but_keeps_the_words():
+    out = scraper._clean_desc(
+        "<p>Build <strong>pipelines</strong>.</p>")
+    assert out == "Build pipelines ."
+
+
+def test_clean_desc_turns_list_items_into_readable_lines():
+    out = scraper._clean_desc("<ul><li>Kafka</li><li>Spark</li></ul>")
+    assert "Kafka" in out and "Spark" in out
+    assert "<" not in out and ">" not in out
+
+
+def test_clean_desc_drops_script_and_style_content():
+    out = scraper._clean_desc("<script>steal()</script><p>Safe</p>")
+    assert "steal" not in out
+    assert out == "Safe"
+
+
+def test_clean_desc_unwraps_double_encoded_markup():
+    """Arbeitnow ships '&lt;div&gt;' that unescapes to '<div>' on one pass, so a
+    single strip leaves visible tags in the finished resume."""
+    out = scraper._clean_desc(
+        "&lt;p&gt;Actual job text&lt;/p&gt;")
+    assert out == "Actual job text"
+    assert not re.search(r"<[a-zA-Z/!]", out)
+
+
+def test_clean_desc_never_lets_markup_through():
+    for raw in ("<div class='x'><p>hi</p></div>",
+                "&lt;div&gt;&lt;p&gt;hi&lt;/p&gt;&lt;/div&gt;",
+                "&amp;lt;p&amp;gt;hi&amp;lt;/p&amp;gt;"):
+        assert not re.search(r"<[a-zA-Z/!]", scraper._clean_desc(raw)), raw
+
+
+def test_clean_desc_resolves_entities_without_inventing_text():
+    out = scraper._clean_desc("S&amp;P&nbsp;500 &lt;tag&gt;")
+    assert "&amp;" not in out
+    assert "<tag>" not in out
+
+
+def test_clean_desc_handles_nothing_to_clean():
+    for raw in ("", "   ", None, 123, []):
+        assert scraper._clean_desc(raw) == ""
+
+
+def test_clean_desc_is_capped_so_the_sse_frame_stays_small():
+    out = scraper._clean_desc("<p>" + ("word " * 2000) + "</p>")
+    assert len(out) <= 2600
+    assert out.endswith("...")
+
+
+def test_clean_desc_leaves_a_short_description_uncapped():
+    out = scraper._clean_desc("<p>short</p>")
+    assert out == "short"
+    assert "..." not in out
 
 
 class _FakeJob:
@@ -231,6 +316,55 @@ def test_select_respects_the_cap():
     jobs = [_FakeJob(f"Data Analyst {i}", link=f"https://x.com/{i}")
             for i in range(50)]
     assert len(scraper._select(jobs, "data analyst", cap=20)) == 20
+
+
+def test_select_never_deletes_a_listing_just_because_its_title_is_generic():
+    """The reported "no jobs available" bug.
+
+    _select used to append non-matching titles ONLY while fewer than 8 titles
+    matched. Boards routinely return 16-75 rows, so the moment 8+ titles carried
+    a query word, every remaining listing was discarded outright. A hunt for
+    "python developer" therefore returned nothing while the board was full of
+    "Software Engineer" roles that mention python in the description.
+
+    A title is weak evidence: it may re-order the deck, never remove a row.
+    """
+    matches = [_FakeJob("Python Developer", link=f"https://x.com/m{i}")
+               for i in range(8)]          # exactly the old threshold
+    others = [_FakeJob("Software Engineer", link=f"https://x.com/o{i}")
+              for i in range(20)]
+    out = scraper._select(matches + others, "python developer", cap=100)
+    titles = [j.title for j in out]
+    assert len(out) == 28, "listings were deleted by the old >=8 gate"
+    assert titles.count("Software Engineer") == 20
+    # Ordering is still the point of the function: matches lead.
+    assert titles[:8] == ["Python Developer"] * 8
+
+
+def test_select_scores_the_company_name_too():
+    """"Software Engineer at Python Power" is a real hit for "python"."""
+    jobs = [
+        _FakeJob("Recruiter", company="Zeta", link="https://x.com/a"),
+        _FakeJob("Software Engineer", company="Python Power", link="https://x.com/b"),
+    ]
+    out = scraper._select(jobs, "python", cap=2)
+    assert out[0].title == "Software Engineer"
+
+
+def test_wwr_ranking_keeps_titles_without_a_query_word():
+    """WeWorkRemotely dropped every non-matching title with no escape hatch.
+
+    Its Scrapling path returns whatever it ranked, so an all-zero result also
+    skipped the legacy fallback and the board reported "0 (nothing matched this
+    query)" while serving a full page of remote roles.
+    """
+    rows = [_FakeJob("Python Developer", "A", link=f"https://x.com/w{i}")
+            for i in range(5)] + \
+           [_FakeJob("Software Engineer", "B", link=f"https://x.com/s{i}")
+            for i in range(3)]
+    out = scraper._scrapling_rank_wwr(rows, "python developer")
+    assert sum(1 for j in out if j.title == "Software Engineer") == 3
+    assert out[0].title == "Python Developer"
 
 
 def test_select_with_empty_query_returns_the_head():

@@ -798,6 +798,37 @@ def requested_board(state) -> str:
     return detect_board(_last_human_text(state)) or ""
 
 
+# "search the gmail alerts" / "just email me the matches" / "check my inbox".
+# Deliberately narrow: a bare "remote jobs" must not be read as a request for
+# Gmail, and "job alert" has to win over the word "job" alone.
+GMAIL_SOURCE = re.compile(
+    r"\b(gmail|gmial|"
+    r"e-?mail alerts?|job alerts?|my inbox|inbox jobs?|alerts? from|"
+    r"e-?mail me|send me (?:the )?(?:e-?mails?|alerts?|links?|matches?)|"
+    r"check (?:my )?(?:mail|inbox)|(?:from|in) my (?:mail|inbox|e-?mails?))\b",
+    re.IGNORECASE,
+)
+
+
+def requested_source(state) -> str:
+    """Which source this run should search: "gmail", "boards" or "" for either.
+
+    One source per run, chosen by the user rather than fanned out. The previous
+    behaviour fired the board scraper AND both Gmail alert senders on every
+    hunt, so the user saw three searches they never asked for and had no way to
+    say "just the boards". Worse, the Gmail results were computed even when the
+    boards answered, then thrown away by the prep node - paid for and never
+    shown.
+
+    Returns "" when the message names neither source, which the caller treats as
+    "boards": a job hunt is a board search unless Gmail is explicitly requested.
+    """
+    text = _last_human_text(state)
+    if GMAIL_SOURCE.search(text or ""):
+        return "gmail"
+    return "boards"
+
+
 async def create_agent(cfg: AgentConfig | None = None,
                        runtime: MCPRuntime | None = None) -> "AgentBundle":
     """Compile the LangGraph agent for `cfg`.
@@ -818,33 +849,42 @@ async def create_agent(cfg: AgentConfig | None = None,
 
     def _collect_message(state: AgentState) -> AIMessage:
         """Deterministic first step of a hunt: emit ONE AIMessage whose
-        parallel tool_calls hit the board scraper AND every Gmail alert sender
-        simultaneously. Zero LLM inference, so results arrive as fast as the
-        slowest network call instead of an LLM deciding + a sequential fallback.
-        If the user named a specific board ("only linkedin"), that board is
-        passed to the scraper so the deck comes from it alone, and the Gmail
-        alerts are not queried at all - they are not that board's listings."""
+        ONE tool call, for ONE source. Zero LLM inference, so results arrive as
+        fast as the single network call instead of an LLM deciding first.
+
+        This used to emit the board scraper AND both Gmail alert senders as
+        parallel tool_calls on every hunt. That produced the "two job search
+        emails" the user saw, searched sources nobody asked for, and computed
+        the Gmail results even when the boards answered - the prep node then
+        discarded them, so the slowest of the three calls set the wall-clock for
+        output that was thrown away. One source per run, chosen by
+        requested_source(), and if the user named a board ("only linkedin") that
+        board is passed through so the deck comes from it alone."""
         calls = []
+        source = requested_source(state)
+        if source == "gmail":
+            try:
+                gmail = _find_tool(tools, "search_job_emails")
+                # ONE sender per run. FALLBACK_SENDERS holds two, and querying
+                # both in parallel is exactly what produced the "two job search
+                # emails" the user reported. Ask again to check the other one.
+                calls.append({
+                    "id": "g0", "type": "tool_call", "name": gmail.name,
+                    "args": {"sender": FALLBACK_SENDERS[0],
+                             "days_back": cfg.days_back,
+                             "max_results": cfg.max_results},
+                })
+            except RuntimeError:
+                pass  # gmail server missing
+            return AIMessage(content="", tool_calls=calls)
         try:
             board = _find_tool(tools, "search_job_boards")
-            args = board_tool_args(cfg, _last_human_text(state))
             calls.append({
-                "id": "c0", "type": "tool_call", "name": board.name,
-                "args": args,
+                "id": "b0", "type": "tool_call", "name": board.name,
+                "args": board_tool_args(cfg, _last_human_text(state)),
             })
         except RuntimeError:
             pass  # scraper server missing — boards search will be skipped
-        if not requested_board(state):
-            try:
-                gmail = _find_tool(tools, "search_job_emails")
-                for i, sender in enumerate(FALLBACK_SENDERS):
-                    calls.append({
-                        "id": f"c{i + 1}", "type": "tool_call", "name": gmail.name,
-                        "args": {"sender": sender, "days_back": cfg.days_back,
-                                 "max_results": cfg.max_results},
-                    })
-            except RuntimeError:
-                pass  # gmail server missing — fallback will be skipped
         return AIMessage(content="", tool_calls=calls)
 
     def agent_node(state: AgentState) -> dict:

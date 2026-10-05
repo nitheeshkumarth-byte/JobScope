@@ -109,11 +109,23 @@ INDIA_SCOPED_REMOTE = re.compile(
 
 def detect_board(text: str) -> str | None:
     """First board name mentioned in free-form user text, canonicalized to a
-    key of BOARD_ALIASES (None when no board was explicitly requested)."""
+    key of BOARD_ALIASES (None when no board was explicitly requested).
+
+    "First" means first by POSITION IN THE TEXT, not first in BOARD_ALIASES.
+    Iterating the alias table made the answer depend on dict order, so
+    "naukri and linkedin" resolved to LinkedIn just because that key is
+    declared above Naukri - the opposite of what the user typed. Collect every
+    match with its offset and return the earliest one. Longest-alternation
+    breaks ties within a single spot ("we work remotely" must not be read as a
+    bare "wework").
+    """
+    hits: list[tuple[int, int, str]] = []
     for canonical, pattern in BOARD_ALIASES.items():
-        if re.search(pattern, text or "", re.IGNORECASE):
-            return canonical
-    return None
+        for m in re.finditer(pattern, text or "", re.IGNORECASE):
+            hits.append((m.start(), -(m.end() - m.start()), canonical))
+    if not hits:
+        return None
+    return min(hits)[2]
 
 
 def canonical_board(name: str, known: tuple | list | None = None) -> str | None:
@@ -263,12 +275,20 @@ def listing_work_modes(location: str) -> set[str]:
     loc = (location or "").strip()
     if not loc:
         return set()
+    # A hybrid posting is tagged 'hybrid' only — not 'remote' and not 'onsite' —
+    # so each chip stays meaningful instead of everything matching everything.
+    #
+    # 'wfh' and 'remote' are one family, not two. "Work From Home" IS working
+    # remotely; separating them meant matches_work_mode() computed an empty
+    # intersection and silently deleted every WFH listing from a remote search.
+    # DEFAULT_WORK_MODES is ["remote"], so that was the DEFAULT configuration,
+    # and boards label the same role either way depending on the posting.
     if WORK_FROM_HOME.search(loc):
-        return {"wfh"}
+        return {"wfh", "remote"}
     if HYBRID_TOKENS.search(loc):
         return {"hybrid"}
     if REMOTE_TOKENS.search(loc):
-        return {"remote"}
+        return {"remote", "wfh"}
     return set()
 
 

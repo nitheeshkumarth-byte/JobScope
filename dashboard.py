@@ -55,6 +55,7 @@ from agent import (AgentConfig, JOBS_MARKER, _text_content, create_agent,
 import auth
 import cv_ocr
 import filters
+import job_desc
 import mailer
 import resume_data
 import resume_generator
@@ -93,22 +94,239 @@ SKILL_SYS_PROMPT = (
 # instead of guessing a role), and city/location inference from the CV.
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# Role suggestions: rank the whole catalog against the candidate's own words,
+# then pick a few DISTINCT ones.
+# --------------------------------------------------------------------------
+
+# What each role is actually asking for. This covers every entry in
+# JOB_ROLE_OPTIONS so a frontend or firmware CV gets suggestions too - the old
+# eight-entry rubric was data-only, so a Java or C++ applicant was told nothing
+# about themselves. Keys are lowercase phrases; matching is done on stemmed
+# tokens by rag_store.tokenize so "PostgreSQL" and "postgres" both hit.
+#
+# The list deliberately overlaps between neighbouring roles (Data Analyst and BI
+# Analyst both want SQL and Power BI). That overlap is information: it is what
+# lets _pick_distinct tell them apart. Removing the overlap to make the numbers
+# look cleaner would destroy the signal that separates them.
 ROLE_RUBRIC = [
+    # --- data & analytics ---
     ("Data Analyst", ["sql", "python", "pandas", "excel", "power bi", "tableau",
-                      "statistics", "looker", "google sheets", "numpy", "matplotlib"]),
+                      "statistics", "looker", "numpy", "matplotlib", "reporting",
+                      "dashboard", "kpi"]),
     ("Business Intelligence Analyst", ["power bi", "tableau", "sql", "excel", "dax",
-                                       "data visualization", "looker"]),
+                                      "data visualization", "looker", "semantic model",
+                                      "star schema", "reporting"]),
     ("Data Engineer", ["python", "sql", "etl", "spark", "airflow", "aws",
-                       "databricks", "kafka", "snowflake", "docker"]),
-    ("Business Analyst", ["excel", "sql", "requirements", "stakeholder",
-                          "agile", "jira", "powerpoint"]),
-    ("SQL / Database Developer", ["sql", "mysql", "postgresql", "tsql", "mongodb", "database"]),
+                       "databricks", "kafka", "snowflake", "docker", "data pipeline",
+                       "data warehouse", "dbt", "scala"]),
+    ("Analytics Engineer", ["dbt", "sql", "airflow", "snowflake", "bigquery",
+                            "data modeling", "analytics", "version control",
+                            "python", "testing"]),
     ("Data Scientist", ["python", "statistics", "machine learning", "scikit-learn",
-                        "pytorch", "tensorflow", "nlp", "pandas"]),
-    ("ML Engineer", ["python", "scikit-learn", "pytorch", "tensorflow", "ml",
-                     "docker", "aws"]),
-    ("Python Developer", ["python", "django", "flask", "fastapi", "sql", "rest", "docker"]),
+                        "pytorch", "tensorflow", "nlp", "pandas", "regression",
+                        "hypothesis testing", "a/b test", "model evaluation"]),
+    ("Machine Learning Engineer", ["python", "scikit-learn", "pytorch", "tensorflow",
+                                   "mlops", "docker", "aws", "model deployment",
+                                   "feature engineering", "api"]),
+    ("AI Engineer", ["python", "llm", "rag", "prompt", "openai", "vector database",
+                     "embeddings", "machine learning", "fastapi", "agent"]),
+    ("MLOps Engineer", ["mlops", "kubernetes", "docker", "ci/cd", "model deployment",
+                        "monitoring", "aws", "gcp", "azure", "terraform", "registry"]),
+    ("Business Analyst", ["excel", "sql", "requirements", "stakeholder", "agile",
+                          "jira", "powerpoint", "process mapping", "kpi", "reporting"]),
+    # --- backend / full stack ---
+    ("Backend Developer", ["python", "java", "node", "sql", "api", "rest", "django",
+                           "flask", "fastapi", "spring", "microservices", "postgres",
+                           "mongodb", "redis"]),
+    ("Python Developer", ["python", "django", "flask", "fastapi", "sql", "rest",
+                          "docker", "pytest", "pandas", "asyncio"]),
+    ("Full Stack Developer", ["javascript", "react", "node", "python", "sql", "api",
+                              "rest", "css", "html", "docker", "typescript", "aws"]),
+    ("Software Engineer", ["programming", "software development", "testing", "debugging",
+                           "git", "code review", "design pattern", "api", "sql",
+                           "problem solving", "agile"]),
+    ("Web Developer", ["html", "css", "javascript", "react", "jquery", "php",
+                       "wordpress", "responsive", "front end"]),
+    ("Frontend Developer", ["javascript", "react", "css", "html", "redux",
+                            "typescript", "next.js", "vue", "webpack", "accessibility",
+                            "responsive", "component"]),
+    ("Desktop Application Developer", ["c#", "wpf", "winforms", ".net", "desktop",
+                                       "electron", "qt", "windows"]),
+    # --- mobile / games / embedded ---
+    ("Mobile App Developer", ["android", "ios", "flutter", "react native", "kotlin",
+                              "swift", "dart", "mobile", "app store"]),
+    ("Android Developer", ["android", "kotlin", "java", "jetpack", "gradle",
+                           "mobile", "activity", "sqlite"]),
+    ("iOS Developer", ["ios", "swift", "swiftui", "xcode", "objective-c", "mobile",
+                       "cocoapods", "uikit"]),
+    ("Game Developer", ["unity", "unreal", "c#", "c++", "gameplay", "3d", "physics",
+                        "gamedev", "shader"]),
+    ("Embedded Software Engineer", ["c", "c++", "embedded", "rtos", "microcontroller",
+                                    "mcu", "firmware", "drivers", "interrupt",
+                                    "i2c", "spi", "arm"]),
+    ("Embedded Systems Engineer", ["embedded", "c", "c++", "rtos", "microcontroller",
+                                   "firmware", "hardware", "pcb", "drivers", "arm"]),
+    ("Firmware Engineer", ["firmware", "c", "c++", "rtos", "microcontroller", "mcu",
+                           "drivers", "embedded", "debugging", "jtag"]),
+    ("Hardware Engineer", ["pcb", "schematic", "circuit", "verilog", "vlsi",
+                           "embedded", "hardware", "analog", "layout", "fpga"]),
+    ("Design Engineer", ["mechanical", "cad", "solidworks", "autocad", "catia",
+                         "ansys", "simulation", "prototype", "manufacturing"]),
+    # --- devops / cloud / platform ---
+    ("DevOps Engineer", ["ci/cd", "docker", "kubernetes", "terraform", "ansible",
+                         "aws", "jenkins", "gitlab", "github actions", "monitoring",
+                         "linux", "shell"]),
+    ("Cloud Engineer", ["aws", "azure", "gcp", "cloud", "vpc", "iam", "lambda",
+                        "s3", "terraform", "cloudformation", "networking"]),
+    ("Platform Engineer", ["kubernetes", "terraform", "aws", "internal developer platform",
+                           "ci/cd", "developer experience", "gitops", "linux",
+                           "automation"]),
+    ("Kubernetes Administrator", ["kubernetes", "kubectl", "helm", "etcd", "cluster",
+                                  "container", "linux", "yaml", "rbac"]),
+    ("Site Reliability Engineer", ["sre", "reliability", "monitoring", "prometheus",
+                                   "grafana", "on-call", "incident", "uptime",
+                                   "latency", "slo"]),
+    ("Infrastructure Engineer", ["infrastructure", "networking", "linux", "terraform",
+                                 "ansible", "vpn", "firewall", "vmware", "systemd"]),
+    ("Cloud Support Engineer", ["cloud", "aws", "azure", "support", "troubleshooting",
+                                "linux", "incident", "customer", "monitoring"]),
+    # --- QA ---
+    ("QA Engineer", ["test", "qa", "manual testing", "regression", "test plan",
+                     "defect", "jira", "automation", "test case"]),
+    ("Test Automation Engineer", ["selenium", "cypress", "playwright", "automation",
+                                  "test framework", "pytest", "ci/cd", "api testing",
+                                  "regression"]),
+    ("SDET", ["selenium", "cypress", "java", "programming", "api testing", "automation",
+              "framework", "unit testing", "integration"]),
+    ("Performance Tester", ["performance testing", "load testing", "jmeter",
+                            "gatling", "latency", "throughput", "bottleneck", "jmeter"]),
+    # --- security / network / sysadmin ---
+    ("Security Engineer", ["security", "vulnerability", "penetration", "threat",
+                           "firewall", "encryption", "iam", "risk", "incident",
+                           "hardening"]),
+    ("Cyber Security Analyst", ["security", "monitoring", "siem", "threat detection",
+                                "incident response", "vulnerability", "log analysis",
+                                "compliance"]),
+    ("Application Security Engineer", ["application security", "owasp", "sast",
+                                       "dast", "code review", "vulnerability",
+                                       "secure coding", "devsecops"]),
+    ("Network Engineer", ["network", "routing", "switching", "tcp/ip", "firewall",
+                          "cisco", "bgp", "vlan", "subnet", "ccna"]),
+    ("Systems Administrator", ["linux", "windows server", "active directory", "systemd",
+                               "bash", "monitoring", "backup", "vmware", "administration"]),
+    ("Database Administrator", ["sql", "mysql", "postgresql", "oracle", "backup",
+                                "replication", "indexing", "query optimization",
+                                "database", "mongodb"]),
+    # --- product / project ---
+    ("Product Manager", ["product", "roadmap", "stakeholder", "requirements", "agile",
+                         "user story", "kpi", "go-to-market", "backlog", "prioritization"]),
+    ("Project Manager", ["project", "pmp", "scrum", "timeline", "budget", "stakeholder",
+                         "risk", "milestone", "deliverable", "jira"]),
+    ("Program Manager", ["program", "portfolio", "strategy", "cross-functional",
+                         "stakeholder", "roadmap", "governance", "delivery"]),
+    ("Solution Architect", ["architecture", "solution", "integration", "api", "cloud",
+                            "enterprise", "design", "scalability", "technical"]),
+    ("Technical Architect", ["architecture", "design pattern", "scalability",
+                             "system design", "java", "cloud", "microservices",
+                             "technical debt"]),
+    ("Solutions Engineer", ["pre-sales", "solutions", "customer", "demos", "technical",
+                            "consulting", "proposal", "integration"]),
+    ("Pre-Sales Engineer", ["pre-sales", "demos", "proposal", "customer", "rfp",
+                            "technical", "consulting", "presales"]),
+    ("Scrum Master", ["scrum", "agile", "sprint", "facilitation", "jira", "backlog",
+                      "ceremonies", "stakeholder"]),
+    ("Product Owner", ["product", "backlog", "user story", "stakeholder", "agile",
+                       "prioritization", "roadmap", "acceptance criteria"]),
+    # --- enterprise apps ---
+    ("Salesforce Developer", ["salesforce", "apex", "visualforce", "soql", "lightning",
+                              "salesforce crm", "triggers", "workflow rules"]),
+    ("Salesforce Administrator", ["salesforce", "salesforce crm", "configuration",
+                                  "workflow rules", "permissions", "reports",
+                                  "data management"]),
+    ("SAP Consultant", ["sap", "sap mm", "sap sd", "sap fi", "sap basis", "erp",
+                        "configuration", "sap hana"]),
+    ("SAP ABAP Developer", ["abap", "sap", "sap mm", "sap sd", "rfc", "bapi", "sap hana",
+                            "debugging"]),
+    ("ERP Consultant", ["erp", "sap", "oracle", "netsuite", "dynamics", "implementation",
+                        "business process", "configuration"]),
+    ("CRM Consultant", ["crm", "salesforce", "hubspot", "dynamics", "pipelines",
+                        "implementation", "workflow", "customer data"]),
+    ("ServiceNow Developer", ["servicenow", "glide script", "workflow", "catalog",
+                               "cmdb", "integration", "javascript", "itil"]),
+    # --- writing / design / success ---
+    ("Technical Writer", ["documentation", "technical writing", "api documentation",
+                          "user guide", "markdown", "content", "editing", "developer docs"]),
+    ("Content Writer", ["content", "writing", "seo", "blog", "editorial", "copywriting",
+                        "research", "publishing"]),
+    ("UI/UX Designer", ["figma", "ux", "ui", "wireframe", "prototype", "user research",
+                        "interaction design", "sketch", "design system"]),
+    ("Product Designer", ["figma", "prototype", "user research", "design system",
+                          "interaction", "usability", "user flow", "sketch"]),
+    ("Customer Success Manager", ["customer success", "onboarding", "retention",
+                                  "renewal", "account management", "customer",
+                                  "satisfaction", "churn"]),
 ]
+
+# Roles that are the same job wearing different titles. Ranking alone returns
+# both ("Data Analyst" and "Business Intelligence Analyst" want almost the same
+# things), which is what made the old suggestion list feel like the same answer
+# three times. When one of a pair scores, the other is held back and only used
+# if nothing distinct is left to show.
+ROLE_TWINS = [
+    ("Data Analyst", "Business Intelligence Analyst"),
+    ("Data Analyst", "Analytics Engineer"),
+    ("Data Engineer", "Analytics Engineer"),
+    ("Data Engineer", "Data Scientist"),
+    ("Data Scientist", "Machine Learning Engineer"),
+    ("Machine Learning Engineer", "AI Engineer"),
+    ("Machine Learning Engineer", "MLOps Engineer"),
+    ("Backend Developer", "Python Developer"),
+    ("Backend Developer", "Software Engineer"),
+    ("Full Stack Developer", "Frontend Developer"),
+    ("Full Stack Developer", "Web Developer"),
+    ("Full Stack Developer", "Backend Developer"),
+    ("Software Engineer", "Web Developer"),
+    ("Mobile App Developer", "Android Developer"),
+    ("Mobile App Developer", "iOS Developer"),
+    ("Embedded Software Engineer", "Embedded Systems Engineer"),
+    ("Embedded Software Engineer", "Firmware Engineer"),
+    ("Firmware Engineer", "Hardware Engineer"),
+    ("DevOps Engineer", "Platform Engineer"),
+    ("DevOps Engineer", "Site Reliability Engineer"),
+    ("DevOps Engineer", "Cloud Engineer"),
+    ("Cloud Engineer", "Infrastructure Engineer"),
+    ("Kubernetes Administrator", "Site Reliability Engineer"),
+    ("QA Engineer", "Test Automation Engineer"),
+    ("QA Engineer", "SDET"),
+    ("Test Automation Engineer", "SDET"),
+    ("Security Engineer", "Cyber Security Analyst"),
+    ("Security Engineer", "Application Security Engineer"),
+    ("Product Manager", "Product Owner"),
+    ("Project Manager", "Program Manager"),
+    ("Scrum Master", "Product Owner"),
+    ("Solution Architect", "Technical Architect"),
+    ("Solution Architect", "Solutions Engineer"),
+    ("Solutions Engineer", "Pre-Sales Engineer"),
+    ("Salesforce Developer", "Salesforce Administrator"),
+    ("ERP Consultant", "SAP Consultant"),
+    ("ERP Consultant", "CRM Consultant"),
+    ("UI/UX Designer", "Product Designer"),
+    ("Technical Writer", "Content Writer"),
+    ("Systems Administrator", "Database Administrator"),
+    ("Systems Administrator", "Network Engineer"),
+    ("Cloud Engineer", "Cloud Support Engineer"),
+    ("Data Science Intern", "Machine Learning Engineer"),
+    ("Software Engineering Intern", "Software Developer Intern"),
+    ("Full Stack Developer Intern", "Frontend Developer Intern"),
+    ("QA Engineer Intern", "Test Automation Engineer"),
+]
+
+# Title words that mark a role as the entry-level version of its senior twin,
+# so a junior CV does not get told to apply for the senior posting.
+_JUNIOR_WORDS = frozenset("intern junior associate trainee graduate fresher entry".split())
+
+MAX_ROLE_SUGGESTIONS = 4
 
 INDIAN_CITIES = ["hyderabad", "bangalore", "bengaluru", "mumbai", "pune", "delhi",
                  "noida", "gurugram", "gurgaon", "chennai", "kolkata", "ahmedabad",
@@ -122,6 +340,7 @@ REMOTE_HINTS = ["remote", "work from home", "wfh", "fully remote", "home office"
 # sensibly; ordering inside a group is roughly entry-level first.
 JOB_ROLE_OPTIONS = [
     "Software Developer", "Frontend Developer", "Backend Developer",
+    "Python Developer",
     "Full Stack Developer", "Web Developer", "Mobile App Developer",
     "Android Developer", "iOS Developer", "Software Engineer",
     "Game Developer", "Embedded Software Engineer", "Desktop Application Developer",
@@ -151,18 +370,241 @@ JOB_ROLE_OPTIONS = [
 ]
 
 
-def suggest_roles(skills: list[str]) -> list[dict]:
-    low = {s.lower() for s in skills}
-    best = []
-    for role, needs in ROLE_RUBRIC:
-        matched = [n for n in needs if n in low]
-        if not matched:
+def _role_needs(needs: list[str]) -> set[str]:
+    """The rubric's phrases as a token set, via the same tokenizer BM25 uses.
+
+    Comparing stemmed tokens instead of raw substrings is what makes "PostgreSQL"
+    match "postgresql" and "React" match "react" without a hand-written variant
+    list per skill, and it is why the same evidence can be fed to both the
+    ranking here and rag_store.rank without the two disagreeing about what a
+    word means.
+    """
+    return set(rag_store.tokenize(" ".join(needs)))
+
+
+# Tokens that on their own prove very little. "java" says backend OR android OR
+# Hadoop; "aws" says any cloud role; "docker" says every DevOps-adjacent job.
+# Counting them toward coverage is how a Java backend CV was shown Android
+# Developer and Data Engineer. They are still allowed to contribute, but only
+# once the role has already been earned by a specific term - see WEAK_TOKENS.
+WEAK_TOKENS = frozenset("""
+java aws azure gcp linux docker api sql cloud agile jira testing test
+automation design architecture integration api agile stakeholder reporting
+documentation content customer mobile development developer engineer analyst
+cpp csharp javascript
+""".split())
+
+# Substrings that mean a different thing to the tokenizer than to a human.
+# rag_store folds "c++" -> "cpp" and then "c" is a substring of "cpp", so a plain
+# set intersection lets "C, C++, RTOS, STM32" satisfy a Game Developer role on
+# the strength of the letter C. These are the tokens where a match only counts
+# when it is the WHOLE matched skill, not a fragment of a longer word.
+_NO_SUBSTRING = frozenset({"c", "r", "go", "cplusplus", "cs", "dotnet"})
+
+# Built once at import. Sixty-odd roles x ~10 phrases is nothing, and doing it per
+# request on a multi-keyword CV is pure repetition.
+_ROLE_TOKENS: dict[str, set[str]] = {role: _role_needs(needs)
+                                    for role, needs in ROLE_RUBRIC}
+# Per-role count of specific (non-weak) terms, used as the denominator so a role
+# defined mostly by generic words cannot out-score a precisely-matched one.
+_ROLE_SPECIFIC: dict[str, set[str]] = {
+    role: toks - WEAK_TOKENS for role, toks in _ROLE_TOKENS.items()}
+_TWIN_OF: dict[str, set[str]] = {}
+for _a, _b in ROLE_TWINS:
+    _TWIN_OF.setdefault(_a, set()).add(_b)
+    _TWIN_OF.setdefault(_b, set()).add(_a)
+
+
+def _matches(skill_toks: set[str], need_toks: set[str]) -> set[str]:
+    """Tokens matched in a way that cannot be a substring coincidence.
+
+    Weak tokens are excluded outright here and added back separately by
+    _specific_hits, so a role never scores on "java" alone; the short tokens in
+    _NO_SUBSTRING are only accepted when the skill list literally contains that
+    word, which "C++" folded to "cpp" does not.
+    """
+    hits = skill_toks & need_toks
+    out = set()
+    for t in hits:
+        if t in _NO_SUBSTRING and t not in skill_toks:
             continue
-        # coverage of the role's needs + weight of matched skill count
-        score = round(len(matched) / max(len(needs), 1), 2)
-        best.append({"role": role, "score": score, "matched": matched})
-    best.sort(key=lambda r: (r["score"], len(r["matched"])), reverse=True)
-    return best[:4]
+        if t in WEAK_TOKENS:
+            continue
+        out.add(t)
+    return out
+
+
+def _specific_hits(skill_toks: set[str], need_toks: set[str]) -> set[str]:
+    """Weak-token matches, usable only as a small bonus on an earned role."""
+    return {t for t in (skill_toks & need_toks)
+            if t in WEAK_TOKENS and t not in _NO_SUBSTRING}
+
+
+def _seniority_of(role: str, cv_text: str) -> str:
+    """'junior', 'senior' or '' for a role, judged against the candidate's own CV.
+
+    A rubric cannot know whether "Data Analyst" means an entry-level opening or a
+    five-year one, so the role NAME is only half the answer - the CV decides the
+    other half. Without this, a graduate gets "Senior Data Engineer" suggested and
+    a senior engineer gets "Data Science Intern".
+
+    Returns '' when the CV says nothing about years of experience. Absence of
+    evidence is not evidence of juniority: a CV that simply never says "5 years"
+    (or arrives without its text, which happens when skills came from the keyword
+    extractor alone) must not be read as a graduate, or every senior posting gets
+    filtered out of an experienced candidate's suggestions.
+    """
+    text = cv_text or ""
+    role_words = set(role.lower().split())
+    if _JUNIOR_WORDS & role_words:
+        return "junior"          # the ROLE is entry-level, whatever the CV says
+
+    stated = False
+    years = 0
+    for m in re.finditer(r"(\d{1,2})\s*\+?\s*(?:years|yrs|year)", text, re.I):
+        try:
+            years = max(years, int(m.group(1)))
+            stated = True
+        except ValueError:
+            pass
+    if stated:
+        return "senior" if years >= 5 else "junior"
+
+    low_words = set(rag_store.tokenize(text))
+    if {"fresher", "internship", "student", "graduate"} & low_words:
+        return "junior"
+    # A named 2024/2025 degree date is the other reliable "early career" signal,
+    # because a final-year student's CV rarely bothers to say "0 years".
+    if re.search(r"\b20(2[4-9]|3[0-9])\b", text):
+        return "junior"
+    return ""
+
+
+def suggest_roles(skills: list[str], resume_text: str = "",
+                  doc_hits: list | None = None,
+                  limit: int = MAX_ROLE_SUGGESTIONS) -> list[dict]:
+    """Suggest a few DISTINCT roles the candidate could actually apply to.
+
+    Three signals, in this order of trust:
+      1. the rubric's needs, matched against the candidate's own skill keywords;
+      2. BM25 over the candidate's uploaded documents (`doc_hits`, the same
+         retrieval the resume builder uses), so a role can be justified from text
+         they actually wrote - a project write-up naming Kubernetes is evidence
+         even when the keyword extractor never emitted the word;
+      3. the CV text itself, which catches seniority and phrasing the keyword
+         extractor missed (see _seniority_of).
+
+    Then _pick_distinct throws away twins and near-duplicates, because returning
+    the top four by score reliably returned the same data job four times.
+
+    Returns [] when nothing matches, which is the honest answer: a CV with no
+    recognisable skills should not be handed four guesses.
+    """
+    tokens = set(rag_store.tokenize(" ".join(skills or [])))
+    cv_tokens = set(rag_store.tokenize(resume_text or ""))
+    # Evidence the candidate's own uploaded documents support. This is what makes
+    # the library load-bearing here instead of decorative: a project write-up
+    # that says "ran the cluster on Kubernetes" contributes the token even when
+    # the CV never named the skill and the extractor never emitted it.
+    doc_tokens: set[str] = set()
+    doc_refs: list[str] = []
+    for hit in (doc_hits or []):
+        chunk = getattr(hit, "text", None) or (hit[0].text if isinstance(hit, tuple) else "")
+        if not chunk:
+            continue
+        doc_tokens |= set(rag_store.tokenize(chunk))
+        ref = getattr(chunk, "source_ref", None)
+        if ref:
+            doc_refs.append(ref)
+    # The CV's own words count for less than the extracted skills: prose contains
+    # far more noise (company names, university names, "teamwork"), so weighting
+    # it lower stops "Manager" in a football-club line inventing a PM role.
+    evidence = tokens | {t for t in cv_tokens if t in tokens}
+
+    ranked: list[dict] = []
+    for role, needs in ROLE_RUBRIC:
+        need_toks = _ROLE_TOKENS[role]
+        specific = _ROLE_SPECIFIC.get(role) or need_toks
+        if not specific:
+            continue
+        hit_skills = _matches(tokens, specific) | _matches(tokens, need_toks - specific)
+        hit_docs = _matches(doc_tokens, specific) | _matches(doc_tokens, need_toks - specific)
+        hit_cv = _matches(evidence, specific) | _matches(evidence, need_toks - specific)
+        # _matches already discards weak tokens, so anything left here is a term
+        # specific to this role. One such term is the minimum: without it "java"
+        # alone produces Android Developer and "aws" alone produces Data
+        # Engineer, because weak tokens never reach this point at all.
+        strong = hit_skills | hit_docs | hit_cv
+        if not strong:
+            continue
+        # Coverage of the role's SPECIFIC needs, which is the part that
+        # discriminates. A raw fraction of all needs saturates: three DevOps
+        # roles all hit 1.0 and their order became arbitrary. The bonuses are
+        # additive fractions that can push past 1.0 rather than clipping, so
+        # ordering is always meaningful.
+        coverage = len(hit_skills) / max(len(specific), 1)
+        cv_bonus = 0.08 * len(hit_cv)
+        doc_bonus = 0.06 * len(hit_docs)
+        score = round(coverage + cv_bonus + doc_bonus, 3)
+        ranked.append({"role": role, "score": score,
+                       "matched": sorted(hit_skills)[:8],
+                       "evidence": sorted(set(hit_cv) | set(hit_docs))[:8],
+                       "from_docs": bool(hit_docs),
+                       "level": _seniority_of(role, resume_text)})
+
+    if not ranked:
+        return []
+    # Sort by score, then by how many distinct skills backed it, then by name so
+    # the order is fully deterministic. The old sort left ties to dict order,
+    # which is why the list reshuffled between identical uploads.
+    ranked.sort(key=lambda r: (-r["score"], -len(r["matched"]), r["role"]))
+    return _pick_distinct(ranked, limit)
+
+
+def _pick_distinct(ranked: list[dict], limit: int) -> list[dict]:
+    """Take the top few roles, refusing twins and near-duplicates.
+
+    Walks the ranking and skips a role whose twin has already been taken, then
+    relaxes that rule only if the distinct pool runs dry - being short of ideas
+    is worse than offering a near-duplicate. Also drops a senior role for a
+    candidate the CV marks as junior, and vice versa, so the suggestions do not
+    point at postings they are not eligible for.
+    """
+    def level_ok(r: dict, seen_levels: list[str]) -> bool:
+        lvl = r.get("level")
+        # Nothing claimed either way about the candidate: take the best match.
+        if not lvl or not seen_levels:
+            return True
+        return lvl not in seen_levels
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    seen_levels: list[str] = []
+    for r in ranked:
+        if len(out) >= limit:
+            break
+        twins = _TWIN_OF.get(r["role"], set())
+        if twins & seen:
+            continue
+        if not level_ok(r, seen_levels):
+            continue
+        out.append(r)
+        seen.add(r["role"])
+        if r.get("level"):
+            seen_levels.append(r["level"])
+
+    if len(out) < limit:
+        # Relax the twin rule to top up, but never below the distinct count we
+        # already have: the extra rows are clearly marked as alternates.
+        for r in ranked:
+            if len(out) >= limit:
+                break
+            if r["role"] in seen:
+                continue
+            r = dict(r, alternate=True)
+            out.append(r)
+            seen.add(r["role"])
+    return out
 
 
 def infer_location(resume_text: str) -> dict:
@@ -202,6 +644,32 @@ class ResumeGenRequest(BaseModel):
     # enough that an un-pasted JD silently degrades tailoring to matching on
     # the title alone. Pasted text wins; the link fetch is the fallback.
     jd_text: str = ""
+    job_desc: str = ""
+
+
+class IdentityRequest(BaseModel):
+    """Display name and avatar. Both optional - null leaves a field unchanged."""
+    nickname: str | None = None
+    avatar: str | None = None
+
+
+# Avatar gradient pairs, keyed by the ids in auth.AVATARS. Colours live here
+# rather than in the page so the swatch a user picks and the circle that renders
+# in the header are the same two stops, and so a new avatar is one line.
+_AVATARS = {
+    "aurora":  ("#4f46e5", "#7c3aed"),
+    "ember":   ("#f97316", "#ef4444"),
+    "forest":  ("#059669", "#34d399"),
+    "harbor":  ("#0ea5e9", "#6366f1"),
+    "iris":    ("#8b5cf6", "#ec4899"),
+    "sand":    ("#d97706", "#fbbf24"),
+    "slate":   ("#475569", "#94a3b8"),
+    "violet":  ("#6d28d9", "#a855f7"),
+    "coral":   ("#fb7185", "#f43f5e"),
+    "mint":    ("#14b8a6", "#5eead4"),
+    "dusk":    ("#7c3aed", "#2563eb"),
+    "cobalt":  ("#2563eb", "#06b6d4"),
+}
 
 
 class ConfigRequest(BaseModel):
@@ -1067,7 +1535,12 @@ def _check_password(password: str) -> str | None:
 @app.get("/api/auth/state")
 async def auth_state(request: Request):
     """What the sign-in screen needs: is anyone set up, is this browser signed
-    in, and can the server actually send mail."""
+    in, and can the server actually send mail.
+
+    Also the identity the header renders. On a cold load this is the only call
+    that knows who is signed in, so the nickname, avatar and remaining idle time
+    all ride along here rather than costing a second request on every page view.
+    """
     token = request.cookies.get(auth.SESSION_COOKIE) or ""
     user = auth.session_user(token)
     return {
@@ -1076,6 +1549,13 @@ async def auth_state(request: Request):
         "email": (user or {}).get("email", ""),
         "verified": bool(user and user.get("verified_at")),
         "smtp_configured": mailer.configured(),
+        "nickname": (user or {}).get("nickname") or "",
+        "display_name": auth.display_name(user) if user else "",
+        "avatar": (user or {}).get("avatar") or auth.DEFAULT_AVATAR,
+        "needs_nickname": bool(user and not (user.get("nickname") or "").strip()),
+        "seconds_left": auth.seconds_left(token) if user else 0,
+        "idle_minutes": auth.SESSION_IDLE_MINUTES,
+        "extend_minutes": auth.SESSION_EXTEND_MINUTES,
     }
 
 
@@ -1206,7 +1686,13 @@ async def login(req: LoginRequest, request: Request):
     auth.set_session_profile(token, "default")
     _bundle_cache().pop((user["id"], "default"), None)
     response = JSONResponse({"ok": True, "email": user["email"],
-                             "verified": bool(user.get("verified_at"))})
+                             "verified": bool(user.get("verified_at")),
+                             "display_name": auth.display_name(user),
+                             "avatar": user.get("avatar") or auth.DEFAULT_AVATAR,
+                             "needs_nickname": not (user.get("nickname") or "").strip(),
+                             "seconds_left": auth.SESSION_IDLE_SECONDS,
+                             "idle_minutes": auth.SESSION_IDLE_MINUTES,
+                             "extend_minutes": auth.SESSION_EXTEND_MINUTES})
     _set_session_cookie(response, token, expires, request)
     return response
 
@@ -1219,6 +1705,85 @@ async def logout(request: Request):
     response = JSONResponse({"ok": True})
     response.delete_cookie(auth.SESSION_COOKIE, path="/")
     return response
+
+
+@app.get("/api/auth/session")
+async def session_state(request: Request):
+    """Who is signed in, and how much idle time they have left.
+
+    Deliberately reads the row without going through build_ctx or session_user.
+    Both of those TOUCH last_seen, which is correct for a request that uses the
+    app and wrong for the countdown: this endpoint is polled every 30 seconds, so
+    enforcing the timeout through it would refresh the deadline on every tick and
+    the session would never expire - kept alive by the very widget meant to report
+    it going stale. Here the row is read, the clock is reported, and nothing is
+    refreshed; only /api/auth/extend and an ordinary app request move it.
+
+    Also reports whether the account has picked a nickname yet, so the UI can ask
+    for one on a first login instead of silently showing an email address.
+    """
+    token = request.cookies.get(auth.SESSION_COOKIE) or ""
+    left = auth.seconds_left(token)
+    user = auth.session_row(token) if left else None
+    if not user:
+        return {"ok": False, "signed_in": False, "seconds_left": 0,
+                "idle_minutes": auth.SESSION_IDLE_MINUTES,
+                "extend_minutes": auth.SESSION_EXTEND_MINUTES}
+    return {"ok": True, "signed_in": True, "seconds_left": left,
+            "idle_minutes": auth.SESSION_IDLE_MINUTES,
+            "extend_minutes": auth.SESSION_EXTEND_MINUTES,
+            "email": user.get("email", ""),
+            "nickname": (user.get("nickname") or "").strip(),
+            "display_name": auth.display_name(user),
+            "avatar": user.get("avatar") or auth.DEFAULT_AVATAR,
+            "needs_nickname": not (user.get("nickname") or "").strip()}
+
+
+@app.post("/api/auth/extend")
+async def extend_session(request: Request):
+    """Push the idle deadline out by five minutes. Returns the new countdown."""
+    token = request.cookies.get(auth.SESSION_COOKIE) or ""
+    left = await asyncio.to_thread(auth.extend_session, token)
+    if not left:
+        # Expired already: extending cannot revive it, and reporting success
+        # would leave the user staring at a dashboard that silently 401s.
+        return {"ok": False, "signed_in": False, "seconds_left": 0,
+                "error": "session expired"}
+    return {"ok": True, "signed_in": True, "seconds_left": left,
+            "idle_minutes": auth.SESSION_IDLE_MINUTES,
+            "extend_minutes": auth.SESSION_EXTEND_MINUTES}
+
+
+@app.post("/api/auth/identity")
+async def update_identity(req: IdentityRequest,
+                          ctx: Ctx = Depends(build_ctx)):
+    """Set the display nickname and/or the avatar.
+
+    Both fields are optional: the picker sends just the avatar, the rename form
+    just the nickname, and sending null for either leaves it alone. The address
+    is not changeable here - it is the login identity and the recovery path, so
+    changing a display name must not be able to redirect a password reset.
+    """
+    user = await asyncio.to_thread(
+        auth.set_identity, ctx.uid, req.nickname, req.avatar)
+    return {"ok": True, "nickname": (user.get("nickname") or "").strip(),
+            "display_name": auth.display_name(user),
+            "avatar": user.get("avatar") or auth.DEFAULT_AVATAR,
+            "email": user["email"],
+            "needs_nickname": not (user.get("nickname") or "").strip()}
+
+
+@app.get("/api/auth/avatars")
+async def list_avatars():
+    """The avatar ids the UI may offer, and their colours.
+
+    Served rather than hardcoded in the page so the picker and the validation in
+    auth.set_identity cannot drift apart: the client renders exactly the list the
+    server will accept.
+    """
+    return {"ok": True, "avatars": [{"id": a, "from": _AVATARS[a][0],
+                                     "to": _AVATARS[a][1]} for a in auth.AVATARS],
+            "default": auth.DEFAULT_AVATAR}
 
 
 @app.post("/api/auth/forgot")
@@ -1685,7 +2250,9 @@ async def upload_resume(file: UploadFile = File(...),
     # "<role> / entry-level, remote", which then became the search query and
     # the chip label, so the user could never pick that exact role from the
     # list without it being changed behind their back.
-    suggestions = suggest_roles(new_skills)
+    suggestions = suggest_roles(new_skills, resume_text=text,
+                               doc_hits=await asyncio.to_thread(
+                                   rag_store.retrieve, ctx.uid, text, k=8))
     inferred = infer_location(text)
     # Retired: the old build hard-set "remote, outside India" here, so simply
     # uploading a CV silently narrowed every later search. Nothing is set now —
@@ -1860,12 +2427,34 @@ async def generate_resume(req: ResumeGenRequest, ctx: Ctx = Depends(build_ctx)):
     job = {"title": req.title, "company": req.company, "location": req.location,
            "link": req.link, "source": req.source}
     try:
+        # Three sources for the posting text, best first. The description the
+        # search already collected comes before a fresh fetch, because the
+        # boards that hand it over cost nothing extra while re-fetching their
+        # page is the step that usually loses to a bot wall.
         pasted = (req.jd_text or "").strip()
+        carried = (req.job_desc or "").strip()
         if pasted:
             desc, jd_origin = pasted, "pasted"
+        elif carried:
+            desc, jd_origin = carried, "listing"
         else:
-            desc = await asyncio.to_thread(resume_generator.desc_snippet, req.link)
-            jd_origin = "link" if desc else "none"
+            # Two ways to get posting text we did not receive. The cache first,
+            # because a resume for a posting someone already opened is free. Only
+            # if there is nothing do we pay the synchronous HTTP scrape, and only
+            # if that fails do we queue a browser run for after the response.
+            #
+            # Nothing here waits on a browser. That is the whole point: the user
+            # gets a resume now, and /api/resume/desc reports the fuller text
+            # when it turns up so they can regenerate.
+            row = await asyncio.to_thread(job_desc.cached, req.link)
+            if row and job_desc.is_fresh(row) and row.get("text"):
+                desc, jd_origin = row["text"], "cache"
+            else:
+                desc = await asyncio.to_thread(resume_generator.desc_snippet,
+                                               req.link)
+                jd_origin = "link" if desc else "none"
+            if req.link:
+                await asyncio.to_thread(job_desc.ensure, req.link)
         cfg = ctx.cfg
         github_url = resume_generator._normalize_url(
             req.github_url or getattr(cfg, "github_url", ""))
@@ -1895,9 +2484,37 @@ async def generate_resume(req: ResumeGenRequest, ctx: Ctx = Depends(build_ctx)):
           "github_url": github_url})
     return {"ok": True, "filename": fname, "tex": tex, "preview": preview,
             "desc_fetched": bool(desc), "jd_origin": jd_origin,
+            "desc_chars": len(desc),
             "rag_hits": len(hits),
             "rag_sources": sorted({c.source_ref for c, _ in hits}),
             "github_url": github_url}
+
+
+@app.get("/api/resume/desc")
+async def resume_desc(link: str = "", ctx: Ctx = Depends(build_ctx)):
+    """Has the full posting text arrived yet? The client polls this.
+
+    Split from generation so the expensive part happens after the user already has
+    a resume. Three terminal-ish states, and the distinction that matters is that
+    `empty` is final: a posting we could not read is not going to become readable
+    by asking again, so the client stops polling instead of retrying forever
+    against a wall.
+
+    `desc_chars` is compared against what the resume was built from, so the
+    client can say "there is more text now" without having to diff anything.
+    """
+    link = (link or "").strip()
+    if not link or not link.startswith(("http://", "https://")):
+        return {"ok": True, "status": "empty", "chars": 0, "source": "none",
+                "text": ""}
+    row = await asyncio.to_thread(job_desc.cached, link)
+    st = await asyncio.to_thread(job_desc.status_of, link)
+    # Queue the fetch from the poll too. The browser is started by whichever
+    # comes first - generation or this call - so a client that never generated
+    # still gets an answer rather than polling a fetch nobody started.
+    if st["status"] == "pending" and not (row and row.get("text")):
+        await asyncio.to_thread(job_desc.ensure, link)
+    return {"ok": True, "text": st.pop("text", ""), **st}
 
 
 @app.get("/api/logs")

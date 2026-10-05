@@ -49,20 +49,102 @@ body {
   background: var(--bg); color: var(--text); line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
-/* Soft floating gradient blobs behind everything (subtle, not oppressive) */
+/* Soft floating gradient blobs behind everything (subtle, not oppressive).
+   Three stacked layers rather than one, because a single element can only carry
+   one animation: one drifting, one breathing, one panning slowly across. The
+   result reads as one slow current of light rather than a looping blob, and it
+   is what "background moves, content doesn't" needs - position:fixed with a
+   transform-only animation, so nothing here can ever trigger layout or scroll. */
 body::before {
   content: ""; position: fixed; inset: -25%;
   background:
-    radial-gradient(520px at 18% 12%, rgba(79,70,229,.13), transparent 62%),
-    radial-gradient(460px at 82% 88%, rgba(124,58,237,.11), transparent 62%),
-    radial-gradient(380px at 70% 18%, rgba(52,211,153,.08), transparent 60%);
-  pointer-events: none; z-index: -1;
-  animation: drift 28s ease-in-out infinite alternate;
+    radial-gradient(520px at 18% 12%, rgba(79,70,229,.30), transparent 62%),
+    radial-gradient(460px at 82% 88%, rgba(124,58,237,.26), transparent 62%),
+    radial-gradient(380px at 70% 18%, rgba(52,211,153,.20), transparent 60%);
+  pointer-events: none; z-index: -2;
+  animation: drift 22s ease-in-out infinite alternate;
 }
-@keyframes drift { to { transform: translate(-3%, -2%) scale(1.05); } }
+/* A second, slower layer offset in the other direction. Two elements moving at
+   different rates and sizes is what stops the gradient from reading as one
+   static texture that pulses - the eye needs uncorrelated motion to see flow. */
+body::after {
+  content: ""; position: fixed; inset: -35%;
+  background:
+    radial-gradient(640px at 72% 22%, rgba(14,165,233,.22), transparent 60%),
+    radial-gradient(420px at 24% 76%, rgba(236,72,153,.18), transparent 60%);
+  pointer-events: none; z-index: -3;
+  animation: drift2 34s ease-in-out infinite alternate;
+}
+@keyframes drift  { to { transform: translate(-7%, -5%) scale(1.14); } }
+@keyframes drift2 { to { transform: translate(9%, 7%) scale(1.22); } }
+
+/* Smoothing every scroller in the app. scroll-behavior:smooth animates the jump
+   for wheel, keyboard, and programmatic scrolls alike; scrollbar-width:none plus
+   the ::-webkit rules below remove the visible bar. The bar is hidden rather
+   than restyled because a custom track that keeps a draggable thumb means
+   maintaining a second scroll implementation - this trades discoverability for
+   code that cannot drift out of sync with native scrolling. Keyboard paging and
+   the wheel still work, so nothing becomes unreachable. */
+html { scroll-behavior: smooth; }
+main.chat, .rbody, .slist, .dbody, .menu, .roledd-list, .toolcard pre, .ocrbox pre {
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+main.chat::-webkit-scrollbar,
+.rbody::-webkit-scrollbar,
+.slist::-webkit-scrollbar,
+.dbody::-webkit-scrollbar,
+.menu::-webkit-scrollbar,
+.roledd-list::-webkit-scrollbar,
+.toolcard pre::-webkit-scrollbar,
+.ocrbox pre::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+/* A scroll-driven hint along the right edge. Purely decorative and never the
+   only cue: it fades in only while there is something below the fold, so a user
+   who never scrolls is not shown an affordance for a page that does not scroll. */
+.scrollhint {
+  position: fixed; right: 3px; top: 22vh; width: 3px; height: 56px; z-index: 5;
+  border-radius: 3px; background: var(--border); opacity: 0;
+  transition: opacity .3s ease; pointer-events: none;
+}
+.scrollhint.on { opacity: .75; }
+/* Marks which query produced a deck. Needed now that several decks coexist:
+   without it a stacked deck reads as one merged result list. */
+.decklabel {
+  display: inline-block; max-width: 100%; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
+  color: var(--muted); font-size: 12px; margin-right: 8px;
+}
+.decklabel::before { content: "\201C"; }
+.decklabel::after { content: "\201D"; }
+.scrollhint i {
+  position: absolute; left: 0; width: 100%; border-radius: 3px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  animation: hint 2.4s cubic-bezier(.4,0,.2,1) infinite;
+}
+@keyframes hint {
+  0%   { top: 0; height: 18px; opacity: 0; }
+  35%  { opacity: 1; }
+  70%  { top: 38px; height: 18px; opacity: 1; }
+  100% { top: 56px; height: 0; opacity: 0; }
+}
+
+/* Block 1: the global clamp, one rule, because it is what guarantees every
+   decorative animation in this stylesheet is reduced, including any added later. */
 @media (prefers-reduced-motion: reduce) {
-  body::before { animation: none; }
   * { animation-duration: .001s !important; transition-duration: .001s !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Block 2: a duration clamp does not cancel transform-based motion, and does
+     nothing at all to an animation on a pseudo-element, so the looping pieces are
+     switched off outright. The scroll behaviour goes too - a smooth scroll IS
+     motion, and an animated scroll position is exactly what this setting is
+     about. */
+  body::before, body::after { animation: none; }
+  .scrollhint i { animation: none; top: 0; height: 100%; }
+  .node.live .pill::after, .typing i, .spin { animation: none !important; }
+  html, main.chat, .rbody, .slist, .dbody { scroll-behavior: auto; }
 }
 button { font: inherit; cursor: pointer; }
 input, textarea { font: inherit; color: var(--text); }
@@ -241,6 +323,8 @@ header > * { max-width: 100%; }
 .rmodal .rjdbox:focus { outline: none; border-color: var(--accent); }
 .rmodal .rjdraw { display: flex; align-items: center; gap: 10px; padding: 8px 0 10px; }
 .rmodal .rjdn { font-size: 11.5px; color: var(--muted); }
+.rmodal .rjdfetch { display: flex; align-items: center; gap: 9px; padding: 0 0 10px; font-size: 11.5px; color: var(--muted); }
+.rmodal .rjdfetch .spin { flex: none; }
 #rBodyTex { margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
 .rmodal .rfoot { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface); }
 .rmodal .rdesc { font-size: 12px; color: var(--muted); flex: 1; }
@@ -413,6 +497,64 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
    silently un-hides them; this makes hidden mean hidden. */
 [hidden] { display: none !important; }
 .acct { font-size: 12.5px; color: var(--muted); max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- session countdown ---------- */
+/* The pill sits in the header next to the identity. It is the visible half of a
+   server-enforced timeout, so it reads as a clock rather than a label: the ring
+   drains as the idle allowance runs down, and the whole pill turns amber under a
+   minute so the warning is peripheral rather than something to be read. */
+.idle { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px 4px 6px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
+  font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.idle .ring { width: 17px; height: 17px; flex: none; transform: rotate(-90deg); }
+.idle .ring circle { fill: none; stroke-width: 2.6; }
+.idle .ring .bg { stroke: var(--border); }
+.idle .ring .fg { stroke: var(--accent); stroke-linecap: round;
+  transition: stroke-dashoffset 1s linear, stroke .3s ease; }
+.idle b { font-weight: 600; color: var(--text); }
+.idle .plus { border: 0; background: none; color: var(--accent); font-size: 12px;
+  font-weight: 600; padding: 1px 4px; border-radius: 6px; cursor: pointer; }
+.idle .plus:hover { background: var(--accent-soft); }
+.idle.warn { border-color: #f59e0b; }
+.idle.warn .ring .fg { stroke: #f59e0b; }
+.idle.warn .plus { color: #f59e0b; }
+
+/* ---------- identity: avatar + dropdown ---------- */
+.ident { position: relative; display: inline-flex; align-items: center; gap: 8px;
+  border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px 3px 3px;
+  background: var(--surface); cursor: pointer; color: var(--text); font: inherit;
+  max-width: 220px; }
+.ident:hover { border-color: var(--accent); }
+.ident .who { font-size: 12.5px; max-width: 150px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.av { width: 26px; height: 26px; border-radius: 50%; flex: none; display: grid;
+  place-items: center; color: #fff; font-size: 11.5px; font-weight: 700;
+  letter-spacing: .3px; text-transform: uppercase; }
+.av.lg { width: 56px; height: 56px; font-size: 21px; }
+.identmenu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 60;
+  min-width: 232px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: var(--shadow); padding: 6px; }
+.identmenu .hd { display: flex; align-items: center; gap: 10px; padding: 8px 8px 10px;
+  border-bottom: 1px solid var(--border); margin-bottom: 5px; }
+.identmenu .hd .who { min-width: 0; }
+.identmenu .hd .nm { font-size: 13px; font-weight: 600; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.identmenu .hd .em { font-size: 11px; color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.identmenu button.row { display: flex; align-items: center; gap: 9px; width: 100%;
+  text-align: left; font: inherit; font-size: 13px; background: none; border: 0;
+  color: var(--text); padding: 7px 9px; border-radius: 8px; cursor: pointer; }
+.identmenu button.row:hover { background: var(--accent-soft); color: var(--accent); }
+.identmenu button.row.danger:hover { background: rgba(239,68,68,.12); color: #ef4444; }
+.identmenu .who2 { font-size: 12.5px; color: var(--muted); padding: 6px 9px; }
+
+/* Avatar picker: a grid of swatches, current one ringed. */
+.avgrid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px;
+  padding: 4px 2px 8px; }
+.avgrid .av { width: 100%; aspect-ratio: 1; height: auto; font-size: 13px;
+  cursor: pointer; border: 2px solid transparent; padding: 0; }
+.avgrid .av:hover { transform: scale(1.08); }
+.avgrid .av.picked { border-color: var(--text); }
 .gate { position: fixed; inset: 0; z-index: 90; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 20px; overflow: auto; }
 .gate[hidden] { display: none; }
 .gatecard { width: 100%; max-width: 380px; }
@@ -832,14 +974,51 @@ body.booted header { animation-delay: .06s; }
 /* A long unbroken string (a confirmation URL, a company name, a listing title)
    was forcing the whole page to scroll sideways. */
 .bubble, .decknote, .card, .gatehint { overflow-wrap: anywhere; }
+
+/* Scrollbar hiding, repeated LAST on purpose. Several component rules below the
+   original block (".slist { scrollbar-width: thin }", ".roledd-list
+   { scrollbar-width: thin }") restyle the classic ::-webkit-scrollbar bar, and
+   because they come later they win the cascade for `scrollbar-width`. Chromium
+   hid the bar regardless, since ::-webkit-scrollbar { display: none } survives
+   the cascade as its own property, but Firefox ignores the webkit pseudo
+   elements entirely and would have drawn a 10px thumb on every session list and
+   role picker. Duplicating the rule at the end of the sheet is the whole fix;
+   specificity stays low so a component can still opt back in explicitly. */
+html, main.chat, .rbody, .slist, .dbody, .menu, .roledd-list,
+.toolcard pre, .ocrbox pre, .gate {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+main.chat::-webkit-scrollbar, .rbody::-webkit-scrollbar, .slist::-webkit-scrollbar,
+.dbody::-webkit-scrollbar, .menu::-webkit-scrollbar, .roledd-list::-webkit-scrollbar,
+.toolcard pre::-webkit-scrollbar, .ocrbox pre::-webkit-scrollbar,
+.gate::-webkit-scrollbar { width: 0; height: 0; display: none; }
 </style>
 </head>
 <body>
+<!-- Scroll affordance: a draining bar at the right edge that only appears when
+     there is more content below the fold. Added here, outside .app, so it stays
+     put while the transcript scrolls. -->
+<div class="scrollhint" id="scrollHint" aria-hidden="true"><i></i></div>
 
 <header>
   <div class="brand"><span class="dot"></span>JobScope</div>
   <div class="spacer"></div>
-  <div id="status" class="status"><span class="pulse"></span><span id="statusText">Connecting…</span><span class="modeltag" id="modelTag"></span></div>
+  <div id="status" class="status"><span class="pulse"></span><span id="statusText">Connecting.</span><span class="modeltag" id="modelTag"></span></div>
+  <!-- Idle countdown. Server-enforced; this only mirrors it. The +5 button
+       restores the full allowance rather than adding to it. -->
+  <span class="idle" id="idlePill" style="display:none" title="You are signed out after 25 minutes of inactivity">
+    <svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
+      <circle class="bg" cx="10" cy="10" r="8"></circle>
+      <circle class="fg" id="idleRing" cx="10" cy="10" r="8" stroke-dasharray="50.3" stroke-dashoffset="0"></circle>
+    </svg>
+    <b id="idleClock">25:00</b>
+    <button class="plus" id="idleExtend" title="Add 5 minutes">+5</button>
+  </span>
+  <button class="ident" id="identBtn" style="display:none" title="Account">
+    <span class="av" id="identAv">–</span><span class="who" id="identWho">–</span>
+  </button>
+  <div id="identMenu" class="identmenu" style="display:none"></div>
   <span class="acct" id="acct" title="Signed in"></span>
   <button class="iconbtn" id="signOutBtn" title="Sign out" style="display:none">Sign out</button>
   <button class="iconbtn" id="themeBtn" title="Toggle theme">Dark</button>
@@ -1015,6 +1194,15 @@ body.booted header { animation-delay: .06s; }
       <div class="rjdraw">
         <button class="btn ghost" id="rJdRegen">Tailor to this description</button>
         <span class="rjdn" id="rJdCount"></span>
+      </div>
+      <!-- Shown only while a background fetch for this posting is outstanding,
+           or when it turned up text the resume on screen was not built from.
+           Not a spinner over the whole modal: the resume is already usable, and
+           covering it up would hide that. -->
+      <div class="rjdfetch" id="rJdFetch" hidden>
+        <span class="spin" id="rJdFetchSpin"></span>
+        <span id="rJdFetchMsg">Fetching the full job description&hellip;</span>
+        <button class="btn ghost" id="rJdFetchRegen" hidden>Regenerate with it</button>
       </div>
     </div>
     <div class="rbody" id="rBodyPreview"><div class="empty">Building LaTeX resume&hellip;</div></div>
@@ -1267,86 +1455,117 @@ function deckNotes(p) {
   return out.length ? '<div class="decknotes">' + out.join("") + "</div>" : "";
 }
 
-/* Remove the visible deck AND the state behind it. renderDeck([]) did not do
-   this: an empty array has no .jobs, so renderDeck took the non-deck branch
-   and returned at `if (!isDeck) return`, leaving both the old cards on screen
-   and state.deck populated. Nothing had actually been cleared. */
+/* Decks used to be a single global (state.deck / state.deckIdx) plus hardcoded
+   element ids, so exactly one deck could exist: renderDeck removed the old one
+   and sendMessage called clearDeck() before every run. A second search
+   therefore destroyed the first search's cards, and the user could never look
+   back at an earlier result set.
+
+   Each deck now owns its own job list, index and DOM, so several can sit in the
+   transcript at once and be paged independently. The ids are gone entirely -
+   duplicate ids across coexisting decks would have made $("deckStage") return
+   whichever happened to be first in the document. */
 function clearDeck() {
   state.deck = []; state.deckIdx = 0;
-  const slot = document.querySelector(".deck");
-  if (slot) slot.remove();
-  const stage = $("deckStage");
-  if (stage) stage.innerHTML = "";
+  // Every deck, not just the first. This is only called on session
+  // reset/expiry, where wiping the whole transcript IS correct - the
+  // per-message path deliberately leaves earlier decks alone.
+  document.querySelectorAll(".deck").forEach(el => el.remove());
 }
 
-function renderDeck(payload) {
+function renderDeck(payload, label) {
   const isDeck = !!(payload && payload.jobs);
   const jobs = isDeck ? payload.jobs : payload;
-  // An empty result still has to say something. Returning silently here is
-  // what made a fruitless hunt look like it had reused the previous run's
-  // cards - the deck was only ever replaced by a successful one.
+  /* Anchor to the in-flight assistant message so the deck lands directly above
+     the reply it belongs to. `chat.lastChild` is NOT a safe fallback: once the
+     first deck is in the transcript it becomes the last child, so every
+     subsequent deck was inserted *before* its predecessor and the transcript
+     came out in reverse order (B, C, A for A, B, C). Append when there is no
+     message to sit above, which is the real definition of "newest last". */
+  const msg = activeBubble ? activeBubble.closest(".msg") : null;
+  const anchor = (msg && msg.parentNode === chat) ? msg : null;
+  const place = el => { if (anchor) chat.insertBefore(el, anchor); else chat.appendChild(el); };
+  // An empty result still has to say something - but it says it as its OWN
+  // note. It must not remove a sibling deck: an earlier search's results are
+  // still that search's results, and deleting them to announce a fruitless one
+  // is what made a failed hunt look like it had silently reused old output.
   if (!jobs || !jobs.length) {
     if (!isDeck) return;
-    const slot = document.querySelector(".deck.empty");
-    if (slot) slot.remove();
     const e = document.createElement("div");
     e.className = "deck empty";
     e.innerHTML = '<div class="decknote">No listings came back from this hunt.</div>';
-    chat.insertBefore(e, activeBubble ? activeBubble.closest(".msg") : chat.lastChild);
+    place(e);
     return;
   }
-  state.deck = jobs; state.deckIdx = 0;
-  const slot = document.querySelector(".deck");
-  if (slot) slot.remove();
   const d = document.createElement("div"); d.className = "deck";
   d.innerHTML =
-    '<div class="deckhead"><b>' + jobs.length + '</b>&nbsp;jobs found&nbsp;&middot;&nbsp;<span class="deckcount" id="deckCount">1 / ' + jobs.length + '</span></div>' +
-    '<div class="deckstage" id="deckStage"></div>' +
-    '<div class="decknav"><button id="deckPrev" title="Previous">‹</button><div class="dots" id="deckDots"></div><button id="deckNext" title="Next">›</button></div>' +
+    '<div class="deckhead">' + (label ? '<span class="decklabel">' + esc(label) + '</span>' : "") +
+    '<b>' + jobs.length + '</b>&nbsp;jobs found' +
+    '<span class="deckcount">1 / ' + jobs.length + '</span></div>' +
+    '<div class="deckstage"></div>' +
+    '<div class="decknav"><button class="deckprev" title="Previous">‹</button>' +
+    '<div class="dots"></div><button class="decknext" title="Next">›</button></div>' +
     (isDeck ? deckNotes(payload) : "");
-  chat.insertBefore(d, activeBubble ? activeBubble.closest(".msg") : chat.lastChild);
+  place(d);
+
+  // Per-deck closure state: two decks on screen never share a cursor.
+  const deck = { jobs: jobs, idx: 0, el: d,
+                 stage: d.querySelector(".deckstage"),
+                 count: d.querySelector(".deckcount"),
+                 dots: d.querySelector(".dots"),
+                 prev: d.querySelector(".deckprev"),
+                 next: d.querySelector(".decknext") };
+
+  function showCard(i) {
+    deck.stage.innerHTML = "";
+    const j = deck.jobs[i]; if (!j) return;
+    const card = document.createElement("div");
+    card.className = "card show";
+    card.innerHTML =
+      '<span class="src">' + esc(j.source || "job board") + '</span>' +
+      '<h3>' + esc(j.title || "Job") + '</h3>' +
+      '<div class="co">' + esc(j.company || "") + '</div>' +
+      '<div class="tags">' +
+        (j.location ? '<span class="tag loc">◉ ' + esc(j.location) + '</span>' : "") +
+        (j.salary ? '<span class="tag sal">' + esc(j.salary) + '</span>' : "") +
+      '</div>' +
+      '<div class="actions"><a class="btnglow" href="' + esc(j.link || "#") + '" target="_blank" rel="noopener" tabindex="0">Apply now</a>' +
+      '<button class="btnglow ghost resumebtn" title="Build a LaTeX resume tailored to this posting">LaTeX resume</button></div>';
+    deck.stage.appendChild(card);
+    card.querySelector(".resumebtn").onclick = () => openResume(j);
+    deck.count.textContent = (i + 1) + " / " + deck.jobs.length;
+    deck.dots.innerHTML = "";
+    deck.jobs.forEach((_, k) => {
+      const di = document.createElement("i"); if (k === i) di.className = "on"; deck.dots.appendChild(di);
+    });
+    deck.prev.disabled = i <= 0; deck.next.disabled = i >= deck.jobs.length - 1;
+    deck.stage.scrollIntoView({ block: "nearest" });
+  }
+  function go(dir) {
+    const n = deck.idx + dir;
+    if (n < 0 || n >= deck.jobs.length) return;
+    deck.idx = n; showCard(n);
+  }
+  deck.go = go;
+
   showCard(0);
-  $("deckPrev").onclick = () => go(-1);
-  $("deckNext").onclick = () => go(1);
+  deck.prev.onclick = () => go(-1);
+  deck.next.onclick = () => go(1);
   d.addEventListener("keydown", e => { if (e.key === "ArrowLeft") go(-1); if (e.key === "ArrowRight") go(1); });
   d.tabIndex = 0;
-  // swipe
   let x0 = null;
   d.addEventListener("touchstart", e => x0 = e.touches[0].clientX, { passive: true });
   d.addEventListener("touchend", e => { if (x0 != null) { const dx = e.changedTouches[0].clientX - x0; if (Math.abs(dx) > 40) go(dx < 0 ? 1 : -1); x0 = null; } }, { passive: true });
+
+  // Keep state.deck pointing at the newest deck so anything outside this block
+  // that still reads it (session reset) sees the live one.
+  state.deck = jobs; state.deckIdx = 0;
   chat.scrollTop = chat.scrollHeight;
 }
-function showCard(i) {
-  const stage = $("deckStage"); if (!stage) return;
-  stage.innerHTML = "";
-  const j = state.deck[i]; if (!j) return;
-  const card = document.createElement("div");
-  card.className = "card show";
-  card.innerHTML =
-    '<span class="src">' + esc(j.source || "job board") + '</span>' +
-    '<h3>' + esc(j.title || "Job") + '</h3>' +
-    '<div class="co">' + esc(j.company || "") + '</div>' +
-    '<div class="tags">' +
-      (j.location ? '<span class="tag loc">◉ ' + esc(j.location) + '</span>' : "") +
-      (j.salary ? '<span class="tag sal">' + esc(j.salary) + '</span>' : "") +
-    '</div>' +
-    '<div class="actions"><a class="btnglow" href="' + esc(j.link || "#") + '" target="_blank" rel="noopener" tabindex="0">Apply now</a>' +
-    '<button class="btnglow ghost resumebtn" title="Build a LaTeX resume tailored to this posting">LaTeX resume</button></div>';
-  stage.appendChild(card);
-  card.querySelector(".resumebtn").onclick = () => openResume(j);
-  $("deckCount").textContent = (i + 1) + " / " + state.deck.length;
-  const dots = $("deckDots"); dots.innerHTML = "";
-  state.deck.forEach((_, k) => {
-    const di = document.createElement("i"); if (k === i) di.className = "on"; dots.appendChild(di);
-  });
-  $("deckPrev").disabled = i <= 0; $("deckNext").disabled = i >= state.deck.length - 1;
-  stage.scrollIntoView({ block: "nearest" });
-}
-function go(dir) { const n = state.deckIdx + dir; if (n < 0 || n >= state.deck.length) return; state.deckIdx = n; showCard(n); }
 
 /* ---------- LaTeX resume modal ---------- */
 let _rTex = "", _rFile = "Resume.tex", _rJob = null;
-function closeResume() { $("resumeModal").classList.remove("show"); document.body.style.overflow = ""; }
+function closeResume() { $("resumeModal").classList.remove("show"); document.body.style.overflow = ""; stopDescPoll(); _rDescJob = null; hideDescNotice(); }
 $("rModalBg").onclick = closeResume;
 $("rModalClose").onclick = closeResume;
 document.addEventListener("keydown", e => { if (e.key === "Escape" && $("resumeModal").classList.contains("show")) closeResume(); });
@@ -1430,11 +1649,15 @@ function openResume(job) {
    `jd_origin` and shown as-is - the old copy implied live tailoring had
    occurred even when the posting had been blocked. */
 function _jdNote(r) {
-  var how = r.jd_origin === "pasted"
+  var     how = r.jd_origin === "pasted"
     ? "Tailored to your pasted job description."
-    : r.desc_fetched
-      ? "Tailored from the live posting description."
-      : "Posting page blocked this network — tailored from role + skills only.";
+    : r.jd_origin === "listing"
+      ? "Tailored to the description collected with this listing."
+      : r.jd_origin === "cache"
+        ? "Tailored to the full posting text, already fetched for this link."
+        : r.desc_fetched
+          ? "Tailored from the live posting description."
+          : "No posting text available — tailored from role + skills only.";
   var hits = (r.rag_hits || 0) > 0
     ? " Matched " + r.rag_hits + " passage" + (r.rag_hits === 1 ? "" : "s") + " from "
       + (r.rag_sources || []).join(", ") + "."
@@ -1443,12 +1666,14 @@ function _jdNote(r) {
 }
 
 async function generateResume(job) {
+  stopDescPoll();
+  _rDescJob = job || null;
   try {
     var jd = $("rJd").value.trim();
     $("rJdCount").textContent = jd ? jd.length.toLocaleString() + " characters" : "";
     $("rBodyPreview").innerHTML = '<div class="empty"><span class="spin"></span> Building LaTeX resume — ' + (jd ? "matching your pasted description" : "fetching posting") + " &amp; ranking skills…</div>";
     const res = await api("/api/resume/gen", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: job.title || "", company: job.company || "", location: job.location || "", link: job.link || "", source: job.source || "", github_url: $("cfgGithub").value.trim() || "", jd_text: jd }) });
+      body: JSON.stringify({ title: job.title || "", company: job.company || "", location: job.location || "", link: job.link || "", source: job.source || "", github_url: $("cfgGithub").value.trim() || "", jd_text: jd, job_desc: job.desc || "" }) });
     const r = await res.json();
     if (!r.ok) {
       $("rBodyPreview").innerHTML = '<div class="empty">Failed to build resume — ' + esc(r.error || "server error") + "</div>";
@@ -1456,16 +1681,94 @@ async function generateResume(job) {
       return;
     }
     _rTex = r.tex || ""; _rFile = r.filename || "Resume.tex";
+    // How much posting text this render actually used. The background fetch is
+    // only worth offering when it found MORE than this - otherwise the button
+    // would rebuild the identical document and call it an improvement.
+    _rDescChars = (r.desc_chars || 0);
     $("rBodyPreview").innerHTML = r.preview
       ? '<div class="resume-preview">' + r.preview + "</div>"
       : '<div class="empty">Preview unavailable — open the LaTeX tab.</div>';
     $("rBodyTex").textContent = _rTex;
     $("rDesc").textContent = _jdNote(r);
+    startDescPoll(job);
   } catch (e) {
     $("rBodyPreview").innerHTML = '<div class="empty">Request failed — ' + esc(e.message) + "</div>";
     $("rDesc").textContent = e.message;
   }
 }
+
+/* ---------- background full-description fetch ----------
+   Generating a resume must not wait on a browser: posting text lives behind bot
+   walls that cost 8-130 seconds to get through. So the resume is built from
+   whatever text exists now, and this polls for the rest.
+
+   Two rules that the implementation below exists to enforce:
+
+   Never silently replace the resume. If the user has the modal open on a
+   document they may already have downloaded, swapping it out from under them
+   because a fetch finished is worse than showing them a button. So a late
+   arrival surfaces a "Regenerate with it" choice and nothing else.
+
+   Stop polling. `ready` and `empty` are both terminal - a posting that had no
+   readable description is not going to grow one - so the loop ends instead of
+   asking a wall the same question every few seconds, which is how a client
+   gets its IP banned. Only a paste or a manual regenerate starts it again. */
+var _rDescJob = null, _rDescTimer = null, _rDescTries = 0, _rDescChars = 0;
+var DESC_POLL_MS = 4000, DESC_POLL_TRIES = 30;
+
+function stopDescPoll() {
+  if (_rDescTimer) { clearTimeout(_rDescTimer); _rDescTimer = null; }
+}
+
+/* `canRegen` drives the spinner: while we are still waiting there is nothing for
+   the user to press, and a live spinner beside a button that does nothing is
+   just noise. Once there is a real choice the spinner stops and the button
+   appears. */
+function _descNotice(msg, canRegen) {
+  $("rJdFetch").hidden = false;
+  $("rJdFetchSpin").hidden = !!canRegen;
+  $("rJdFetchMsg").innerHTML = msg;
+  $("rJdFetchRegen").hidden = !canRegen;
+}
+
+function hideDescNotice() { $("rJdFetch").hidden = true; }
+
+function startDescPoll(job) {
+  stopDescPoll();
+  hideDescNotice();
+  // A pasted description is strictly better than anything we could fetch, so
+  // there is nothing to wait for and no reason to spend a browser on it.
+  if (!job || !job.link || $("rJd").value.trim()) return;
+  _rDescTries = 0;
+  _descPollTick(job);
+}
+
+async function _descPollTick(job) {
+  _rDescTries++;
+  var r;
+  try {
+    const res = await api("/api/resume/desc?link=" + encodeURIComponent(job.link || ""));
+    r = await res.json();
+  } catch (e) {
+    r = { status: "empty" };
+  }
+  // A newer resume was generated, or the modal moved on to another posting:
+  // this poll belongs to a request that no longer matters.
+  if (!_rDescJob || _rDescJob.link !== job.link) return;
+
+  var chars = r.chars || 0;
+  if (r.status === "ready" && chars > _rDescChars) {
+    _descNotice("Full job description fetched — " + chars.toLocaleString()
+      + " characters. Regenerate to tailor with it.", true);
+    return;
+  }
+  if (r.status === "ready" || r.status === "empty") return;
+  if (_rDescTries >= DESC_POLL_TRIES) { hideDescNotice(); return; }
+  _descNotice("Fetching the full job description… this can take up to a minute.", false);
+  _rDescTimer = setTimeout(function () { _descPollTick(job); }, DESC_POLL_MS);
+}
+
+$("rJdFetchRegen").onclick = () => { hideDescNotice(); if (_rDescJob) generateResume(_rDescJob); };
 
 $("rJdRegen").onclick = () => { if (_rJob) generateResume(_rJob); };
 $("rJd").oninput = () => {
@@ -1477,16 +1780,21 @@ $("rJd").oninput = () => {
 async function sendMessage(text) {
   if (state.busy) return;
   state.busy = true; state.lastMsg = text;
+  // Stamped onto this run's deck so a card set is always attributable to the
+  // query that produced it. Without it, two decks stacked in the transcript
+  // look like one result list and the user cannot tell which search they are
+  // reading - the "old result shown as new" problem from the other direction.
+  currentSearch = text.length > 64 ? text.slice(0, 64) + "\u2026" : text;
   $("send").disabled = true; $("status").className = "status busy"; $("statusText").textContent = "Hunting…";
   $("banner").classList.remove("show");
   circReset();
   circ("agent", "live", "starting the hunt");
-  /* Drop the previous run's deck up front. It used to survive until a new
-     "jobs" frame arrived, so a hunt that found nothing - or one aimed at a
-     different board - left the last run's cards sitting there looking like
-     this run's answer. No placeholder here: this run has not finished yet,
-     so "No listings came back" would be a claim we cannot make. */
-  clearDeck();
+  /* The previous run's deck is deliberately LEFT ALONE. It used to be cleared
+     here, so sending a second message destroyed the first search's cards, and a
+     search that found nothing looked like it had silently reused the old
+     output. Each run now renders its own deck into the transcript, labelled
+     with the search that produced it, so old and new results coexist and stay
+     attributable to their own query. */
 
   appendMsg("user", text);
   const node = appendMsg("assistant", "", true);
@@ -1515,7 +1823,7 @@ async function sendMessage(text) {
   finalize(node, runFailed);
 }
 
-let activeBubble = null, activeCard = null;
+let activeBubble = null, activeCard = null, currentSearch = "";
 
 function emitFrame(fnLine) {
   if (!fnLine.startsWith("data:")) return;
@@ -1544,7 +1852,7 @@ function emitFrame(fnLine) {
       circ("gmail", "live", "fetching job-alert emails");
       break;
     case "jobs":
-      renderDeck(obj.payload);
+      renderDeck(obj.payload, currentSearch);
       break;
     case "status":
       if (obj.stage === "done") { circ("gmail", "done", ""); circ("report", "done", "final match list ready"); }
@@ -2570,11 +2878,289 @@ function signedIn(st) {
   gateHide();
   $("acct").textContent = st.email || "";
   $("acct").title = st.email || "";
+  $("acct").style.display = "none";   // superseded by the identity pill
   $("signOutBtn").style.display = "";
+  renderIdentity(st);
+  startIdleCountdown(st);
+  askNicknameOnce(st);
   loadConfig();
   loadSessions();
   loadDocs();
 }
+
+/* ---------- identity: avatar, nickname, dropdown ---------- */
+
+var IDENTITY = { email: "", nickname: "", display_name: "", avatar: "aurora" };
+
+/* Gradient pairs mirror dashboard._AVATARS. Served by /api/auth/avatars so the
+   picker cannot offer something set_identity would reject; this is the fallback
+   if that call fails, and it must stay a subset of auth.AVATARS. */
+var AVATAR_GRAD = {
+  aurora: ["#4f46e5", "#7c3aed"], ember: ["#f97316", "#ef4444"],
+  forest: ["#059669", "#34d399"], harbor: ["#0ea5e9", "#6366f1"],
+  iris:   ["#8b5cf6", "#ec4899"], sand:   ["#d97706", "#fbbf24"],
+  slate:  ["#475569", "#94a3b8"], violet: ["#6d28d9", "#a855f7"],
+  coral:  ["#fb7185", "#f43f5e"], mint:   ["#14b8a6", "#5eead4"],
+  dusk:   ["#7c3aed", "#2563eb"], cobalt: ["#2563eb", "#06b6d4"]
+};
+
+/* Initials for the avatar circle. Falls back to "?" so the circle is never
+   blank - an empty avatar reads as a broken image rather than as a person. */
+function _initials(name) {
+  var parts = String(name || "").trim().split(/[\s._-]+/).filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2);
+  return parts[0][0] + parts[1][0];
+}
+
+function _avatarHtml(id, name, cls) {
+  var g = AVATAR_GRAD[id] || AVATAR_GRAD.aurora;
+  return '<span class="av ' + (cls || "") + '" style="background:linear-gradient(135deg,' +
+    g[0] + "," + g[1] + ')">' + esc(_initials(name)) + "</span>";
+}
+
+function renderIdentity(st) {
+  IDENTITY.email = st.email || IDENTITY.email;
+  IDENTITY.nickname = (st.nickname !== undefined ? st.nickname : IDENTITY.nickname) || "";
+  IDENTITY.display_name = st.display_name || IDENTITY.display_name || st.email || "";
+  IDENTITY.avatar = st.avatar || IDENTITY.avatar || "aurora";
+  var btn = $("identBtn");
+  btn.style.display = "";
+  btn.querySelector(".av").outerHTML = _avatarHtml(IDENTITY.avatar, IDENTITY.display_name);
+  btn.querySelector(".who").textContent = IDENTITY.display_name;
+  // The full address stays reachable in the tooltip, just not printed in the header.
+  btn.title = "Signed in as " + IDENTITY.email;
+}
+
+async function saveIdentity(patch, note) {
+  var r = await (await api("/api/auth/identity", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch)
+  })).json();
+  if (!r.ok) { toast(r.error || "Could not save"); return null; }
+  renderIdentity(r);
+  if (note) toast(note);
+  return r;
+}
+
+function identMenuOpen() {
+  var m = $("identMenu");
+  m.innerHTML =
+    '<div class="hd">' + _avatarHtml(IDENTITY.avatar, IDENTITY.display_name, "lg") +
+      '<div class="who"><div class="nm">' + esc(IDENTITY.display_name) + "</div>" +
+      '<div class="em">' + esc(IDENTITY.email) + "</div></div></div>" +
+    '<button class="row" id="imNick">✎ Change nickname</button>' +
+    '<button class="row" id="imAvatar">◐ Change logo</button>' +
+    '<button class="row danger" id="imOut">⏻ Sign out</button>';
+  m.style.display = "block";
+
+  $("imNick").onclick = async () => {
+    m.style.display = "none";
+    var cur = IDENTITY.nickname || "";
+    var v = window.prompt("What should we call you?", cur);
+    if (v === null) return;
+    v = v.trim();
+    if (!v || v === cur) return;
+    var r = await saveIdentity({ nickname: v }, "Nickname updated");
+    if (r && !r.needs_nickname) _maybeAskNickname.done = true;
+  };
+  $("imAvatar").onclick = async () => {
+    m.style.display = "none";
+    await openAvatarPicker();
+  };
+  $("imOut").onclick = () => { m.style.display = "none"; signOutNow("Signed out."); };
+}
+
+function identMenuClose() { $("identMenu").style.display = "none"; }
+
+/* Avatar picker in a lightweight overlay. Built from the server's list so the
+   two cannot disagree about which ids are valid. */
+function openAvatarPicker() {
+  return new Promise(async resolve => {
+    var wrap = document.createElement("div");
+    wrap.className = "rmodal";
+    wrap.style.cssText = "position:fixed;inset:0;z-index:120;display:grid;place-items:center;" +
+                         "background:rgba(0,0,0,.45);padding:20px";
+    var ids = Object.keys(AVATAR_GRAD);
+    try {
+      var j = await (await api("/api/auth/avatars")).json();
+      if (j.ok && j.avatars && j.avatars.length) {
+        AVATAR_GRAD = {};
+        j.avatars.forEach(a => { AVATAR_GRAD[a.id] = [a.from, a.to]; });
+        ids = j.avatars.map(a => a.id);
+      }
+    } catch { /* keep the built-in list */ }
+
+    var grid = ids.map(id =>
+      '<button class="av' + (id === IDENTITY.avatar ? " picked" : "") + '" data-av="' + id +
+      '" style="background:linear-gradient(135deg,' + (AVATAR_GRAD[id] || []).join(",") + ')">' +
+      esc(_initials(IDENTITY.display_name)) + "</button>").join("");
+
+    wrap.innerHTML =
+      '<div class="wrap" style="width:min(430px,100%)">' +
+        '<div class="rhead"><h2>Choose your logo</h2>' +
+          '<button class="iconbtn" id="avClose">Close</button></div>' +
+        '<div class="rbody"><div class="avgrid">' + grid + "</div>" +
+          '<p style="font-size:12px;color:var(--muted);margin:2px 0 0">' +
+          "Your initials sit on the colour you pick.</p></div></div>";
+    document.body.appendChild(wrap);
+
+    function close() { wrap.remove(); document.removeEventListener("keydown", onKey); resolve(); }
+    function onKey(e) { if (e.key === "Escape") close(); }
+    document.addEventListener("keydown", onKey);
+    $("avClose").onclick = close;
+    wrap.onclick = e => { if (e.target === wrap) close(); };
+    wrap.querySelectorAll("[data-av]").forEach(b => {
+      b.onclick = async () => {
+        await saveIdentity({ avatar: b.dataset.av }, "Logo updated");
+        close();
+      };
+    });
+  });
+}
+
+/* First login after signup has no nickname. Ask once - shown inline as a prompt
+   rather than a modal, so it never blocks the app on a shared screen. */
+var _maybeAskNickname = { done: false };
+function askNicknameOnce(st) {
+  if (_maybeAskNickname.done || !st.needs_nickname) return;
+  _maybeAskNickname.done = true;
+  toast("Set a nickname from the logo menu in the top right.");
+}
+
+/* ---------- idle countdown ---------- */
+
+var IDLE = { left: 0, total: 1500, timer: null, warned: false };
+
+function startIdleCountdown(st) {
+  IDLE.left = st.seconds_left || 0;
+  IDLE.total = (st.idle_minutes || 25) * 60;
+  $("idlePill").style.display = IDLE.left > 0 ? "" : "none";
+  paintIdle();
+  clearInterval(IDLE.timer);
+  // Counts locally once per second, re-syncs with the server every 30s. The
+  // local tick is what makes the clock move; the resync is what keeps it from
+  // drifting away from the server's own deadline, which is the one that counts.
+  IDLE.timer = setInterval(function () {
+    if (IDLE.left > 0) IDLE.left--;
+    if (IDLE.left === 0) { idleExpired(); return; }
+    paintIdle();
+    if (IDLE.left % 30 === 0) resyncIdle();
+  }, 1000);
+}
+
+function paintIdle() {
+  var C = 2 * Math.PI * 8;
+  /* The ring drains over the FINAL five minutes, not across the whole 25. A ring
+     mapped to the full session moves 1/1500th of a circle per tick - about
+     0.03px - so it sits visually static for twenty minutes and then appears to
+     break. Mapping it to the last stretch makes the motion legible exactly when
+     it is worth watching: a full ring means "more than five minutes left", which
+     is the honest reading of a static ring. The numeric clock is what carries
+     the precise time throughout. */
+  var SPAN = 300;
+  var frac = Math.max(0, Math.min(1, IDLE.left / SPAN));
+  $("idleRing").style.strokeDasharray = C.toFixed(1);
+  $("idleRing").style.strokeDashoffset = (C * (1 - frac)).toFixed(2);
+  var m = Math.floor(IDLE.left / 60), s = IDLE.left % 60;
+  $("idleClock").textContent = m + ":" + (s < 10 ? "0" : "") + s;
+  $("idlePill").classList.toggle("warn", IDLE.left <= 60);
+}
+
+async function resyncIdle() {
+  try {
+    var r = await (await fetch("/api/auth/session", { credentials: "same-origin" })).json();
+    if (!r.signed_in) { idleExpired(); return; }
+    IDLE.left = r.seconds_left;
+    IDLE.total = r.idle_minutes * 60;
+    paintIdle();
+  } catch { /* offline: the local clock keeps ticking, server still decides */ }
+}
+
+function idleExpired() {
+  clearInterval(IDLE.timer);
+  $("idlePill").style.display = "none";
+  // Server-side the cookie is already dead; this just clears the page so the
+  // gate comes back. Sign out rather than reload, so nothing is left rendered.
+  signOutNow("Signed out after 25 minutes of inactivity.", true);
+}
+
+$("idleExtend").onclick = async function () {
+  var r = await (await api("/api/auth/extend", { method: "POST" })).json();
+  if (!r.ok) { idleExpired(); return; }
+  IDLE.left = r.seconds_left;
+  IDLE.total = r.idle_minutes * 60;
+  paintIdle();
+  toast("Extended by " + r.extend_minutes + " minutes");
+};
+
+/* Wipe everything this page is holding and put the gate back. `expired` only
+   changes the wording. Nothing is persisted anywhere: the only localStorage key
+   in this app is the theme, which is a preference and not session data.
+
+   Every scrap of session state has to be listed here. This started as a thin
+   wrapper that cleared the header, and because the real sign-out handler
+   separately cleared the transcript and session list, the timeout path left the
+   previous user's CV search sitting on screen for anyone who opened the tab -
+   the exact thing an auto-logout exists to prevent. Cleared unconditionally here
+   so a new sign-in cannot inherit it. */
+function signOutNow(msg, expired) {
+  try { fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }); } catch {}
+  clearInterval(IDLE.timer);
+  // transcript, saved sessions, and the whole resume deck
+  if (typeof clearDeck === "function") clearDeck();
+  $("chat").innerHTML = "";
+  $("sessList").innerHTML = "";
+  $("rBodyPreview").innerHTML = "";
+  $("rBodyTex").textContent = "";
+  $("rDesc").textContent = "";
+  $("rJd").value = "";
+  $("rJdCount").textContent = "";
+  $("docList").innerHTML = "";
+  $("identMenu").style.display = "none";
+  $("identBtn").style.display = "none";
+  $("idlePill").style.display = "none";
+  $("signOutBtn").style.display = "none";
+  $("acct").style.display = "";
+  $("acct").textContent = "";
+  _rTex = ""; _rFile = ""; _rJob = null;
+  _rDescJob = null; _rDescChars = 0;
+  stopDescPoll(); hideDescNotice();
+  window.__secret = undefined;
+  try { state.settings = {}; state.resetAt = null; } catch {}
+  IDENTITY = { email: "", nickname: "", display_name: "", avatar: "aurora" };
+  gateShow("signin", { foot: msg || "Signed out." });
+}
+
+/* ---------- scroll affordance + smooth scroll ---------- */
+/* Shows the edge hint only while the transcript actually has more below it. */
+function wireScrollHint() {
+  var hint = $("scrollHint"), main = document.querySelector("main.chat");
+  if (!hint || !main) return;
+  function update() {
+    var more = main.scrollHeight - main.scrollTop - main.clientHeight;
+    hint.classList.toggle("on", more > 24);
+  }
+  main.addEventListener("scroll", update, { passive: true });
+  window.addEventListener("resize", update, { passive: true });
+  /* Clicking the hint scrolls a page down smoothly. Programmatic scrolling
+     inherits scroll-behavior:smooth, so this is one line instead of a hand
+     rolled tween that would fight the native one. */
+  hint.style.pointerEvents = "auto";
+  hint.style.cursor = "pointer";
+  hint.title = "Scroll down";
+  hint.onclick = function () { main.scrollBy({ top: main.clientHeight * 0.8, behavior: "smooth" }); };
+  update();
+}
+
+$("identBtn").onclick = function (e) {
+  e.stopPropagation();
+  var open = $("identMenu").style.display === "block";
+  if (open) identMenuClose(); else identMenuOpen();
+};
+document.addEventListener("click", function (e) {
+  if (!e.target.closest(".ident") && !e.target.closest(".identmenu")) identMenuClose();
+});
 
 /* sign in / sign up */
 $("gateSign").onsubmit = async e => {
@@ -2634,7 +3220,7 @@ $("gResend").onclick = async () => {
   try {
     const r = await (await api("/api/auth/resend", { method: "POST" })).json();
     if (r.already_verified) {
-      gateHide(); signedIn({ email: "" }); return;
+      gateHide(); signedIn({ email: "", avatar: "aurora", display_name: "", nickname: "", seconds_left: 0 }); return;
     }
     $("gateCheckMsg").textContent = r.ok
       ? "Sent - check your inbox for the confirmation link."
@@ -2693,14 +3279,13 @@ $("gateReset").onsubmit = async e => {
 };
 
 $("signOutBtn").onclick = async () => {
-  await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
-  $("acct").textContent = ""; $("signOutBtn").style.display = "none";
-  $("sessList").innerHTML = "";
-  $("chat").innerHTML = "";
-  clearDeck();
-  state.settings = {};
-  state.resetAt = null;
-  gateShow("signin");
+  /* signOutNow is now the single place that clears the page, so an explicit
+     sign-out and an idle timeout leave the browser in the identical state. The
+     request is awaited first so the server has definitely dropped the session
+     before the gate comes back up. */
+  try { await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }); }
+  catch {}
+  signOutNow();
 };
 
 /* ---------- init ---------- */
@@ -2710,6 +3295,7 @@ $("signOutBtn").onclick = async () => {
 loadPublicBoards();
 /* auth first: it decides whether the rest of the app is reachable at all */
 bootAuth();
+wireScrollHint();
 </script>
 </body>
 </html>

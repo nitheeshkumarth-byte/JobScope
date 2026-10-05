@@ -176,6 +176,31 @@ def _gen(client, **extra):
     return client.post("/api/resume/gen", json=payload).json()
 
 
+def test_the_description_collected_at_search_time_is_used(client):
+    """The listing already carried the posting body, so generation must use it
+    rather than re-fetching a page that will usually lose to a bot wall."""
+    register(client, "a@jobs.test")
+    body = _gen(client, job_desc="Kafka streaming for the ingestion tier")
+    assert body["ok"] is True
+    assert body["jd_origin"] == "listing"
+    assert body["desc_fetched"] is True
+
+
+def test_a_pasted_jd_still_beats_the_collected_description(client):
+    register(client, "a@jobs.test")
+    body = _gen(client, jd_text="my own words",
+                job_desc="the board's words")
+    assert body["jd_origin"] == "pasted"
+
+
+def test_the_collected_description_drives_retrieval(client):
+    register(client, "a@jobs.test")
+    upload(client, "cv.txt", DOC)
+    body = _gen(client, job_desc="Spark ETL pipeline")
+    assert body["rag_hits"] > 0
+    assert any("cv.txt" in ref for ref in body["rag_sources"])
+
+
 def test_a_pasted_jd_is_used_in_preference_to_the_link(client):
     register(client, "a@jobs.test")
     body = _gen(client, jd_text="Kubernetes autoscaling for the API tier")

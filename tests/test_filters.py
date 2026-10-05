@@ -246,6 +246,41 @@ def test_detect_board_handles_empty_input():
     assert detect_board(None) is None
 
 
+@pytest.mark.parametrize("text,expected", [
+    # The board named FIRST in the sentence wins, even when another board is
+    # declared earlier in BOARD_ALIASES. Iterating the alias table made the
+    # answer depend on dict order, so "naukri and linkedin" resolved to
+    # LinkedIn - the opposite of what the user typed.
+    ("naukri and linkedin please", "Naukri"),
+    ("linkedin and naukri please", "LinkedIn"),
+    ("indeed, then glassdoor", "Indeed"),
+    ("glassdoor then indeed", "Glassdoor"),
+    ("internshala before naukri", "Internshala"),
+    # A longer alias starting at the same offset beats a shorter one, so
+    # "we work remotely" is not truncated to a bare "wework".
+    ("we work remotely please", "WeWorkRemotely"),
+    ("search naukri for remote python roles", "Naukri"),
+])
+def test_detect_board_follows_word_order_not_alias_table_order(text, expected):
+    assert detect_board(text) == expected
+
+
+def test_detect_board_order_does_not_depend_on_the_alias_table():
+    """Reversing BOARD_ALIASES must not change which board is detected."""
+    from filters import BOARD_ALIASES
+
+    text = "naukri and linkedin please"
+    baseline = detect_board(text)
+    original = dict(BOARD_ALIASES)
+    try:
+        BOARD_ALIASES.clear()
+        BOARD_ALIASES.update(reversed(list(original.items())))
+        assert detect_board(text) == baseline
+    finally:
+        BOARD_ALIASES.clear()
+        BOARD_ALIASES.update(original)
+
+
 def test_canonical_board_respects_the_known_set():
     known = ("Indeed", "LinkedIn")
     assert canonical_board("just indeed", known) == "Indeed"
@@ -274,12 +309,16 @@ def _job(**kw):
 
 
 @pytest.mark.parametrize("location,expected", [
-    ("Remote, US", {"remote"}),
-    ("Remote", {"remote"}),
-    ("Anywhere", {"remote"}),
-    ("Worldwide", {"remote"}),
-    ("Virtual - Europe", {"remote"}),
-    ("Work From Home (India)", {"wfh"}),
+    # 'remote' and 'wfh' are one family: "Work From Home" IS working remotely.
+    # Separating them made matches_work_mode compute an empty intersection and
+    # silently delete every WFH listing from a remote search - and
+    # DEFAULT_WORK_MODES is ["remote"], so that was the default configuration.
+    ("Remote, US", {"remote", "wfh"}),
+    ("Remote", {"remote", "wfh"}),
+    ("Anywhere", {"remote", "wfh"}),
+    ("Worldwide", {"remote", "wfh"}),
+    ("Virtual - Europe", {"remote", "wfh"}),
+    ("Work From Home (India)", {"remote", "wfh"}),
     ("Hybrid - London", {"hybrid"}),
     # A bare city states WHERE, not HOW you work: a remote listing is tagged
     # "Paris, France". Reading it as on-site deleted every remote role outside
@@ -304,6 +343,26 @@ def test_a_bare_city_is_never_read_as_onsite():
     """The regression that emptied a Europe + Remote search entirely: the
     boards return 'Paris, France' for a fully remote role."""
     assert matches_work_mode("Paris, France", ["remote"]) is True
+
+
+@pytest.mark.parametrize("location", [
+    "Work From Home (India)", "Remote", "Remote, US", "Anywhere",
+    "Work From Home", "Virtual - Europe",
+])
+def test_a_remote_search_keeps_work_from_home_listings(location):
+    """The two labels are the SAME arrangement to a search for remote work.
+
+    They were disjoint tokens, so a remote-only search computed
+    stated & wanted == set() and dropped every WFH posting - while boards label
+    the same role either way depending on who wrote the listing.
+    """
+    assert matches_work_mode(location, ["remote"]) is True
+    assert matches_work_mode(location, ["wfh"]) is True
+
+
+def test_hybrid_is_still_excluded_from_a_remote_only_search():
+    """Widening remote/wfh into one family must not make hybrid match too."""
+    assert matches_work_mode("Hybrid - London", ["remote"]) is False
     assert matches_work_mode("Bengaluru, Karnataka, India", ["remote"]) is True
     # and it is likewise not claimed as on-site
     assert matches_work_mode("Paris, France", ["onsite"]) is True
@@ -314,7 +373,10 @@ def test_a_bare_city_is_never_read_as_onsite():
     ("Remote, US", ["onsite"], False),
     ("Bangalore, India", ["onsite"], True),
     ("Work From Home (India)", ["wfh"], True),
-    ("Work From Home (India)", ["remote"], False),
+    # Was False. WFH and remote are one arrangement, so a remote-only search
+    # must keep a Work-From-Home posting; boards label the same role either way
+    # and the old disjoint tokens deleted half of every remote hunt.
+    ("Work From Home (India)", ["remote"], True),
     ("Hybrid - London", ["hybrid"], True),
     ("Hybrid - London", ["remote"], False),
     ("Hybrid - London", ["onsite"], False),

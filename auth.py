@@ -29,6 +29,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -38,6 +39,17 @@ DB_FILE = os.path.join(HERE, "users.db")
 
 SESSION_COOKIE = "js_session"
 SESSION_DAYS = 30
+
+# Idle timeout. The absolute SESSION_DAYS cap answers "how long may this cookie
+# ever live"; this answers "how long may it live with nobody using it", which is
+# the case that matters on a shared or walked-away-from machine. A session idle
+# past this is treated as gone: session_user returns None and the row is
+# deleted, so the next sign-in starts from nothing rather than inheriting the
+# previous session's open CV.
+SESSION_IDLE_MINUTES = 25
+SESSION_EXTEND_MINUTES = 5
+SESSION_IDLE_SECONDS = SESSION_IDLE_MINUTES * 60
+SESSION_EXTEND_SECONDS = SESSION_EXTEND_MINUTES * 60
 VERIFY_TOKEN_HOURS = 24
 RESET_TOKEN_HOURS = 2
 
@@ -60,7 +72,14 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT    NOT NULL,
     created_at    TEXT    NOT NULL,
     verified_at   TEXT,
-    is_owner      INTEGER NOT NULL DEFAULT 0
+    is_owner      INTEGER NOT NULL DEFAULT 0,
+    -- Display identity. The dashboard greets a nickname and shows a chosen
+    -- avatar instead of the login address, which is the one field of this app
+    -- that gets read aloud on a screen share. Both are nullable and fall back to
+    -- the address: an account created before these columns existed keeps
+    -- working untouched (see _migrate).
+    nickname      TEXT,
+    avatar        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -68,7 +87,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at    TEXT    NOT NULL,
     expires_at    TEXT    NOT NULL,
-    active_profile TEXT
+    active_profile TEXT,
+    -- When the cookie was last presented, as epoch seconds. The idle timeout is
+    -- measured from this, not from expires_at, so an active user is never
+    -- logged out mid-task and a stale one is dropped even though their absolute
+    -- expiry is weeks off. Epoch rather than the ISO timestamps the rest of this
+    -- schema uses, because the UI needs the remaining seconds and subtracting
+    -- strings is how "19:58 left" happens.
+    last_seen     REAL    NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
@@ -117,6 +143,25 @@ CREATE TABLE IF NOT EXISTS rag_documents (
     PRIMARY KEY (user_id, id)
 );
 CREATE INDEX IF NOT EXISTS idx_rag_docs_user ON rag_documents(user_id);
+
+-- Full posting text, keyed by URL, fetched in the background so the first render
+-- does not wait on a browser.
+--
+-- Deliberately NOT scoped to a user_id. A job description is public text about a
+-- posting, identical for everyone who opens that URL, and the expensive part is
+-- the fetch: sharing one row means the second person to generate a resume for a
+-- posting gets it instantly instead of paying for another Chromium run. Nothing
+-- private is stored here - no cookie, no account, no candidate data.
+--
+-- `text` may legitimately be empty: that row is the record of "we already tried
+-- this posting and there was no description to get", which is what stops every
+-- click from launching another browser against a wall.
+CREATE TABLE IF NOT EXISTS job_desc_cache (
+    url        TEXT    PRIMARY KEY,
+    text       TEXT    NOT NULL DEFAULT '',
+    source     TEXT    NOT NULL DEFAULT 'none',
+    fetched_at REAL    NOT NULL
+);
 """
 
 
@@ -132,10 +177,29 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns introduced after an account was first created.
+
+    CREATE TABLE IF NOT EXISTS is a no-op on a table that already exists, so
+    every column added to SCHEMA after v1 silently does not exist in a real
+    users.db and the first query that names it fails with "no such column". Each
+    addition has to be applied explicitly, by comparing what the live table has
+    against what SCHEMA now declares. Additive only: no column is ever dropped or
+    retyped, because that would lose the data already in it.
+    """
+    for table, column, decl in (("users", "nickname", "TEXT"),
+                                ("users", "avatar", "TEXT"),
+                                ("sessions", "last_seen", "REAL NOT NULL DEFAULT 0")):
+        have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
 def init_db() -> None:
     """Create the schema. Safe to call on every boot."""
     with connect() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
 
 
 def _now() -> str:
@@ -309,6 +373,62 @@ def mark_verified(uid: int) -> None:
 
 
 # --------------------------------------------------------------------------
+# display identity: nickname + avatar
+# --------------------------------------------------------------------------
+
+# The avatar choices offered in the UI. Kept server-side so the ids stored in
+# the database are validated against one list: the UI cannot invent an id, and
+# an old row naming an avatar that has since been removed degrades to the
+# default instead of rendering a blank circle.
+AVATARS = ("aurora", "ember", "forest", "harbor", "iris", "sand", "slate",
+           "violet", "coral", "mint", "dusk", "cobalt")
+
+DEFAULT_AVATAR = "aurora"
+
+MAX_NICKNAME = 32
+
+
+def display_name(user: dict) -> str:
+    """What the dashboard calls this person.
+
+    Falls back to the local part of the address so a user who never picked a
+    nickname still gets something that is not a full email in the header.
+    """
+    nick = (user.get("nickname") or "").strip()
+    if nick:
+        return nick
+    email = (user.get("email") or "").strip()
+    return email.split("@")[0] if email else "there"
+
+
+def set_identity(uid: int, nickname: str | None = None,
+                 avatar: str | None = None) -> dict:
+    """Update the display identity. Each field is optional and independent.
+
+    Nicknames are trimmed and length-capped, and control characters are dropped
+    rather than escaped: this string is rendered into the header, into a
+    document title and into LaTeX output, and a nickname is a thing a person
+    types, not markup. An empty nickname is stored as NULL, which reads as
+    "use the fallback" instead of persisting a blank that overrides the address.
+    """
+    sets, vals = [], []
+    if nickname is not None:
+        clean = "".join(ch for ch in nickname.strip() if ch.isprintable())
+        clean = re.sub(r"\s+", " ", clean)[:MAX_NICKNAME].strip()
+        sets.append("nickname = ?")
+        vals.append(clean or None)
+    if avatar is not None:
+        sets.append("avatar = ?")
+        vals.append(avatar if avatar in AVATARS else DEFAULT_AVATAR)
+    if not sets:
+        return get_user(uid) or {}
+    with connect() as conn:
+        conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?",
+                     (*vals, uid))
+    return get_user(uid) or {}
+
+
+# --------------------------------------------------------------------------
 # sessions
 # --------------------------------------------------------------------------
 
@@ -322,22 +442,115 @@ def create_session(uid: int) -> tuple[str, str]:
     expires = _in(SESSION_DAYS)
     with connect() as conn:
         conn.execute("INSERT INTO sessions (token_hash, user_id, created_at, "
-                     "expires_at) VALUES (?, ?, ?, ?)",
-                     (_token_hash(token), uid, _now(), expires))
+                     "expires_at, last_seen) VALUES (?, ?, ?, ?, ?)",
+                     (_token_hash(token), uid, _now(), expires, time.time()))
         conn.execute("DELETE FROM sessions WHERE expires_at < ?", (_now(),))
     return token, expires
 
 
-def session_user(token: str) -> dict | None:
-    """The account behind a session cookie, or None if absent/expired."""
+def session_row(token: str) -> dict | None:
+    """The session row JOINED to its account, ignoring the idle timeout.
+
+    Exposed separately so /api/auth/session can report "19 minutes left" and the
+    signed-in display name to a user who is very much still signed in;
+    session_user is the one that decides whether they are. This one deliberately
+    does NOT touch last_seen, because the countdown polls it and a poll is not
+    activity - a session refreshed by its own countdown would never expire.
+
+    The join is what makes it usable for identity: the nickname and avatar live
+    on users, not sessions, so a sessions-only row would report "there" for every
+    signed-in user.
+    """
     if not token:
         return None
     with connect() as conn:
         row = conn.execute(
-            "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id "
+            "SELECT s.*, u.email, u.nickname, u.avatar, u.verified_at, u.is_owner "
+            "FROM sessions s JOIN users u ON u.id = s.user_id "
+            "WHERE s.token_hash = ?",
+            (_token_hash(token),)).fetchone()
+    return dict(row) if row else None
+
+
+def seconds_left(token: str) -> int:
+    """Seconds of idle allowance this session has left, 0 when there is none.
+
+    The number the countdown renders, so the UI and the server agree on when the
+    logout happens instead of the browser guessing from its own clock. Reads
+    without touching, for the same reason as session_row.
+    """
+    row = session_row(token)
+    if not row:
+        return 0
+    # A row written before the migration has last_seen = 0, which reads as 1970
+    # and would instantly expire every pre-existing session. Treat it as "used
+    # just now" so a deploy cannot log out everyone who was mid-task.
+    last = row.get("last_seen") or time.time()
+    return max(0, int(SESSION_IDLE_SECONDS - (time.time() - last)))
+
+
+def extend_session(token: str, minutes: int = SESSION_EXTEND_MINUTES) -> int:
+    """Push the idle deadline out and return the new remaining seconds, or 0 if
+    the session is already gone.
+
+    The "+5 minutes" button. Two rules it must not break:
+
+    It cannot revive an expired session. Refreshing last_seen on a row that is
+    already past the idle deadline would let anyone holding a dead cookie keep it
+    alive by clicking the button - the timeout would be advisory rather than
+    enforced. An expired row is deleted and 0 is returned instead.
+
+    It cannot make a session live forever. It advances last_seen to now, which
+    restores the full allowance rather than adding to it, so repeated clicks
+    cannot build an unbounded session.
+    """
+    if not token:
+        return 0
+    now = time.time()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT last_seen, expires_at FROM sessions WHERE token_hash = ?",
+            (_token_hash(token),)).fetchone()
+        if not row or row["expires_at"] <= _now():
+            return 0
+        last = row["last_seen"] or now
+        if now - last > SESSION_IDLE_SECONDS:
+            conn.execute("DELETE FROM sessions WHERE token_hash = ?",
+                         (_token_hash(token),))
+            return 0
+        conn.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?",
+                     (now, _token_hash(token)))
+    return SESSION_IDLE_SECONDS
+
+
+def session_user(token: str) -> dict | None:
+    """The account behind a session cookie, or None if absent/expired/idle.
+
+    Every authenticated request lands here, so this is where the idle timeout is
+    actually enforced: a cookie nobody has presented for SESSION_IDLE_MINUTES is
+    deleted rather than merely refused, which is what makes "no data is carried
+    into the next session" true instead of aspirational. Touching last_seen on
+    the way through is what makes the timeout an *idle* one.
+    """
+    if not token:
+        return None
+    now = time.time()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT u.*, s.last_seen, s.token_hash AS _th FROM sessions s "
+            "JOIN users u ON u.id = s.user_id "
             "WHERE s.token_hash = ? AND s.expires_at > ?",
             (_token_hash(token), _now())).fetchone()
-    return dict(row) if row else None
+        if not row:
+            return None
+        last = row["last_seen"] or now
+        if now - last > SESSION_IDLE_SECONDS:
+            conn.execute("DELETE FROM sessions WHERE token_hash = ?",
+                         (_token_hash(token),))
+            return None
+        conn.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?",
+                     (now, _token_hash(token)))
+    return dict(row)
 
 
 def set_session_profile(token: str, profile_id: str) -> None:

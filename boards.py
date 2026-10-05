@@ -147,11 +147,17 @@ def _looks_walled(page) -> bool:
 
 def fetch(url: str, *, params: dict | None = None, timeout: int = 25,
           browser: bool = False, headless: bool = True,
-          solve_cloudflare: bool = True) -> object:
+          solve_cloudflare: bool = True, network_idle: bool = True) -> object:
     """GET a board page and return it as a parsed Scrapling Selector.
 
     `browser=False` (default) is the impersonated HTTP path: ~1s, no browser.
     `browser=True` is the Chromium path, for JS-only boards and as escalation.
+
+    `network_idle` is a search-page setting, not a general one. A results page
+    keeps polling, so waiting for the network to go quiet is the only way to know
+    the last card has arrived - but it costs 131s on a posting page, whose
+    description is already in the DOM long before the trackers settle. Pass
+    False there and the same call returns in ~8s.
 
     Raises BoardWall for a real block page, ThrottledOrUnparsed when the request
     succeeded but nothing on the page can be read yet.
@@ -161,7 +167,7 @@ def fetch(url: str, *, params: dict | None = None, timeout: int = 25,
             url,
             params=params or None,
             headless=headless,
-            network_idle=True,
+            network_idle=network_idle,
             disable_resources=True,
             block_ads=True,
             solve_cloudflare=solve_cloudflare,

@@ -92,8 +92,34 @@ def _capture(box):
 
 def test_a_fresh_server_asks_for_the_first_account(client):
     st = client.get("/api/auth/state").json()
-    assert st == {"needs_bootstrap": True, "authenticated": False,
-                  "email": "", "verified": False, "smtp_configured": False}
+    # Subset check, not dict equality: this response now also carries the display
+    # identity and the idle-timeout numbers, and adding a field must not break a
+    # test about bootstrapping. Every key it did assert is still asserted.
+    for key, want in (("needs_bootstrap", True), ("authenticated", False),
+                      ("email", ""), ("verified", False),
+                      ("smtp_configured", False)):
+        assert st[key] == want, f"{key} was {st[key]!r}"
+    # Nobody is signed in, so there is no identity and no time on the clock.
+    assert st["nickname"] == ""
+    assert st["needs_nickname"] is False
+    assert st["seconds_left"] == 0
+    assert st["idle_minutes"] == 25
+    assert st["extend_minutes"] == 5
+
+
+def test_the_state_response_reports_the_identity_and_countdown_once_signed_in(client):
+    """One call has to carry everything the header renders, so a cold page load
+    does not need a second round trip just to learn who is there."""
+    reg = client.post("/api/auth/register",
+                      json={"email": "ident@b.com", "password": "a-good-password"})
+    assert reg.status_code == 200
+    st = client.get("/api/auth/state").json()
+    assert st["authenticated"] is True
+    assert st["email"] == "ident@b.com"
+    assert st["avatar"] == "aurora"          # the default, no pick made yet
+    assert st["display_name"] == "ident"     # local part until a nickname is set
+    assert st["needs_nickname"] is True
+    assert st["seconds_left"] > 1400
 
 
 def test_the_ui_is_served_before_anyone_signs_in(client):
@@ -771,3 +797,143 @@ def test_the_legacy_file_is_untouched_by_the_migration(client, tmp_path,
     monkeypatch.setattr(d, "PROFILES_FILE", str(legacy))
     register(client, verify=False)
     assert legacy.read_text(encoding="utf-8") == original
+
+# --------------------------------------------------------------------------
+# session countdown and display identity
+# --------------------------------------------------------------------------
+
+def test_the_session_route_reports_the_countdown_to_a_signed_in_user(client):
+    register(client)
+    st = client.get("/api/auth/session").json()
+    assert st["ok"] is True and st["signed_in"] is True
+    assert st["seconds_left"] > 0
+    assert st["idle_minutes"] == 25
+    assert st["extend_minutes"] == 5
+
+
+def test_the_session_route_reports_signed_out_without_a_cookie(client):
+    st = client.get("/api/auth/session").json()
+    assert st["signed_in"] is False
+    assert st["seconds_left"] == 0
+
+
+def test_the_session_route_does_not_extend_the_clock_by_being_read(client):
+    """Polling it must not count as activity.
+
+    The countdown polls this endpoint; if the poll refreshed last_seen, the
+    session would be kept alive by the very widget meant to report it going
+    stale, and would never log out.
+    """
+    register(client)
+    token = client.cookies.get(auth.SESSION_COOKIE)
+    _age_session(token, auth.SESSION_IDLE_SECONDS - 30)
+    before = client.get("/api/auth/session").json()["seconds_left"]
+    for _ in range(5):
+        client.get("/api/auth/session")
+    after = client.get("/api/auth/session").json()["seconds_left"]
+    assert after <= before, "reading the clock pushed the deadline out"
+
+
+def test_extending_pushes_the_deadline_back_out(client):
+    register(client)
+    _age_session(client.cookies.get(auth.SESSION_COOKIE),
+                 auth.SESSION_IDLE_SECONDS - 20)
+    r = client.post("/api/auth/extend").json()
+    assert r["ok"] is True
+    assert r["seconds_left"] > auth.SESSION_IDLE_SECONDS - 5
+
+
+def test_extending_an_expired_session_reports_failure_rather_than_resurrecting_it(client):
+    """A 200 here would leave the user watching a dashboard that 401s silently."""
+    register(client)
+    _age_session(client.cookies.get(auth.SESSION_COOKIE),
+                 auth.SESSION_IDLE_SECONDS + 5)
+    r = client.post("/api/auth/extend").json()
+    assert r["ok"] is False
+    assert r["signed_in"] is False
+    assert r["seconds_left"] == 0
+
+
+def test_an_idled_out_cookie_is_refused_by_the_protected_endpoints(client):
+    register(client)
+    _age_session(client.cookies.get(auth.SESSION_COOKIE),
+                 auth.SESSION_IDLE_SECONDS + 5)
+    assert client.get("/api/config").status_code == 401
+    assert client.get("/api/auth/session").json()["signed_in"] is False
+
+
+def test_the_identity_can_be_set_and_is_returned_everywhere(client):
+    register(client, email="ident@jobs.test")
+    r = client.post("/api/auth/identity",
+                    json={"nickname": "Ada", "avatar": "forest"}).json()
+    assert r["ok"] is True
+    assert r["nickname"] == "Ada" and r["avatar"] == "forest"
+    # Both the lightweight session poll and the full state agree.
+    assert client.get("/api/auth/session").json()["display_name"] == "Ada"
+    assert client.get("/api/auth/state").json()["display_name"] == "Ada"
+
+
+def test_setting_a_nickname_clears_the_needs_nickname_flag(client):
+    register(client)
+    assert client.get("/api/auth/state").json()["needs_nickname"] is True
+    client.post("/api/auth/identity", json={"nickname": "Ada"})
+    assert client.get("/api/auth/state").json()["needs_nickname"] is False
+
+
+def test_an_unknown_avatar_is_refused_by_the_route(client):
+    register(client)
+    r = client.post("/api/auth/identity",
+                    json={"avatar": "<script>"}).json()
+    assert r["avatar"] == auth.DEFAULT_AVATAR
+
+
+def test_the_identity_route_requires_a_session(client):
+    assert client.post("/api/auth/identity", json={"nickname": "X"}).status_code == 401
+
+
+def test_one_account_cannot_read_or_change_another_identity(client):
+    """Two clients, two cookies, two accounts - the isolation that matters."""
+    register(client, email="one@jobs.test")
+    client.post("/api/auth/identity", json={"nickname": "One", "avatar": "ember"})
+    cookie = dict(client.cookies)
+
+    other = TestClient(d.app)
+    other.headers["host"] = "jobs.test"
+    other.post("/api/auth/register",
+               json={"email": "two@jobs.test", "password": "a-good-password"})
+    assert other.get("/api/auth/session").json()["display_name"] == "two"
+
+    other.post("/api/auth/identity", json={"nickname": "Two"})
+    client.cookies.clear()
+    client.cookies.update(cookie)
+    assert client.get("/api/auth/session").json()["display_name"] == "One"
+
+
+def test_the_avatar_list_is_served_and_never_exceeds_the_valid_set(client):
+    r = client.get("/api/auth/avatars").json()
+    assert r["ok"] is True
+    ids = [a["id"] for a in r["avatars"]]
+    assert ids and set(ids) == set(auth.AVATARS)
+    assert r["default"] == auth.DEFAULT_AVATAR
+    for a in r["avatars"]:
+        assert a["from"].startswith("#") and a["to"].startswith("#"), \
+            f"{a['id']} has no gradient stops, so the swatch would render blank"
+
+
+def test_every_avatar_has_a_colour_pair_in_the_server(client):
+    """The picker renders what this returns, so a missing pair is a blank circle."""
+    for name in auth.AVATARS:
+        assert name in d._AVATARS, f"{name} has no colour defined"
+
+
+def test_signing_out_drops_the_session_and_the_countdown(client):
+    register(client)
+    assert client.post("/api/auth/logout").json()["ok"] is True
+    assert client.get("/api/auth/session").json()["signed_in"] is False
+
+
+def _age_session(token, seconds):
+    import time
+    with auth.connect() as conn:
+        conn.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?",
+                     (time.time() - seconds, auth._token_hash(token)))

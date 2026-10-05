@@ -9,6 +9,7 @@ instead.
 import json
 from types import SimpleNamespace
 
+import pytest
 from langchain_core.messages import HumanMessage, ToolMessage
 
 from agent import (AgentConfig, JOBS_MARKER, _blocked_marker,
@@ -16,8 +17,8 @@ from agent import (AgentConfig, JOBS_MARKER, _blocked_marker,
                    _fallback_node_note, _fallback_note, _keep_job,
                    _silent_senders, _summary_payload, _template_summary,
                    _text_content, board_tool_args, default_task_messages,
-                   is_hunt_request, requested_board, search_query_from,
-                   system_message)
+                   is_hunt_request, requested_board, requested_source,
+                   search_query_from, system_message)
 
 
 def _cfg(**over):
@@ -350,6 +351,45 @@ def test_the_seen_memory_is_scoped_to_the_account():
     assert "seen_scope" not in board_tool_args(_cfg(target_role="Data Analyst"))
     args = board_tool_args(_cfg(target_role="Data Analyst", seen_scope="u7"))
     assert args["seen_scope"] == "u7"
+
+
+@pytest.mark.parametrize("text", [
+    "search the gmail alerts",
+    "check my inbox for jobs",
+    "just email me the matches",
+    "job alerts from naukri",
+    "send me the emails",
+    "look in my mail",
+    "gmail jobs",
+])
+def test_gmail_is_searched_only_when_the_user_asks_for_it(text):
+    assert requested_source(_state(text)) == "gmail"
+
+
+@pytest.mark.parametrize("text", [
+    "find python jobs",
+    "only linkedin",
+    "remote work please",
+    "look on cutshort",
+    "software engineer roles",
+    "show me openings",
+    "naukri and linkedin",
+])
+def test_a_normal_hunt_searches_the_boards_only(text):
+    """No Gmail search unless it was requested.
+
+    The old fan-out fired the board scraper AND both alert senders on every
+    hunt, which is what the user saw as "two job search emails running" - and
+    the Gmail results were computed even when the boards answered, then thrown
+    away by the prep node.
+    """
+    assert requested_source(_state(text)) == "boards"
+
+
+def test_a_bare_job_word_is_not_read_as_a_request_for_email():
+    """"job" alone must not trigger Gmail, or every hunt becomes an email hunt."""
+    for text in ("find me a job", "job openings", "new jobs today", "jobs"):
+        assert requested_source(_state(text)) == "boards"
 
 
 def test_board_tool_args_searches_the_role_not_the_board_keyword():
