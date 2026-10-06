@@ -11,6 +11,7 @@ Every case here is a regression test for a bug that actually shipped:
 
 import pytest
 
+import filters
 from filters import (BOARD_ALIASES, CITY_OPTIONS, COUNTRIES, DEFAULT_REGIONS,
                      DEFAULT_WORK_MODES,
                      REGIONS, REGION_TOKENS, WORK_MODES, WORLDWIDE,
@@ -752,3 +753,20 @@ def test_every_country_is_reachable_from_its_own_name():
 def test_boards_location_falls_back_to_a_country(modes, cities, remote_only,
                                                  countries, expected):
     assert boards_location(modes, cities, remote_only, countries) == expected
+
+
+def test_the_default_sender_list_has_no_repeats():
+    """`ALL_ALERT_SENDERS` used to concatenate an address that was already in
+    FALLBACK_SENDERS, so `donotreply@match.indeed.com` appeared twice. A source
+    picker built on this offered it once and searched it twice, and a
+    sender-count limit was spent twice on one address."""
+    assert len(filters.ALL_ALERT_SENDERS) == len(set(filters.ALL_ALERT_SENDERS))
+    assert filters.INDEED_ALERT_SENDER in filters.ALL_ALERT_SENDERS
+
+
+def test_a_per_account_fallback_list_also_has_no_repeats(monkeypatch):
+    for account in filters.GMAIL_ACCOUNT_VARS[:2]:
+        monkeypatch.delenv(account[2], raising=False)
+    for i in (1, 2):
+        got = filters.gmail_senders_for_account(i)
+        assert len(got) == len(set(got)), got

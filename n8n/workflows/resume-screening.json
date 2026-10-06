@@ -1,0 +1,294 @@
+{
+  "name": "JobScope Resume Screening",
+  "active": false,
+  "versionId": "6f5f3f1e-9a8e-4c2b-8f5b-1d2c3e4f5a6b",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "nodes": [
+    {
+      "id": "sticky-howto",
+      "name": "How this works",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-840, -260],
+      "parameters": {
+        "width": 940,
+        "height": 300,
+        "color": 5,
+        "content": "## JobScope resume screening\n\n1. Start JobScope locally (`python -m uvicorn dashboard:app --port 8000`) - this workflow calls `http://host.docker.internal:8000/api/screen`.\n2. Create two credentials once (see `n8n/README`): **JobScope Screen Token** (Header Auth: `X-JobScope-Token` = your `SCREEN_TOKEN` from `.env`) and **JobScope Ollama** (Base URL `http://host.docker.internal:11434`).\n3. Activate this workflow, then POST a resume file:\n\n```\ncurl -F resume=@cv.pdf -F jd_text=\"We need a Python and Kubernetes engineer\" http://localhost:5678/webhook/resume-screening\n```\n\nThe score is always computed by JobScope (`ats_score`); the AI Agent only explains the four sections (Skills / Experience / Missing / Verdict)."
+      }
+    },
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-840, 240],
+      "webhookId": "jobscope-resume-screening",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "resume-screening",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "pack-request",
+      "name": "Pack request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-640, 240],
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst body = (item.json && item.json.body) ? item.json.body : (item.json || {});\nconst binary = item.binary || {};\nconst keys = Object.keys(binary);\nlet resume_base64 = '';\nlet filename = '';\nif (keys.length > 0) {\n  // The webhook names the binary property after the form field (or by the\n  // node option); take whatever arrived - there is only one file here.\n  const key = keys[0];\n  const buffer = await this.helpers.getBinaryDataBuffer(0, key);\n  resume_base64 = buffer.toString('base64');\n  filename = (binary[key] && binary[key].fileName) || key;\n}\nreturn [{\n  json: {\n    resume_base64,\n    filename: filename || 'resume',\n    jd_text: typeof body.jd_text === 'string' ? body.jd_text : '',\n    job_url: typeof body.job_url === 'string' ? body.job_url : '',\n  },\n}];"
+      }
+    },
+    {
+      "id": "screen-resume",
+      "name": "Screen resume",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-440, 240],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/screen",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_SCREEN_TOKEN_CREDENTIAL",
+          "name": "JobScope Screen Token"
+        }
+      }
+    },
+    {
+      "id": "screening-ok",
+      "name": "Screening ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [-240, 240],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "screening-ok-condition",
+              "leftValue": "={{ $json.body && $json.body.ok === true }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ai-agent",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [-40, 100],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ JSON.stringify($('Screen resume').first().json.body) }}",
+        "options": {
+          "systemMessage": "You are the resume screening analyst inside the JobScope n8n workflow. You receive ONE JSON object produced by JobScope's /api/screen endpoint. That JSON is the only evidence you may use.\n\nRules:\n- The score was already computed by JobScope (ats.total, ats.band, ats.breakdown, ats.hits, ats.missing, ats.issues, ats.keyword_total). Never recompute, contradict or round it, and never invent numbers.\n- Never invent employers, dates, tools, degrees, certifications or metrics. Use only what the JSON states; preview is an excerpt of the real document.\n- If jd_origin is \"none\", say the score is structural only (no job description was supplied).\n- Output EXACTLY four lines, each starting with its label, a colon and one space. Nothing else - no preamble, no markdown, no bullets:\nSkills: ...\nExperience: ...\nMissing: ...\nVerdict: ...\n- Maximum two sentences per line, plain text.\n- Skills: what resume evidence supports, taken from ats.hits and preview.\n- Experience: how well the experience fits the job, based only on the job keywords that are present or absent.\n- Missing: the concrete gaps, from ats.issues and ats.missing - what the candidate must address.\n- Verdict: one sentence naming ats.band and ats.total and whether to advance (strong/good: advance, fair: borderline, weak: do not advance)."
+        }
+      }
+    },
+    {
+      "id": "ollama-model",
+      "name": "Ollama Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [-80, 360],
+      "parameters": {
+        "model": "llama3.1",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "credentials": {
+        "ollamaApi": {
+          "id": "REPLACE_OLLAMA_CREDENTIAL",
+          "name": "JobScope Ollama"
+        }
+      }
+    },
+    {
+      "id": "shape-analysis",
+      "name": "Shape analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [180, 100],
+      "parameters": {
+        "jsCode": "const screening = $('Screen resume').first().json.body || {};\nconst raw = String(($json && $json.output) || '').trim();\nconst fields = { skills: '', experience: '', missing: '', verdict: '' };\nraw.split(/\\r?\\n/).forEach((line) => {\n  const m = line.match(/^\\s*(Skills|Experience|Missing|Verdict)\\s*:\\s*(.*)$/i);\n  if (m) fields[m[1].toLowerCase()] = m[2].trim();\n});\n// A model that ignores the four-line contract still gets a usable answer.\nif (!fields.verdict) fields.verdict = raw;\nreturn [{\n  json: {\n    ok: true,\n    ats: screening.ats,\n    jd_origin: screening.jd_origin,\n    jd_chars: screening.jd_chars,\n    resume_chars: screening.resume_chars,\n    ocr: screening.ocr,\n    analysis: fields,\n    note: 'ats.total was computed by JobScope ats_score.score_resume; the AI Agent only explains it.',\n  },\n}];"
+      }
+    },
+    {
+      "id": "respond-analysis",
+      "name": "Respond analysis",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [400, 100],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "screening-failed",
+      "name": "Screening failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-40, 500],
+      "parameters": {
+        "jsCode": "const res = $json || {};\nconst body = res.body || res;\nconst detail = body.detail\n  || (res.error && (res.error.message || res.error))\n  || 'screening failed';\nreturn [{\n  json: {\n    ok: false,\n    error: typeof detail === 'string' ? detail : JSON.stringify(detail),\n    status: Number(res.statusCode) || 502,\n  },\n}];"
+      }
+    },
+    {
+      "id": "respond-failed",
+      "name": "Respond failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [180, 500],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, error: $json.error } }}",
+        "options": {
+          "responseCode": "={{ $json.status || 502 }}"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Pack request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pack request": {
+      "main": [
+        [
+          {
+            "node": "Screen resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Screen resume": {
+      "main": [
+        [
+          {
+            "node": "Screening ok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Screening ok?": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Screening failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Shape analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape analysis": {
+      "main": [
+        [
+          {
+            "node": "Respond analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Screening failed": {
+      "main": [
+        [
+          {
+            "node": "Respond failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

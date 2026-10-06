@@ -1,17 +1,18 @@
 """Tests for the scraper's pure helpers (card parsing, ranking, dedupe).
 
 The board scrape functions themselves need live HTTP, so they are not unit
-tested — but everything they hand to the filter layer is, which is where the
+tested â€” but everything they hand to the filter layer is, which is where the
 silent data loss happened.
 """
 
 import re
 
+import filters
 import mcp_server_indeed_scraper as scraper
 
 
 # --------------------------------------------------------------------------
-# Job.desc — the description the search already collected
+# Job.desc â€” the description the search already collected
 # --------------------------------------------------------------------------
 
 def test_a_job_carries_no_description_key_when_it_has_none():
@@ -148,7 +149,7 @@ def test_outside_india_drops_remote_india():
 
 
 # --------------------------------------------------------------------------
-# _apply_filters — work type + region
+# _apply_filters â€” work type + region
 # --------------------------------------------------------------------------
 
 def test_apply_filters_without_new_args_is_the_old_behaviour():
@@ -193,7 +194,7 @@ def test_apply_filters_treats_empty_lists_as_no_filtering():
 
 
 # --------------------------------------------------------------------------
-# _scope_label — the header must describe the filters that actually ran
+# _scope_label â€” the header must describe the filters that actually ran
 # --------------------------------------------------------------------------
 
 def test_scope_label_defaults_to_the_legacy_wording():
@@ -220,7 +221,7 @@ def test_scope_label_omits_worldwide_and_a_plain_remote_location():
 
 
 # --------------------------------------------------------------------------
-# _linkedin_cards — the location has to survive the parse
+# _linkedin_cards â€” the location has to survive the parse
 # --------------------------------------------------------------------------
 
 _CARD = """
@@ -287,7 +288,7 @@ def test_linkedin_cards_on_an_unrelated_page():
 
 
 # --------------------------------------------------------------------------
-# _select — ranking
+# _select â€” ranking
 # --------------------------------------------------------------------------
 
 def test_select_ranks_query_matching_titles_first():
@@ -382,7 +383,7 @@ def test_text_strips_tags_and_collapses_whitespace():
 
 
 # --------------------------------------------------------------------------
-# Module integrity — the duplicate-definition / dead-code regressions
+# Module integrity â€” the duplicate-definition / dead-code regressions
 # --------------------------------------------------------------------------
 
 def test_exactly_one_internshala_scraper_is_bound():
@@ -424,7 +425,7 @@ def test_friendly_shortens_common_failures():
 
 
 # --------------------------------------------------------------------------
-# Seen-listing memory — the fix for "every hunt returns the same 20 jobs"
+# Seen-listing memory â€” the fix for "every hunt returns the same 20 jobs"
 # --------------------------------------------------------------------------
 
 def test_seen_memory_remembers_only_what_was_shown():
@@ -636,3 +637,55 @@ def test_probe_clears_the_block_cache_after_a_success():
     # cache structure the tool relies on is a plain timestamp dict.
     assert isinstance(scraper._fail_until, dict)
     assert all(isinstance(v, float) for v in scraper._fail_until.values())
+
+
+# --------------------------------------------------------------------------
+# Related roles â€” "DevOps Engineer" also finds Cloud Engineer / AWS Engineer
+# --------------------------------------------------------------------------
+
+def test_a_devops_search_ranks_cloud_and_aws_roles_above_unrelated_titles():
+    """The request: DevOps Engineer is also hired as Cloud/AWS/Platform/SRE.
+
+    Those titles are legitimate hits, so they must sort ABOVE an unrelated
+    posting instead of being demoted into the generic tail.
+    """
+    jobs = [
+        _FakeJob("Marketing Coordinator"),
+        _FakeJob("DevOps Engineer"),
+        _FakeJob("Cloud Engineer"),
+        _FakeJob("Registered Nurse"),
+        _FakeJob("AWS Engineer"),
+        _FakeJob("SRE"),
+    ]
+    out = scraper._select(jobs, "DevOps Engineer", cap=10)
+    assert len(out) == 6, "related roles rank, they are never dropped"
+    order = [j.title for j in out]
+    assert order[0] == "DevOps Engineer", "the literal role still leads"
+    # Every related title lands above the unrelated ones.
+    assert order.index("Cloud Engineer") < order.index("Registered Nurse")
+    assert order.index("AWS Engineer") < order.index("Registered Nurse")
+    assert order.index("SRE") < order.index("Registered Nurse")
+
+
+def test_a_related_title_still_ranks_below_a_literal_match():
+    """A synonym is a weaker signal than the role actually asked for."""
+    jobs = [
+        _FakeJob("Cloud Engineer"),
+        _FakeJob("DevOps Engineer II"),
+    ]
+    out = scraper._select(jobs, "DevOps Engineer", cap=10)
+    assert [j.title for j in out] == ["DevOps Engineer II", "Cloud Engineer"]
+
+
+def test_synonym_ranking_still_keeps_every_listing():
+    """Widening the ranking must never become a filter again.
+
+    The earlier "no jobs available" bug came from dropping rows whose titles did
+    not match. Related roles widen the ranking; they must not reintroduce any
+    deletion.
+    """
+    jobs = [_FakeJob(f"Unrelated Role {i}") for i in range(30)]
+    out = scraper._select(jobs, "DevOps Engineer", cap=10)
+    assert len(out) == 10, "capped, but filled from the tail rather than empty"
+
+

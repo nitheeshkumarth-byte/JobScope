@@ -52,3 +52,13 @@ profiles.json
 users.db
 users.db-wal
 users.db-shm
+
+# Local copy of real Gmail job-alert mail (subjects, bodies, links). Private
+# to the machine that synced it; never committed.
+gmail_cache.db
+gmail_cache.db-wal
+gmail_cache.db-shm
+
+# Cached public GitHub repository metadata and READMEs, keyed by handle. Pure
+# derived data with a TTL - regenerating it costs a handful of API calls.
+.github_cache/

@@ -263,7 +263,13 @@ def test_an_existing_cv_is_still_preferred_over_the_library(client):
     body = _gen(client, jd_text="Spark ETL pipeline")
     # Tailored, not rebuilt: the profile's own CV stays the content source.
     assert "Tailored from" in body["tex"]
-    assert "Spark" not in body["tex"]
+    # The posting's terms may appear only where they are labelled as coming
+    # from the posting (the Objective's "Role focus from the posting" line).
+    # Everywhere else the document is the CV's own content.
+    tex = body["tex"]
+    tex = "\n".join(ln for ln in tex.splitlines()
+                    if "Role focus from the posting" not in ln)
+    assert "Spark" not in tex
 
 
 def test_no_cv_and_no_library_still_falls_back_to_canonical_data(client):
@@ -286,3 +292,123 @@ def test_generation_is_scoped_to_the_signed_in_account(client):
     body = _gen(client, jd_text="classified ledger rewrite")
     assert body["ok"] is True
     assert body["rag_hits"] == 0
+
+
+# --------------------------------------------------------------------------
+# projects from the CV's own GitHub link, and the ATS estimate
+# --------------------------------------------------------------------------
+
+GH_CV = """Jane Doe
+jane@example.com
+Austin, TX
+https://github.com/janedoe
+
+PROJECTS
+Weather Dashboard - Flask app with a charting library
+
+EXPERIENCE
+Data Analyst, Acme - 2021 - 2023
+- Built Spark ETL pipelines for the finance team.
+"""
+
+
+def _gh_result(projects):
+    return {"username": "janedoe", "projects": projects, "repos_scanned": 4,
+            "error": "", "notes": []}
+
+
+def test_github_is_untouched_unless_the_request_asks_for_it(client, monkeypatch):
+    """No request, no API call. Fetching a profile costs rate limit the user
+    may not have spent."""
+    import github_projects
+    monkeypatch.setattr(
+        github_projects, "find_projects",
+        lambda *a, **k: pytest.fail("GitHub was queried unasked"))
+    register(client, "a@jobs.test")
+    body = _gen(client, jd_text="Spark ETL pipeline")
+    assert body["ok"] is True and body["github_projects"] == []
+
+
+def test_the_cv_link_decides_whose_repositories_are_read(client, monkeypatch):
+    """The handle is scraped from the uploaded document, never from a
+    configured user, so two accounts on one deployment read two profiles."""
+    seen = {}
+
+    import github_projects
+    monkeypatch.setattr(
+        github_projects, "find_projects",
+        lambda url, jd, **k: (seen.update(url=url, jd=jd) or _gh_result([])))
+    register(client, "a@jobs.test")
+    set_cv("a@jobs.test", GH_CV)
+    body = _gen(client, jd_text="RAG with FastAPI", github_projects=True)
+    assert body["ok"] is True
+    assert seen["url"] == GH_CV
+    assert "RAG" in seen["jd"]
+
+
+def test_a_matching_repo_reaches_the_generated_document(client, monkeypatch):
+    import github_projects
+    monkeypatch.setattr(
+        github_projects, "find_projects",
+        lambda *a, **k: _gh_result([
+            {"name": "rag-service", "language": "Python",
+             "description": "A RAG service with FastAPI and pgvector",
+             "url": "https://github.com/janedoe/rag-service"}]))
+    register(client, "a@jobs.test")
+    set_cv("a@jobs.test", GH_CV)
+    body = _gen(client, jd_text="RAG engineer with FastAPI",
+                github_projects=True)
+    assert "rag-service" in body["tex"]
+    assert body["github_handle"] == "janedoe"
+    assert [p["name"] for p in body["github_projects"]] == ["rag-service"]
+
+
+def test_a_github_failure_degrades_the_resume_instead_of_the_request(
+        client, monkeypatch):
+    import github_projects
+    monkeypatch.setattr(
+        github_projects, "find_projects",
+        lambda *a, **k: {"username": "janedoe", "projects": [], "error":
+                         "GitHub rate limit hit; set GITHUB_TOKEN.",
+                         "repos_scanned": 0, "notes": []})
+    register(client, "a@jobs.test")
+    set_cv("a@jobs.test", GH_CV)
+    body = _gen(client, jd_text="RAG engineer", github_projects=True)
+    assert body["ok"] is True
+    assert body["github_projects"] == []
+    assert "GITHUB_TOKEN" in body["github_error"]
+
+
+def test_a_cv_with_no_github_link_fetches_nothing(client, monkeypatch):
+    import github_projects
+    monkeypatch.setattr(
+        github_projects, "find_projects",
+        lambda *a, **k: {"username": "", "projects": [], "error": "",
+                         "repos_scanned": 0, "notes": []})
+    register(client, "a@jobs.test")
+    set_cv("a@jobs.test", DOC)          # no link anywhere
+    body = _gen(client, jd_text="Spark", github_projects=True)
+    assert body["ok"] is True and body["github_projects"] == []
+
+
+def test_generation_reports_an_explainable_ats_estimate(client):
+    register(client, "a@jobs.test")
+    set_cv("a@jobs.test", DOC)
+    body = _gen(client, jd_text="Data Engineer with Spark and SQL")
+    ats = body["ats"]
+    assert ats["total"] > 0
+    assert set(ats["breakdown"]) == {"contact", "sections", "structure",
+                                     "dates", "keywords", "evidence"}
+    assert sum(v["max"] for v in ats["breakdown"].values()) == 100
+    assert isinstance(ats["issues"], list)
+
+
+def test_the_ats_estimate_rates_the_document_that_is_returned(client):
+    """The score must describe the rendered resume, not an intermediate."""
+    register(client, "a@jobs.test")
+    set_cv("a@jobs.test", DOC)
+    body = _gen(client, jd_text="Data Engineer with Spark")
+    import ats_score
+    again = ats_score.score_resume(body["preview"] or body["tex"],
+                                   "Data Engineer with Spark")
+    assert again["total"] == body["ats"]["total"]

@@ -36,6 +36,7 @@ Searching
   the pre-existing behaviour exactly.
 """
 
+import os
 import re
 
 # Machine-readable JSON block of parsed listings that tool servers append to
@@ -43,9 +44,115 @@ import re
 JOBS_MARKER = "###JOBS_JSON###"
 
 # Job-alert senders the fallback path queries (see mcp_server_gmail.py).
+#
+# INDEED_ALERT_SENDER is kept even though it is no longer queried by default:
+# a single-account .env may still have alerts from the older
+# donotreply@match.indeed.com sender, and dropping it would silently return
+# nothing for users who never re-ran their Indeed alert preferences.
 GOOGLE_CAREERS_SENDER = "careers-noreply@google.com"
 INDEED_ALERT_SENDER = "donotreply@match.indeed.com"
-FALLBACK_SENDERS = (GOOGLE_CAREERS_SENDER, INDEED_ALERT_SENDER)
+INDEED_JOBALERT_SENDER = "donotreply@jobalert.indeed.com"
+# The LinkedIn address that carries job alerts. Measured across both mailboxes:
+# 16 + 1 messages, ~8 of them genuine job alerts.
+LINKEDIN_ALERT_SENDER = "jobs-noreply@linkedin.com"
+FALLBACK_SENDERS = (
+    INDEED_JOBALERT_SENDER,
+    INDEED_ALERT_SENDER,
+    LINKEDIN_ALERT_SENDER,
+    GOOGLE_CAREERS_SENDER,
+)
+# Every sender we know how to read. Used only to pick a default when the user
+# has not named a source.
+#
+# Deduplicated, and that is a fix rather than tidiness: `INDEED_ALERT_SENDER`
+# is already in FALLBACK_SENDERS, so concatenating it again put the same address
+# in the list twice. A source picker built on this then offered "Indeed" once
+# and searched it twice, and a sender-count limit was spent twice over on one
+# address.
+ALL_ALERT_SENDERS = tuple(dict.fromkeys(FALLBACK_SENDERS))
+
+# LinkedIn also sends from these addresses, and they look like job mail but are
+# not: measured, `messages-noreply` is 378 + 103 messages of "8 people viewed
+# your profile" / Streak Freeze / newsletter digests that yielded 11 listings,
+# while `jobs-noreply` is the sender that actually holds the alerts. Syncing
+# them would bury the real jobs under four hundred notifications per mailbox,
+# so they are named here only to record why they are absent.
+LINKEDIN_NOTIFICATION_SENDERS = (
+    "messages-noreply@linkedin.com",   # 481 msgs, ~11 listings: all noise
+    "updates-noreply@linkedin.com",    # 201 msgs: LinkedIn newsletter/news
+    "notifications-noreply@linkedin.com",  # 269 msgs: marketing digests
+)
+
+# Gmail accounts, read the same way mcp_server_gmail._accounts() does so the
+# agent and the tool can never disagree about how many mailboxes exist.
+#
+# The primary pair is GMAIL_ADDRESS / GMAIL_APP_PASSWORD (unchanged), then
+# _2 and _3. A pair with only one half set is ignored rather than half-used.
+GMAIL_ACCOUNT_VARS = (
+    ("GMAIL_ADDRESS", "GMAIL_APP_PASSWORD", "GMAIL_SENDERS"),
+    ("GMAIL_ADDRESS_2", "GMAIL_APP_PASSWORD_2", "GMAIL_SENDERS_2"),
+    ("GMAIL_ADDRESS_3", "GMAIL_APP_PASSWORD_3", "GMAIL_SENDERS_3"),
+)
+
+# Cap on searches per single Gmail run. Each search is a separate IMAP login,
+# so this is a latency and rate-limit budget, not a correctness limit.
+GMAIL_SEARCH_BUDGET = 3
+
+
+def gmail_accounts() -> list[tuple[str, str]]:
+    """Configured (address, app password) pairs, in order. Blank-safe."""
+    out: list[tuple[str, str]] = []
+    for addr_key, pw_key, _senders_key in GMAIL_ACCOUNT_VARS:
+        addr = (os.environ.get(addr_key) or "").strip()
+        pw = (os.environ.get(pw_key) or "").replace(" ", "").strip()
+        if addr and pw:
+            out.append((addr, pw))
+    return out
+
+
+def _senders_for(index: int) -> list[str]:
+    """Alert senders to search in account `index` (0-based).
+
+    GMAIL_SENDERS / _2 / _3 name the senders for that specific mailbox,
+    comma-separated. Per-account configuration is what makes two accounts
+    actually useful: alert volume differs per mailbox, so a single global
+    sender list either misses one account's senders or searches a sender the
+    other account never receives.
+
+    Falls back to the first two of FALLBACK_SENDERS when unset, which is the
+    single-account behaviour from before.
+    """
+    key = GMAIL_ACCOUNT_VARS[index][2] if index < len(GMAIL_ACCOUNT_VARS) else None
+    raw = (os.environ.get(key) or "") if key else ""
+    senders = [s.strip().lower() for s in raw.split(",") if s.strip()]
+    # Falls back to all three defaults, not the first two: an unset
+    # GMAIL_SENDERS previously meant Google Careers + Indeed, which skipped the
+    # one sender that actually carries most of the LinkedIn alerts.
+    return senders or list(FALLBACK_SENDERS)
+
+
+def gmail_senders_for_account(account: int) -> list[str]:
+    """`gmail_senders_for(account)` with 1-based numbering, as callers use it."""
+    if account < 1 or account > len(GMAIL_ACCOUNT_VARS):
+        return list(FALLBACK_SENDERS)
+    return _senders_for(account - 1)
+
+
+def gmail_search_plan() -> list[tuple[int, str]]:
+    """The (account, sender) pairs one Gmail run should search.
+
+    Ordered account-by-account so every mailbox is read before any mailbox is
+    read twice: with two accounts and one sender each, the second account is
+    reached on the second search rather than after all of the first account's
+    senders, which is the ordering that matters when one login is slow.
+    """
+    plan: list[tuple[int, str]] = []
+    for i in range(len(gmail_accounts())):
+        for sender in _senders_for(i):
+            plan.append((i + 1, sender))
+            if len(plan) >= GMAIL_SEARCH_BUDGET:
+                return plan
+    return plan
 
 # Plain-language board names a user might type ("only linkedin", "just
 # indeed") mapped onto the scraper's canonical board keys.
@@ -60,6 +167,134 @@ BOARD_ALIASES = {
     "Remotive": r"\bremotive\b",
     "Arbeitnow": r"\barbeitnow\b",
 }
+
+# Roles that hire for the same work under a different title, and the titles a
+# board is likely to be using for them. A DevOps Engineer opening is frequently
+# posted as "Cloud Engineer", "Platform Engineer", "SRE" or "AWS Engineer", and
+# a search for one spelling never sees the others.
+#
+# Keys are matched as whole words against the query, so "devops" matches
+# "DevOps Engineer" but never "develops" or "DevOpsOps". Each value is ordered
+# best-first: related_roles() returns the head of the list, so the ordering is
+# the priority.
+#
+# Deliberately role-shaped, not skill-shaped. "aws" alone is not a key: it is a
+# technology that appears inside half the titles here already, and treating it
+# as a role on its own would drag AWS-shaped results into every search.
+ROLE_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "devops": ("cloud engineer", "platform engineer", "aws engineer",
+               "site reliability engineer", "sre", "infrastructure engineer",
+               "cloud architect", "devops engineer", "kubernetes engineer"),
+    "devops engineer": ("cloud engineer", "platform engineer", "aws engineer",
+                        "site reliability engineer", "sre",
+                        "infrastructure engineer"),
+    "site reliability": ("devops engineer", "cloud engineer", "sre",
+                         "platform engineer"),
+    "sre": ("devops engineer", "site reliability engineer",
+            "cloud engineer", "platform engineer"),
+    "cloud": ("devops engineer", "platform engineer", "cloud engineer",
+              "aws engineer", "infrastructure engineer"),
+    "aws": ("cloud engineer", "devops engineer", "aws engineer",
+            "cloud architect", "solutions architect"),
+    "azure": ("cloud engineer", "cloud architect", "devops engineer",
+              "azure engineer"),
+    "gcp": ("cloud engineer", "cloud architect", "devops engineer",
+            "google cloud engineer"),
+    "kubernetes": ("devops engineer", "platform engineer", "cloud engineer",
+                   "site reliability engineer", "sre"),
+    "platform": ("devops engineer", "platform engineer", "site reliability",
+                 "infrastructure engineer", "cloud engineer"),
+    "infrastructure": ("devops engineer", "infrastructure engineer",
+                       "platform engineer", "cloud engineer"),
+    "frontend": ("front end developer", "frontend developer", "ui developer",
+                 "web developer", "frontend engineer"),
+    "front end": ("frontend developer", "front end developer", "ui developer",
+                  "web developer"),
+    "ui": ("frontend developer", "ui developer", "front end developer",
+           "web developer"),
+    "backend": ("back end developer", "backend developer", "api engineer",
+                "software engineer", "web developer"),
+    "back end": ("backend developer", "back end developer", "api engineer",
+                 "software engineer"),
+    "fullstack": ("full stack developer", "fullstack developer",
+                  "software engineer", "web developer"),
+    "full stack": ("full stack developer", "fullstack developer",
+                   "software engineer", "web developer"),
+    "software": ("software engineer", "software developer", "application engineer",
+                 "systems engineer"),
+    "data analyst": ("business intelligence analyst", "data analyst",
+                     "analytics engineer", "reporting analyst"),
+    "business intelligence": ("data analyst", "business intelligence analyst",
+                              "analytics engineer"),
+    "data engineer": ("data engineer", "big data engineer", "etl developer",
+                      "data platform engineer"),
+    "data scientist": ("data scientist", "machine learning engineer",
+                       "applied scientist", "research scientist"),
+    "machine learning": ("machine learning engineer", "ml engineer",
+                         "data scientist", "ai engineer"),
+    "ml engineer": ("machine learning engineer", "ai engineer",
+                    "data scientist"),
+    "qa": ("qa engineer", "quality assurance engineer", "test engineer",
+           "sdETest"),
+    "test": ("qa engineer", "test engineer", "quality assurance engineer",
+             "sdetest"),
+    "security": ("security engineer", "application security engineer",
+                 "devsecops engineer", "cybersecurity analyst"),
+    "mobile": ("android engineer", "ios engineer", "mobile engineer",
+               "mobile developer"),
+    "android": ("android engineer", "mobile developer", "mobile engineer"),
+    "ios": ("ios engineer", "mobile developer", "mobile engineer"),
+    "devsecops": ("security engineer", "devsecops engineer",
+                  "application security engineer", "cloud security engineer"),
+}
+
+# One related-role lookup per search: enough to cover a genuinely thin result
+# set without turning a single hunt back into the parallel fan-out this project
+# deliberately stopped doing.
+RELATED_ROLE_LIMIT = 1
+
+_ROLE_SYNONYM_KEYS = tuple(ROLE_SYNONYMS)
+
+
+def role_synonyms_for(query: str) -> tuple[str, ...]:
+    """Titles that are the same job as `query`, best match first.
+
+    Returns an empty tuple when nothing is recognised, and never returns the
+    query's own words - the caller uses this to widen a search, so echoing the
+    original spelling back would waste the one follow-up attempt.
+    """
+    text = (query or "").lower()
+    if not text.strip():
+        return ()
+    hits: list[tuple[int, int, tuple[str, ...]]] = []
+    for key in _ROLE_SYNONYM_KEYS:
+        m = re.search(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(key), text)
+        if m:
+            # Longer key = more specific match = wins when two both appear.
+            hits.append((m.start(), -len(key), ROLE_SYNONYMS[key]))
+    if not hits:
+        return ()
+    best = min(hits)[2]
+    # Drop anything already in the query: "DevOps Engineer cloud" gains nothing
+    # from being told to also look for "cloud engineer".
+    return tuple(t for t in best if t not in text)
+
+
+def related_roles(query: str, limit: int = RELATED_ROLE_LIMIT) -> tuple[str, ...]:
+    """The single best related-role query for `query`, or () if none applies."""
+    return role_synonyms_for(query)[:max(0, limit)]
+
+
+def synonym_words(query: str) -> set[str]:
+    """Every word of every related title - used to RANK, never to filter.
+
+    A listing titled "Cloud Engineer" should outrank an unrelated one for a
+    DevOps search, but it must never be dropped for failing to say "devops".
+    """
+    words: set[str] = set()
+    for phrase in role_synonyms_for(query):
+        words.update(w for w in phrase.split() if len(w) > 2)
+    return words
 
 # Locations that mean the role is tied to India.
 INDIA_TOKENS = re.compile(

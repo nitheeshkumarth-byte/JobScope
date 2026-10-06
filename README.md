@@ -32,8 +32,10 @@ talks to three **MCP** tool servers through local **Ollama**.
 └────────────────┘      └────────────────────┘      └──────────────────────┘
    list_github_repos       search_job_emails           scrape_indeed_jobs
    get_repo_readme         (Google Careers +            (experimental,
-                           Indeed alerts via            may be bot-blocked)
-                           app password)
+   (profile from the       Indeed alerts via            may be bot-blocked)
+    CV's own link,          app password,
+    token optional)         then answered from a
+                            local SQLite cache)
 ```
 
 - Every consumer (CLI, web UI, future scheduled digest) calls the same
@@ -94,15 +96,20 @@ END
 | `step1_basics.py` … `step7_scraper_with_fallback.py` | 7-step tutorial: graph mechanics → agent loop → GitHub tool → MCP client → multi-server → Gmail → full agent with fallback |
 | `agent.py` | **Shared agent** — config, MCP client/runtime, deterministic fallback router, seniority filter |
 | `filters.py` | **The listing rules, defined once** — seniority/experience, work-type (remote/WFH/hybrid/on-site), the searchable country list, board aliases, `keep_job()`; shared by the agent and the scraper so the two can't drift. The India/region rules are still here but inert — both filters were retired |
-| `dashboard.py` | **FastAPI backend** for the dashboard (SSE streaming + config API), plus the per-account session layer |
+| `dashboard.py` | **FastAPI backend** for the dashboard (SSE streaming + config API), plus the per-account session layer and the machine-to-machine `POST /api/screen` scoring endpoint |
 | `auth.py` | Accounts, scrypt passwords, hashed session cookies, one-time email tokens, per-user CV profiles (SQLite) |
 | `mailer.py` | Outbound confirmation/reset mail over `smtplib`, stdlib only |
 | `ui.py` | Chainlit web UI (streams the agent live) |
 | `mcp_server_github.py` | MCP server: GitHub repos + READMEs |
-| `mcp_server_gmail.py` | MCP server: Gmail job alerts via IMAP + app password |
+| `mcp_server_gmail.py` | MCP server: Gmail job alerts via IMAP + app password. Syncs into `gmail_cache.db` once, then searches locally |
 | `mcp_server_indeed_scraper.py` | MCP server: multi-board scraper (`search_job_boards`), work-type + country filtering, structured JSON feed |
 | `resume_generator.py` | Job-tailored LaTeX resume builder (`\heading`/`\subheading` ATS template) + HTML preview converter |
+| `github_projects.py` | Reads the candidate's **own** GitHub profile (handle taken from the CV link) and picks JD-matching repositories, evidence-checked against each README |
+| `ats_score.py` | Explainable 100-point ATS-readiness estimate over the rendered resume — contact, sections, structure, dates, JD keywords, evidence |
+| `gmail_index.py` | Local SQLite index of synced job-alert mail, so every search after the first is offline and instant |
 | `resume_data.py` | Canonical resume content (name/contact/skills/experience/education) the generator draws from |
+| `n8n/workflows/resume-screening.json` | n8n workflow: upload a resume + JD → `/api/screen` → Ollama agent explains Skills/Experience/Missing/Verdict → JSON answer |
+| `n8n/import.py` | Imports that workflow into n8n (Public API with `N8N_API_KEY`, Docker CLI fallback), creating the token/Ollama credentials |
 | `requirements.txt` | Python dependencies |
 | `requirements-dev.txt` | Test deps (pytest) on top of `requirements.txt` |
 | `tests/` | pytest suite for the pure logic — filters, skill extraction, query building, payload parsing — plus the accounts, mailer and HTTP auth routes |
@@ -115,7 +122,7 @@ that decides whether a listing reaches you is a pure function and is covered:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest tests -q     # 376 tests
+.\.venv\Scripts\python.exe -m pytest tests -q     # 1138 tests
 ```
 
 `tests/` is mostly regression tests for bugs that actually shipped — the
@@ -228,7 +235,12 @@ expandable card, and animates a **circuit-style pipeline** (Agent → Job boards
   produced a document that still described the canonical resume. A section the
   CV does not have is left out entirely — including its heading — rather than
   backfilled from `resume_data`, and with no CV uploaded at all `resume_data`
-  is used so a fresh account still gets a complete document.
+  is used so a fresh account still gets a complete document. The one exception
+  is **Objective**: if your CV has no summary of its own, one is written from
+  the parts of the document that do exist — the role being targeted, your own
+  skill lines, your most recent experience line and your education — and never
+  from anything the CV does not say, so a generated paragraph obeys the same
+  no-invention rule as a quoted one.
 
   **No canonical links in a CV-driven resume.** GitHub is resolved as
   explicit per-request argument → the CV's own link → your saved setting, and
@@ -238,12 +250,40 @@ expandable card, and animates a **circuit-style pipeline** (Agent → Job boards
   saved CVs and copy the answer into the active profile's `github_url`, which
   the generator read *ahead* of the CV, so an unrelated URL overrode the file
   being rendered. LinkedIn and the portfolio link follow the same rule now.
+
+  **Projects come from the CV's own GitHub link** (checkbox in the resume
+  modal). The handle is scraped from the uploaded document, never from a
+  configured user, so two accounts on one deployment read two different
+  profiles; `GITHUB_TOKEN` is optional and only raises the API rate limit.
+  Repositories are scored **against the posting's own vocabulary** — a
+  technology the JD never mentions scores nothing — then the shortlist has its
+  READMEs fetched and each project line has to be supported by that README
+  before it can be printed. A repository the CV already lists is never added a
+  second time, and a repo whose name means nothing to the posting is left out
+  entirely. Forks and archived repositories are skipped.
+
+  **An ATS-readiness estimate, not an official score.** Six components over the
+  rendered document — contact 12, sections 14, structure 16, dates 16, JD
+  keywords 26, evidence 16 — each with the specific reason it lost points, plus
+  the posting's terms the resume does not use yet. Add only what you have
+  actually done: the list is a prompt, not permission. The recurring findings
+  are the usual ones — no contact line, tables or multi-column layout, dates
+  without months, keywords that appear only in the skills list, and bullets
+  with no number in them.
 - **Audit everything.** Every run and every error is appended to
   `logs/runs-*.jsonl` / `logs/errors.jsonl`. The History drawer shows past
   runs with durations, tool calls and errors, with one-click **Retry** and
   **Restart agent** actions when something fails.
 - Soft light theme (with a dark toggle), error banner with Retry/Restart, and
   a live status/model pill up top.
+- **The sign-in screen carries the runtime architecture as a backdrop**
+  (`static/gate-architecture.svg`). It is a CSS *mask*, not an embedded page, so
+  the line work takes the app's accent colour in both themes from one small
+  asset; the full 760 KB Archify document was deliberately not embedded because
+  it brings its own toolbar and theme state with it. It sits under the card at
+  `pointer-events: none`, so it cannot intercept a click, and both its drift and
+  the SVG's internal dash-flow stop for `prefers-reduced-motion` and while the
+  tab is in the background.
 
 ```
 ┌───────────────┐   SSE:      ┌────────────────────────┐
@@ -251,7 +291,7 @@ expandable card, and animates a **circuit-style pipeline** (Agent → Job boards
 │  static/      │ ◄─────────  └──────────┬─────────────┘
 │  index.html   │  token/tool/fallback   │ create_agent()
 └───────────────┘        events          ▼
-                                   agent.py ☩ MCP servers
+                                    agent.py ☩ MCP servers
 ```
 
 ### Viewing logs
@@ -265,6 +305,42 @@ Get-Content logs\errors.jsonl            # failures with full tracebacks
 
 In the UI: open **History**, expand a run to see tools/duration/error, and hit
 **Retry** to re-run exactly what failed.
+
+## n8n resume screening
+
+`POST /api/screen` exists so tools outside the dashboard can use the exact
+scorer the resume modal uses: CV in, one explainable `ats` score out (score,
+band, breakdown, hits, missing, issues), authenticated with `SCREEN_TOKEN` in
+the `X-JobScope-Token` header and with no session — n8n cannot hold a
+browser cookie. It accepts `multipart/form-data` (`resume` file field) or
+`application/json` (`resume_base64`), both with optional `jd_text` /
+`job_url`.
+
+The bundled workflow in `n8n/` wires that into an agent:
+
+```
+Webhook → Pack request → Screen resume → Screening ok?
+        ├─ yes → AI Agent (Ollama) → Shape analysis → 200 JSON
+        └─ no  → Screening failed → 4xx/5xx JSON
+```
+
+The agent receives the scorer's JSON and must reply with exactly four lines —
+`Skills:`, `Experience:`, `Missing:`, `Verdict:` — which `Shape analysis`
+parses into `analysis`; a model that ignores the contract still lands under
+`analysis.verdict` instead of breaking the response. The score itself is
+never the model's job: `note` in the response says which side computed it.
+
+```powershell
+.\.venv\Scripts\python.exe n8n\import.py     # needs N8N_API_KEY in .env,
+                                             # otherwise falls back to Docker CLI
+curl -F resume=@cv.pdf -F "jd_text=We need a Python and Kubernetes engineer" `
+     http://localhost:5678/webhook/resume-screening
+```
+
+Two credentials carry the secrets (`JobScope Screen Token` = Header Auth with
+`X-JobScope-Token`, `JobScope Ollama` = `http://host.docker.internal:11434`),
+so no token is stored in the workflow JSON. Full setup, response examples and
+troubleshooting: [`n8n/README.md`](n8n/README.md).
 
 ## Setup
 
@@ -353,8 +429,7 @@ with the configured model pulled, and `.env` must contain valid GitHub/Gmail val
 | `AGENT_SUMMARY_MODE` | `template` builds the final answer in code (instant); `llm` uses the local model (nicer prose, minutes on CPU) | `template` |
 | `JOB_DAYS_BACK` | Email search window (days) | `60` |
 | `JOB_MAX_RESULTS` | Emails to read per sender | `10` |
-| `GITHUB_TOKEN` | GitHub PAT (public reads, no scopes) | — |
-| `GITHUB_USERNAME` | GitHub username for repo tools | — |
+| `GITHUB_TOKEN` | Optional. Public repos are read without it; a PAT only raises the hourly rate limit | — |
 | `GMAIL_ADDRESS` | Gmail address for IMAP | — |
 | `GMAIL_APP_PASSWORD` | Gmail app password (spaces stripped) | — |
 | `SMTP_HOST` | Mail server for confirmation + reset links. Unset ⇒ no mail is sent | — |
@@ -365,6 +440,10 @@ with the configured model pulled, and `.env` must contain valid GitHub/Gmail val
 | `APP_URL` | Absolute base URL for emailed links, when behind a proxy/tunnel | from the request |
 | `HOST` | Interface to bind | `127.0.0.1` |
 | `AUTH_DEV_LINKS` | Return an unsent link in the response instead of mailing it | off |
+| `SCREEN_TOKEN` | Shared secret for `POST /api/screen`. Unset ⇒ that endpoint answers 503 for everyone (a fresh checkout never exposes an open scanner) | — |
+| `N8N_API_KEY` | Optional. n8n Public API key; when set, `n8n/import.py` imports and activates the workflow through the API | — |
+| `N8N_URL` | Where n8n listens, for `n8n/import.py` | `http://localhost:5678` |
+| `N8N_OLLAMA_BASE_URL` | Ollama URL *as the n8n container sees it*; only needed if `host.docker.internal` is wrong for your setup | `OLLAMA_URL` with `localhost` → `host.docker.internal` |
 
 ### Choosing a model
 

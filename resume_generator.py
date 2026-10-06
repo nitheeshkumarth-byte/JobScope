@@ -790,7 +790,8 @@ _POSTING_TERMS = (
 
 def build_resume(cfg, job: dict, desc: str = "", github_url: str = "",
                  rag_hits: list | None = None,
-                 rag_source_text: str = "") -> tuple[str, str]:
+                 rag_source_text: str = "",
+                 github_projects: list | None = None) -> tuple[str, str]:
     """Assemble the tailored .tex document.
 
     Returns (latex_source, suggested_filename). job carries the flashcard
@@ -815,6 +816,12 @@ def build_resume(cfg, job: dict, desc: str = "", github_url: str = "",
     can only move, never appear from nowhere. Omit the parameter (or pass an
     empty list) and the document is byte-identical to the pre-RAG output, which
     is what every existing caller and test relies on.
+
+    github_projects is the candidate's OWN GitHub repositories selected against
+    this posting (github_projects.find_projects), each already checked against
+    its README. They are added to the Projects section only where the uploaded
+    CV has nothing equivalent, and never below the CV's own entries. Omit the
+    parameter and the document is unchanged.
 
     github_url is the header link for the GitHub entry: explicit argument > the
     CV's own links > agent config. Unlike every other field it has NO
@@ -921,7 +928,8 @@ def build_resume(cfg, job: dict, desc: str = "", github_url: str = "",
     if cv:
         tex = _assemble_from_cv(cfg, cv, ranked_skills, role, company, desc,
                                 name, contact_line, links_line, rag_hits,
-                                borrowed=borrowed)
+                                borrowed=borrowed,
+                                github_projects=github_projects)
         return tex, _slug(company, role)
 
     # Objective: name the posting, map in the strongest matched skills.
@@ -1057,23 +1065,177 @@ def _join_cv_text(lines: list[str], limit: int = 900) -> str:
     return out[:limit]
 
 
+def _synthesise_objective(sections: dict, ranked_skills: list[tuple[str, str]],
+                          role: str, company: str) -> str:
+    """Write an Objective paragraph for a CV that has no summary of its own.
+
+    The candidate did not write an objective, so one is assembled from pieces
+    that ARE in the document: the role being targeted, the CV's own skill
+    lines, its most recent experience line and its first education line. Each
+    phrase is copied out of the CV and only trimmed to length - nothing is
+    inferred about the person, so a synthesised paragraph obeys the same
+    no-invention rule as a quoted one. Returns "" when the CV offers nothing
+    to build from.
+    """
+    head = _ascii_fold(role or "").strip()
+    if not head:
+        head = "Professional"
+
+    skill_bits: list[str] = []
+    for _label, values in (ranked_skills or []):
+        for piece in re.split(r"\s*[,;|]\s*", values or ""):
+            piece = _ascii_fold(_unsmash(piece)).strip(" .-")
+            if len(piece) < 2 or len(piece) > 48:
+                continue
+            if piece.lower() not in {b.lower() for b in skill_bits}:
+                skill_bits.append(piece)
+        if len(skill_bits) >= 4:
+            break
+    skill_bits = skill_bits[:4]
+
+    sentences: list[str] = []
+    if skill_bits:
+        sentences.append(f"{head} with hands-on experience in "
+                         + ", ".join(skill_bits) + ".")
+    else:
+        # Only worth a sentence if the document backs the claim below it: with
+        # no skills, experience, education or projects there is nothing to
+        # analyse, so this returns "" and the section is left out entirely.
+        has_more = bool(sections.get("experience") or sections.get("education"))
+        if not has_more:
+            return ""
+
+    # The most recent experience line reads like "Senior Engineer, Acme -
+    # 2021 to present" in most CVs; quoting its opening keeps the claim
+    # verifiable while giving the paragraph something concrete to stand on.
+    # A line that only repeats the target role adds nothing, so it is skipped
+    # rather than turning the paragraph into "Backend Engineer ... Backend
+    # Engineer."
+    def _norm(s: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", s.lower())
+
+    head_key = _norm(head)
+    exp_line = ""
+    for ln in (sections.get("experience") or [])[:8]:
+        _is_bullet, item = _split_bullet(ln)
+        if not item:
+            continue
+        item = _ascii_fold(_unsmash(item)).strip()
+        if len(item) < 12:
+            continue
+        key = _norm(item)
+        if head_key and (key == head_key or key == _norm(exp_line)):
+            continue
+        exp_line = item
+        break
+
+    # An experience line only earns a sentence of its own when it carries a
+    # date, an employer name or a level of seniority - that is what makes it
+    # read as background rather than as a stray achievement bullet lifted out
+    # of context ("Background includes Shipped 100% uptime.").
+    looks_like_role = bool(re.search(r"\b(19|20)\d{2}\b|\bpresent\b|,|"
+                                     r"\b(lead|senior|junior|staff|head|"
+                                     r"principal|intern|manager)\b",
+                                     exp_line, re.I))
+    if exp_line and (looks_like_role or not sentences):
+        sentences.append(("Background includes " if not sentences
+                          else "Recent experience: ")
+                         + exp_line[:150].rstrip() + ".")
+
+    if not exp_line:
+        for ln in (sections.get("education") or [])[:4]:
+            _is_bullet, item = _split_bullet(ln)
+            if item and len(item) >= 12:
+                sentences.append("Academic background: "
+                                 + _ascii_fold(_unsmash(item)).strip()[:150]
+                                 + ".")
+                break
+
+
+    if not sentences:
+        # Nothing usable turned up in any section - leave the CV as authored.
+        return ""
+
+    out = " ".join(sentences)
+    # A generated objective is a lead-in, not a biography: cut at the sentence
+    # boundary that keeps it under ~420 characters.
+    if len(out) > 420:
+        kept = ""
+        for s in sentences:
+            if len(kept) + len(s) + 1 > 420 and kept:
+                break
+            kept = (kept + " " + s).strip()
+        out = kept
+    return out
+
+
+def _merge_github_projects(cv_lines: list[str], gh_projects: list[dict]) -> list[str]:
+    """Prepend JD-matching GitHub projects the CV does not already list.
+
+    The CV's own project lines always come first and are never removed: the
+    uploaded document is the source of truth, and a repo is only added when the
+    CV says nothing about it. Adding a project the candidate has already
+    written up differently would produce a duplicate entry.
+
+    A repo whose name already appears in the CV text is skipped. Both sides are
+    reduced to bare alphanumerics before comparing, because the CV writes
+    "RAG Pipeline" where the repository is "rag-pipeline": comparing the raw
+    strings never matches, and the same work is then listed twice.
+    """
+    if not gh_projects:
+        return cv_lines
+
+    def norm(s: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+    existing = norm(" ".join(cv_lines))
+    seen = {norm(l.split()[0]) for l in cv_lines if l.split()}
+    out = list(cv_lines)
+    for p in gh_projects:
+        name = (p.get("name") or "").strip()
+        desc = (p.get("description") or "").strip()
+        if not name or not desc:
+            continue
+        key = norm(name)
+        if key and key in existing:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        bits = [_ascii_fold(_unsmash(name))]
+        if p.get("language"):
+            bits.append(_ascii_fold(p["language"]))
+        bits.append(_ascii_fold(desc))
+        out.append(" - ".join(b for b in bits if b))
+    return out
+
+
 def _assemble_from_cv(cfg, cv: dict, ranked_skills: list[tuple[str, str]],
                       role: str, company: str, desc: str, name: str,
                       contact_line: str, links_line: str,
                       rag_hits: list | None = None,
-                      borrowed: bool = False) -> str:
+                      borrowed: bool = False,
+                      github_projects: list | None = None) -> str:
     """Build the document from the uploaded CV, using the template only for
     structure.
 
     A section the CV does not have is left out entirely - including its
     heading. Falling back to resume_data for a missing section is exactly the
     bug this path exists to remove: a half-parsed CV would otherwise sprout
-    the canonical person's internships.
+    the canonical person's internships. Objective is the one exception: with
+    no summary in the CV, _synthesise_objective writes one from the document's
+    own skill, experience and education lines.
 
     rag_hits, when given, reorders the experience and project bullets so the
     posting's terms decide which achievements lead. The bullet text is never
     touched - only its position - so the no-invention rule is unaffected by
     retrieval being switched on.
+
+    github_projects, when given, are the candidate's OWN repositories selected
+    against this posting by github_projects.find_projects. They are merged into
+    the Projects section only where the CV has nothing equivalent, and each one
+    is already evidence-checked: a README that does not support the description
+    was never returned. Passing None or [] leaves the document identical.
     """
     sections = cv["sections"]
     body: list[str] = []
@@ -1083,6 +1245,15 @@ def _assemble_from_cv(cfg, cv: dict, ranked_skills: list[tuple[str, str]],
 
     summary = _join_cv_text(sections.get("summary") or [])
     if summary:
+        prose = _lx(_ascii_fold(summary))
+    else:
+        # The CV has no objective/summary of its own: write one from what the
+        # document actually says rather than leaving the section out. Same
+        # escaping order as the quoted path - fold, then LaTeX-escape.
+        synthesised = _synthesise_objective(sections, ranked_skills, role,
+                                            company)
+        prose = _lx(_ascii_fold(synthesised)) if synthesised else ""
+    if prose:
         # Escape the candidate's own words, and only those. The italics and
         # line-break markup appended below is already LaTeX - running it
         # through _lx() turned \\textit{...} into \\textbackslash{}textit\{...\},
@@ -1094,7 +1265,6 @@ def _assemble_from_cv(cfg, cv: dict, ranked_skills: list[tuple[str, str]],
         # "100% cheaper" and "C#" are ordinary English to the candidate. Left
         # raw, "%" comments out the rest of the paragraph and "&" fails with
         # "Misplaced alignment tab", so the document would not compile at all.
-        prose = _lx(_ascii_fold(summary))
         prose += (f" \\textit{{Targeting the {_lx(role)} role"
                   + (f" at {_lx(company)}" if company else "") + ".}")
         if desc:
@@ -1122,9 +1292,11 @@ def _assemble_from_cv(cfg, cv: dict, ranked_skills: list[tuple[str, str]],
     if exp.strip():
         body.append(f"\\section*{{Experience}}\n{exp}")
 
+    project_lines = list(sections.get("projects") or [])
+    if github_projects:
+        project_lines = _merge_github_projects(project_lines, github_projects)
     projects = _render_projects(_reorder_bullets(
-        sections.get("projects") or [], query) if rag_hits else
-        (sections.get("projects") or []))
+        project_lines, query) if rag_hits else project_lines)
     if projects.strip():
         body.append(f"\\section*{{Projects}}\n{projects}")
 
@@ -1151,6 +1323,68 @@ def _assemble_from_cv(cfg, cv: dict, ranked_skills: list[tuple[str, str]],
     if langs:
         body.append("\\vspace{2pt}\\noindent\\textbf{\\color{accent}Languages:} "
                     + f"\\, {_lx(langs)}\n")
+
+    # ------------------------------------------------------------------
+    # Gap detection: if a section that "should" exist based on JD + CV content
+    # is missing, generate it from content that already exists in the CV
+    # (reorganize, never invent). This preserves the no-invention rule.
+    # ------------------------------------------------------------------
+    _jd_low = query.lower()
+    _cv_all = " ".join("\n".join(sections.get(k, [])) for k in sections)
+    _cv_all_low = _cv_all.lower()
+
+    # Certifications gap
+    if not sections.get("certifications"):
+        cert_hints = ("certification", "certified", "cka", "ckad", "cks", "aws certified",
+                      "azure certified", "google cloud certified", "gcp certified",
+                      "terraform certified", "solutions architect associate",
+                      "professional cloud", "microsoft certified")
+        if any(h in _jd_low for h in cert_hints) or any(h in _cv_all_low for h in cert_hints):
+            # Extract cert-like lines from anywhere in CV content not already placed?
+            # Look through all lines in CV sections we have; but easier: scan original cv lines? No direct access.
+            # But we have sections; collect lines that look like certs
+            cert_lines_found = []
+            for sec_lines in sections.values():
+                for ln in sec_lines:
+                    ln_low = ln.lower()
+                    if any(h in ln_low for h in cert_hints) or re.search(r"(aws|azure|gcp|kubernetes|terraform|cka|ckad).*cert", ln_low):
+                        cert_lines_found.append(ln)
+            if cert_lines_found:
+                certs_extra = []
+                seen = set()
+                for ln in cert_lines_found:
+                    key = ln.strip().lower()[:60]
+                    if key not in seen:
+                        seen.add(key)
+                        _is_bullet, item = _split_bullet(ln)
+                        if item:
+                            certs_extra.append(f"  \\item {_lx(_ascii_fold(_unsmash(item)))}\n")
+                if certs_extra:
+                    body.append("\\section*{Certifications}\n\\begin{itemize}\n"
+                                + "".join(certs_extra) + "\\end{itemize}\n")
+
+    # Projects gap
+    if not sections.get("projects"):
+        proj_hints = ("project", "portfolio", "built a", "developed a", "created a", "open source", "side project")
+        if any(h in _jd_low for h in proj_hints) or any(h in _cv_all_low for h in proj_hints):
+            proj_lines = []
+            # Pull bullet-like lines that read as projects from experience/projects-like content elsewhere?
+            for sec_name, sec_lines in sections.items():
+                if sec_name == "projects":
+                    continue
+                # look for lines that contain project verbs
+                for ln in sec_lines:
+                    is_b, item = _split_bullet(ln)
+                    if not is_b:
+                        continue  # prefer bullets
+                    low = item.lower()
+                    if any(v in low for v in ("built", "developed", "created", "designed", "implemented")) and len(item) > 20:
+                        proj_lines.append(ln)
+            if proj_lines:
+                # Render as projects
+                rendered = _render_projects(proj_lines[:8])  # cap
+                if rendered.strip():
+                    body.append(f"\\section*{{Projects}}\n{rendered}")
 
     match_line = _jd_match_line(rag_hits or [])
     if match_line:

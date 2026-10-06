@@ -29,7 +29,9 @@ even after the server restarts.
 """
 
 import asyncio
+import base64
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -53,8 +55,10 @@ from starlette.concurrency import run_in_threadpool
 from agent import (AgentConfig, JOBS_MARKER, _text_content, create_agent,
                    create_runtime, load_config, system_message)
 import auth
+import ats_score
 import cv_ocr
 import filters
+import github_projects
 import job_desc
 import mailer
 import resume_data
@@ -645,6 +649,12 @@ class ResumeGenRequest(BaseModel):
     # the title alone. Pasted text wins; the link fetch is the fallback.
     jd_text: str = ""
     job_desc: str = ""
+    # Pull projects from the CV's own GitHub link and match their READMEs
+    # against the posting. Off by default: it costs API requests, and a user
+    # without a GitHub link on their CV gets nothing from it. Never invents
+    # projects - only repos the candidate already has, and only where the
+    # uploaded CV has no equivalent entry.
+    github_projects: bool = False
 
 
 class IdentityRequest(BaseModel):
@@ -963,6 +973,14 @@ def _bundle_cache() -> dict:
     return app.state.bundles
 
 
+async def _refresh_runtime() -> object:
+    from agent import create_runtime
+    runtime = await create_runtime()
+    try:
+        app.state.runtime = runtime
+    except Exception:
+        pass
+    return runtime
 def _drop_bundle(uid: int, profile_id: str) -> None:
     """Forget a cached bundle so the next request rebuilds it from storage."""
     _bundle_cache().pop((uid, profile_id), None)
@@ -1473,6 +1491,19 @@ async def _no_cache(request, call_next):
 def _frame(obj: dict) -> str:
     """Wrap a dict as one Server-Sent Events frame (data: json\n\n)."""
     return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+
+# MCP tools whose output may carry a ###JOBS_JSON### deck that should become
+# flashcards. Matching is by substring because the servers register their tools
+# with these names and the wrapper prefixes vary (`mcp__gmail__`, a route name,
+# or the bare tool).
+_DECK_TOOL_SUBSTRINGS = ("job_boards", "scrape", "search_job_emails")
+
+
+def _DECK_TOOL_NAMES(tool_name: str) -> bool:
+    """True when this tool's output is allowed to drive the flashcard deck."""
+    low = (tool_name or "").lower()
+    return any(s in low for s in _DECK_TOOL_SUBSTRINGS)
 
 
 # --------------------------------------------------------------------------
@@ -1991,6 +2022,16 @@ async def update_config(req: ConfigRequest, ctx: Ctx = Depends(build_ctx)):
             countries=countries,
             github_url=github_url,
         )
+        # Rebuild the MCP runtime in case environment variables changed (e.g.
+        # GMAIL_* or GITHUB_*). Refreshing it makes runtime-dependent fixes
+        # take effect without a full app restart.
+        new_runtime = await create_runtime()
+        app.state.runtime = new_runtime
+        try:
+            cache = _bundle_cache()
+            cache.clear()
+        except Exception:
+            pass
         bundle = await create_agent(cfg, runtime=app.state.runtime)
     except Exception as exc:
         _log({"event": "config_restart_error", "detail": str(exc)}, kind="errors")
@@ -2470,24 +2511,50 @@ async def generate_resume(req: ResumeGenRequest, ctx: Ctx = Depends(build_ctx)):
         if not (cfg.resume_text or "").strip() and hits:
             source_text = await asyncio.to_thread(
                 rag_store.document_text, ctx.uid, hits[0][0].doc_id)
+        # Projects come from the CV's OWN GitHub link, never a configured
+        # username: the handle is scraped from the uploaded document (or the
+        # per-request override), so two people on one deployment read two
+        # different profiles. A token is optional and only raises the API rate
+        # limit; public repos need no credentials at all.
+        gh_projects: list[dict] = []
+        gh_error = ""
+        gh_handle = ""
+        if req.github_projects:
+            gh_result = await asyncio.to_thread(
+                github_projects.find_projects,
+                github_url or (cfg.resume_text or ""), query,
+                max_projects=3)
+            gh_projects = gh_result.get("projects") or []
+            gh_error = gh_result.get("error") or ""
+            gh_handle = gh_result.get("username") or ""
         tex, fname = await asyncio.to_thread(
             resume_generator.build_resume, cfg, job, desc, github_url,
-            rag_hits=hits, rag_source_text=source_text)
+            rag_hits=hits, rag_source_text=source_text,
+            github_projects=gh_projects)
         preview = await asyncio.to_thread(resume_generator.tex_to_html, tex)
     except Exception as exc:
         _log({"event": "resume_gen_error", "user": ctx.user["email"],
               "detail": str(exc)}, kind="errors")
         return {"ok": False, "error": str(exc)}
+    # Scored on the rendered document, so the score describes the file the user
+    # downloads rather than an intermediate representation of it.
+    ats = await asyncio.to_thread(
+        ats_score.score_resume, preview or tex, f"{desc} {job['title']}")
     _log({"event": "resume_generated", "user": ctx.user["email"], "job": job,
           "desc_chars": len(desc), "jd_origin": jd_origin,
           "rag_hits": len(hits), "rag_docs": len({c.doc_id for c, _ in hits}),
-          "github_url": github_url})
+          "github_url": github_url, "github_projects": len(gh_projects),
+          "ats_score": ats["total"]})
     return {"ok": True, "filename": fname, "tex": tex, "preview": preview,
             "desc_fetched": bool(desc), "jd_origin": jd_origin,
             "desc_chars": len(desc),
             "rag_hits": len(hits),
             "rag_sources": sorted({c.source_ref for c, _ in hits}),
-            "github_url": github_url}
+            "github_url": github_url,
+            "github_projects": gh_projects,
+            "github_handle": gh_handle,
+            "github_error": gh_error,
+            "ats": ats}
 
 
 @app.get("/api/resume/desc")
@@ -2515,6 +2582,109 @@ async def resume_desc(link: str = "", ctx: Ctx = Depends(build_ctx)):
     if st["status"] == "pending" and not (row and row.get("text")):
         await asyncio.to_thread(job_desc.ensure, link)
     return {"ok": True, "text": st.pop("text", ""), **st}
+
+
+@app.post("/api/screen")
+async def screen_resume(request: Request):
+    """Machine-to-machine resume screening: a CV in, one explainable score out.
+
+    Built for the n8n "resume screening" workflow (Webhook -> this endpoint ->
+    agent node -> response). It deliberately has NO session: n8n cannot hold a
+    browser cookie, so the caller authenticates with a shared secret in the
+    `X-JobScope-Token` header, compared in constant time against `SCREEN_TOKEN`.
+    With the variable unset the route answers 503 for everyone - a fresh
+    checkout must never expose an open scanner, even bound to 127.0.0.1.
+
+    The scoring itself is `ats_score.score_resume`, the same call the resume
+    modal makes, so a screen and a generated resume can never disagree, and the
+    response is the whole `ats` dict (breakdown, issues, hits, missing,
+    keyword_total) rather than a single number the workflow would have to
+    interpret. Nothing here is generated: keywords come from the JD, findings
+    from the document.
+
+    Two request shapes: multipart/form-data with a `resume` file field (curl,
+    a browser form) or application/json with `resume_base64` (the n8n HTTP
+    Request node, where base64 in an expression is easier than assembling a
+    multipart body). Both carry optional `jd_text` and `job_url`.
+    """
+    want = os.environ.get("SCREEN_TOKEN", "")
+    got = request.headers.get("X-JobScope-Token", "")
+    if not want:
+        raise HTTPException(status_code=503,
+                            detail="SCREEN_TOKEN is not configured")
+    if not got or not hmac.compare_digest(got, want):
+        raise HTTPException(status_code=401,
+                            detail="missing or invalid X-JobScope-Token")
+
+    # Two shapes on purpose. multipart/form-data is what curl and a browser
+    # send (a real file field); application/json is what n8n's HTTP Request
+    # node sends comfortably (base64 in a field), and forcing a multipart
+    # body out of an expression is where workflows like this usually break.
+    jd = link = filename = ""
+    data = b""
+    ctype = (request.headers.get("content-type") or "").lower()
+    if ctype.startswith("application/json"):
+        payload = await request.json()
+        jd = (payload.get("jd_text") or "").strip()
+        link = (payload.get("job_url") or "").strip()
+        filename = (payload.get("filename") or "resume").strip() or "resume"
+        if "resume_base64" not in payload:
+            raise HTTPException(status_code=400,
+                                detail="resume_base64 is required")
+        try:
+            data = base64.b64decode(payload.get("resume_base64") or "")
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400,
+                                detail="resume_base64 is not valid base64")
+    else:
+        form = await request.form()
+        upload = form.get("resume")
+        if hasattr(upload, "read"):
+            data = await upload.read()
+            filename = (getattr(upload, "filename", None) or "resume").strip()
+        jd = str(form.get("jd_text") or "").strip()
+        link = str(form.get("job_url") or "").strip()
+
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"resume is larger than "
+                   f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
+    text = _extract_text(data, filename or "")
+    ocr_info: dict = {}
+    if cv_ocr.needs_ocr(text) and cv_ocr.supported(filename or ""):
+        # Same worker-thread rule as /api/resume: OCR takes seconds per page
+        # and must not stall the event loop.
+        text, ocr_info = await run_in_threadpool(
+            _recover_text_by_ocr, data, filename or "", text)
+    if not text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="no readable text in that file"
+                   + (" (OCR found nothing)"
+                      if ocr_info and not ocr_info.get("used") else ""))
+
+    # The JD: pasted text wins. A posting URL is read from the 24-hour
+    # description cache; when the cache is cold the fetch is queued and the
+    # answer says `pending`, so the workflow can re-post instead of blocking
+    # on a browser nobody can see.
+    jd_origin = "pasted" if jd else ""
+    if not jd and link.startswith(("http://", "https://")):
+        row = await asyncio.to_thread(job_desc.cached, link)
+        if row and row.get("text"):
+            jd, jd_origin = row["text"], "cache"
+        else:
+            await asyncio.to_thread(job_desc.ensure, link)
+            jd_origin = "pending"
+
+    ats = await asyncio.to_thread(ats_score.score_resume, text, jd)
+    _log({"event": "screen_resume", "file": filename or "",
+          "resume_chars": len(text), "jd_chars": len(jd),
+          "jd_origin": jd_origin or "none", "ats_score": ats["total"],
+          "ocr": bool(ocr_info and ocr_info.get("used"))})
+    return {"ok": True, "ats": ats, "jd_origin": jd_origin or "none",
+            "jd_chars": len(jd), "resume_chars": len(text),
+            "preview": text[:400], "ocr": ocr_info}
 
 
 @app.get("/api/logs")
@@ -2629,11 +2799,16 @@ async def _run_stream(message: str, run_id: str, t0: float, bundle, uid: int,
                                 yield _frame({"type": "tool_end",
                                               "name": getattr(msg, "name", "") or "tool",
                                               "output": full[:900]})
-                                # ONLY the boards scraper feeds the deck here.
-                                # Gmail results are speculative — boards and
-                                # Gmail now run in parallel, and "prep" decides
-                                # which source actually wins.
-                                if ("job_boards" in tname or "scrape" in tname) and JOBS_MARKER in full:
+                                # Feed the deck from the boards scraper AND from
+                                # the Gmail cache. The Gmail tool name is
+                                # `search_job_emails`, which matched neither
+                                # "job_boards" nor "scrape", so a Gmail run
+                                # produced a correct ###JOBS_JSON### deck that
+                                # was silently discarded and the user saw zero
+                                # cards. Only one source reaches this gate per
+                                # run — "prep" decides which — so adding the
+                                # name here cannot double-count.
+                                if _DECK_TOOL_NAMES(tname) and JOBS_MARKER in full:
                                     try:
                                         deck = json.loads(full.split(JOBS_MARKER, 1)[1].strip())
                                         summary["jobs"] += deck.get("total", 0)

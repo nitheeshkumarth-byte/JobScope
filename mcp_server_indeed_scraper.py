@@ -51,7 +51,8 @@ from filters import (JOBS_MARKER, WORLDWIDE, WORK_MODES, canonical_board,
                       india_rule_applies, is_senior_or_experienced,
                       matches_country, matches_region, matches_work_mode,
                       normalize_countries, normalize_regions,
-                      normalize_work_modes, outside_india, region_label)
+                      normalize_work_modes, outside_india, region_label,
+                      related_roles, synonym_words)
 
 mcp = FastMCP("job-boards-scraper")
 
@@ -198,6 +199,11 @@ TAG_RE = re.compile(r"<[^>]+>")
 # Hard cap for one entire multi-board search — a stuck DNS/socket must not be
 # able to take the agent's run down with it.
 GLOBAL_DEADLINE = 40.0
+
+# Fewer cards than this from the primary role means the deck is too thin to be
+# useful, so one related-role sweep is worth its latency. Above it, the extra
+# sweep would only add latency to a hunt that already worked.
+THIN_RESULT_COUNT = 12
 
 
 def _text(blob: str) -> str:
@@ -507,16 +513,25 @@ def _select(jobs: list[Job], query: str, cap: int = MAX_JOBS) -> list[Job]:
     hunt could report zero listings while the board was full of them.
 
     A title is weak evidence, not proof of irrelevance, so it may only reorder.
+
+    Related roles are folded into the same ranking rather than searched
+    separately: a "Cloud Engineer" listing is a legitimate hit for a DevOps
+    search, so it sorts above a listing with no connection at all - but below a
+    literal match, and never off the list.
     """
     wanted = [w.lower() for w in (query or "").lower().split() if len(w) > 2]
     if not wanted:
         return jobs[:cap]
+    related = synonym_words(query)
     scored = []
     for j in jobs:
         low = f"{j.title} {j.company}".lower()
-        scored.append((sum(1 for w in wanted if w in low), j))
-    matched = sorted((s for s in scored if s[0] > 0), key=lambda t: t[0], reverse=True)
-    rest = [j for s, j in scored if s == 0]
+        direct = sum(1 for w in wanted if w in low)
+        near = 0 if not related else sum(1 for w in related if w in low)
+        scored.append(((direct, near), j))
+    matched = sorted((s for s in scored if s[0] > (0, 0)),
+                     key=lambda t: t[0], reverse=True)
+    rest = [j for s, j in scored if s == (0, 0)]
     return ([j for _, j in matched] + rest)[:cap]
 
 
@@ -891,13 +906,17 @@ def search_job_boards(query: str, location: str = "Remote",
     found: list[Job] = []
     sources = {}
     requested = canonical_board(board, BOARDS) if board else None
+    # Roles searched in addition to the one asked for, reported to the caller so
+    # the deck can say "also searched: Cloud Engineer" rather than silently
+    # widening the results.
+    widened: list[str] = []
 
     # Deliberately avoids the word "blocked". Consumers decide whether a search
     # failed by looking for that word, and this status means the opposite - the
     # board answered and simply had nothing for this query.
     NO_MATCHES = "0 (nothing matched this query)"
 
-    def probe(name, scrape_fn, force=False):
+    def probe(name, scrape_fn, force=False, q=None):
         # skip boards that just failed (short TTL cache), like an efficient
         # retry budget for bot-walled sites — unless the user named this board
         # outright, in which case honor the request and try it anyway
@@ -907,7 +926,7 @@ def search_job_boards(query: str, location: str = "Remote",
             if skip_until > time.time():
                 return name, "blocked (cached)"
         try:
-            rows = _apply_filters(_dedupe(scrape_fn(query)), remote_only,
+            rows = _apply_filters(_dedupe(scrape_fn(q or query)), remote_only,
                                   work_modes, regions, countries)
             # Title + location only: the company name used to be scanned too,
             # which deleted every opening at "Staffwise"/"Lead Generation".
@@ -936,7 +955,19 @@ def search_job_boards(query: str, location: str = "Remote",
                 _fail_until[name] = time.time() + BLOCK_CACHE_SECONDS
             return name, f"blocked ({_friendly(exc)})"
 
-    if requested is None:
+    def sweep(sweep_query, board_names):
+        """Run one board sweep for `sweep_query`, appending rows to `found`.
+
+        Returns that sweep's OWN {board: count} map instead of writing into the
+        shared `sources` dict. The related-role pass below re-runs boards that
+        already answered, and letting it overwrite the primary counts would
+        report a board as having 40 listings when 38 of them came from the
+        sibling role - which is exactly the kind of invisible widening that
+        makes a results report untrustworthy.
+
+        Used twice at most: once for the role the user asked for, and once more
+        for the single best related role when that first sweep came back thin.
+        """
         # All boards in parallel: connections compete, so the step takes as
         # long as the *slowest* board (~one timeout) instead of ten in a row.
         # A hard deadline caps the whole hunt even if one DNS/socket call
@@ -949,10 +980,12 @@ def search_job_boards(query: str, location: str = "Remote",
         # out and JOIN the stragglers, so the deadline would report "timed
         # out" and then block anyway for the straggler's own timeout.
         deadline = time.monotonic() + GLOBAL_DEADLINE
-        hunt = default_boards()
+        hunt = board_names
+        seen_here: dict = {}
         pool = ThreadPoolExecutor(max_workers=len(hunt))
         try:
-            futures = {pool.submit(probe, name, fn): name for name, fn in hunt.items()}
+            futures = {pool.submit(probe, name, fn, False, sweep_query): name
+                       for name, fn in hunt.items()}
             while futures and time.monotonic() < deadline:
                 done, _pending = wait(futures, timeout=max(0.2, min(5.0, deadline - time.monotonic())))
                 for fut in done:
@@ -962,18 +995,24 @@ def search_job_boards(query: str, location: str = "Remote",
                     except Exception as exc:
                         result = f"blocked ({_friendly(exc)})"
                     if isinstance(result, list):
-                        sources[probe_name] = len(result)
+                        seen_here[probe_name] = len(result)
                         found.extend(result)
                     else:
-                        sources[probe_name] = result
+                        seen_here[probe_name] = result
             for fut in futures:
-                sources[futures[fut]] = "blocked (timed out)"
+                seen_here[futures[fut]] = "blocked (timed out)"
         finally:
             # wait=False + cancel_futures: never join a straggler. Pending
             # probes are cancelled; already-running ones finish in the
             # background and are simply ignored.
             pool.shutdown(wait=False, cancel_futures=True)
             futures = {}
+        return seen_here
+
+    hunt = default_boards()
+
+    if requested is None:
+        sources.update(sweep(query, hunt))
     else:
         # A single, user-named board: no competition, no deadline sweep.
         _probe_name, result = probe(requested, BOARDS[requested], force=True)
@@ -982,6 +1021,40 @@ def search_job_boards(query: str, location: str = "Remote",
             found.extend(result)
         else:
             sources[requested] = result
+
+    # Related roles: if the requested role came back thin, search its closest
+    # sibling once - "DevOps Engineer" also finds Cloud Engineer, Platform
+    # Engineer, SRE, AWS Engineer. This is sequential and conditional, NOT the
+    # parallel fan-out over every board this tool used to do: a hunt that already
+    # returned a healthy deck never pays for the second sweep, so it cannot
+    # double the latency of the common case.
+    #
+    # The follow-up query replaces the role words entirely rather than adding
+    # them. Boards AND the terms in a query, so "DevOps Engineer cloud engineer"
+    # returns a SUBSET of "DevOps Engineer", which is precisely the bug that
+    # made searches come back empty.
+    if len(found) < THIN_RESULT_COUNT:
+        for sibling in related_roles(query):
+            before = len(found)
+            # Only the boards that actually answered last time; re-hitting a
+            # wall just burns the deadline and writes more failure-cache entries.
+            healthy = {n: f for n, f in hunt.items()
+                       if isinstance(sources.get(n), int) and sources[n] > 0}
+            if not healthy:
+                break
+            sweep(sibling, healthy)
+            added = len(found) - before
+            # Only reported when it actually surfaced something. A sibling sweep
+            # that also came back empty is not worth telling the user about, and
+            # naming it in the report would imply results that do not exist.
+            #
+            # These counts are deliberately NOT merged into `sources`: the
+            # primary report already describes the user's own role, and
+            # overwriting it with sibling-role counts would misattribute cards
+            # to the role that was actually searched for.
+            if added:
+                widened.append(sibling)
+            break
 
     # "Reached but empty" is tracked separately from "walled". Callers decide
     # whether to fall back to Gmail based on this list, and a board that simply
@@ -1055,6 +1128,12 @@ def search_job_boards(query: str, location: str = "Remote",
         val = sources.get(requested)
         lines.append(f"[{requested}] {val if isinstance(val, int) else val}")
     lines.append(f"[TOTAL] {len(found)} listing(s)")
+    if widened:
+        # The search genuinely covered more than the one role named, so say so
+        # at the same level as the totals instead of burying it in the payload.
+        lines.append("[ALSO] related roles searched because this role came back "
+                     "thin: " + ", ".join(widened) + " (cards below the ones "
+                     "matching the role you asked for)")
     if repeats_shown:
         # Say it plainly: a hunt made of listings from earlier runs should not
         # quietly look like new results.
@@ -1089,6 +1168,11 @@ def search_job_boards(query: str, location: str = "Remote",
         # sends the user chasing a bug, too loose and a real outage looks fine.
         "boards_worked": any(isinstance(s, int) or s == NO_MATCHES
                              for s in sources.values()),
+        # Related roles searched in addition to the one asked for, because the
+        # primary role came back thin. Surfaced rather than applied silently:
+        # "DevOps Engineer" returning "Cloud Engineer" cards is correct, but the
+        # user still deserves to know the second role was searched too.
+        "widened_to": widened,
         "total": len(found),
         "fresh": len(found) - repeats_shown,
         "repeats": repeats_shown,

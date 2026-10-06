@@ -497,3 +497,179 @@ def test_ranking_ignores_the_cv_itself():
     must leave the CV's own order alone."""
     tex = _skills_tex("We need a backend engineer.")
     assert tex.index("Languages:") < tex.index("Databases:")
+
+
+# --------------------------------------------------------------------------
+# Projects taken from the candidate's OWN GitHub link
+# --------------------------------------------------------------------------
+
+_CV_WITH_PROJECTS = (
+    "Jane Doe\njane@example.com\nAustin, TX\n"
+    "github.com/janedoe\n\n"
+    "Technical Skills\nLanguages:Python\n\n"
+    "Projects\n"
+    "Weather Dashboard - Flask app with a charting library\n\n"
+    "Experience\n"
+    "Data Analyst, Acme - 2021 - 2023\n"
+    "- Built reporting pipelines.\n"
+)
+
+_REPO = {"name": "rag-pipeline", "language": "Python",
+         "description": "A RAG service with FastAPI and pgvector",
+         "url": "https://github.com/janedoe/rag-pipeline"}
+
+
+def _projects_tex(gh, cv=_CV_WITH_PROJECTS, posting="RAG engineer"):
+    cfg = AgentConfig(resume_text=cv)
+    return rg.build_resume(cfg, {"title": "Engineer", "company": "Acme"},
+                           posting, github_projects=gh)[0]
+
+
+def _projects_section(tex: str) -> str:
+    if "\\section*{Projects}" not in tex:
+        return ""
+    tail = tex.split("\\section*{Projects}", 1)[1]
+    return tail.split("\\section*{", 1)[0]
+
+
+def test_a_matching_repo_reaches_the_projects_section():
+    tex = _projects_tex([_REPO])
+    section = _projects_section(tex)
+    assert "rag-pipeline" in section
+    assert "pgvector" in section
+
+
+def test_the_cv_projects_are_never_dropped_or_reordered():
+    """The uploaded document is the source of truth. A repo that matches the
+    posting must not push out what the candidate already wrote up."""
+    section = _projects_section(_projects_tex([_REPO]))
+    assert "Weather Dashboard" in section
+    assert section.index("Weather Dashboard") < section.index("rag-pipeline")
+
+
+def test_a_repo_the_cv_already_lists_is_not_added_twice():
+    """The CV writes "RAG Pipeline"; the repository is "rag-pipeline".
+
+    Comparing the raw strings never matches, so the same work used to be
+    listed twice with two different spellings on one page.
+    """
+    cv = _CV_WITH_PROJECTS.replace(
+        "Weather Dashboard - Flask app with a charting library",
+        "RAG Pipeline - Python - A RAG service with FastAPI and pgvector")
+    section = _projects_section(_projects_tex([_REPO], cv=cv))
+    assert re.search(r"rag[\s-]*pipeline", section, re.I)
+    # One entry, not two: the second copy would carry a hyphenated name.
+    assert section.count("\\noindent\\textbf") == 1
+    assert "rag-pipeline" not in section.lower()
+
+
+def test_no_projects_argument_leaves_the_document_untouched():
+    assert _projects_tex(None) == _projects_tex([])
+    assert _projects_tex(None) == rg.build_resume(
+        AgentConfig(resume_text=_CV_WITH_PROJECTS),
+        {"title": "Engineer", "company": "Acme"}, "RAG engineer")[0]
+
+
+def test_a_project_without_a_description_is_skipped():
+    """find_projects never returns one, and a bare repo name on a resume
+    claims nothing - it is noise the candidate did not ask for."""
+    assert "secret-migrations" not in _projects_section(
+        _projects_tex([{"name": "secret-migrations", "language": "",
+                        "description": ""}]))
+
+
+def test_repo_text_is_escaped_before_it_reaches_latex():
+    tex = _projects_tex([{"name": "d&d", "language": "C++",
+                          "description": "100% of the R&D team's docs"}])
+    assert "d\\&d" in tex and "R\\&D" in tex and "100\\%" in tex
+
+
+def test_a_github_project_lands_inside_the_projects_block():
+    """A repository is a project, not a job. It must not be promoted into the
+    experience block, where it would read as employment."""
+    tex = _projects_tex([_REPO])
+    assert tex.count("rag-pipeline") == 1
+    assert "rag-pipeline" in _projects_section(tex)
+    assert "rag-pipeline" not in tex.split("\\section*{Experience}", 1)[0]
+
+
+# --------------------------------------------------------------------------
+# An Objective for a CV that never wrote one
+#
+# The section used to be emitted only when the CV had a summary of its own,
+# so the most common CV shape - skills, experience, education, no summary -
+# produced a document with no Objective at all. It is now assembled from what
+# the document says: the target role, its own skill lines, its experience and
+# education lines and the selected repositories. Every phrase is copied out
+# of the CV, so the no-invention rule still holds for a paragraph nobody
+# authored.
+# --------------------------------------------------------------------------
+
+_NO_SUMMARY_CV = (
+    "Jane Doe\njane@example.com\nAustin, TX\n\n"
+    "Technical Skills\nLanguages: Python, FastAPI, PostgreSQL, Redis\n\n"
+    "Experience\nAcme Corp\nBackend Engineer\nShipped 100% uptime\n\n"
+    "Education\nBS Computer Science, UT Austin\n"
+)
+
+
+def _objective(tex: str) -> str:
+    if "\\section*{Objective}" not in tex:
+        return ""
+    return tex.split("\\section*{Objective}")[1].split("\\section*{")[0]
+
+
+def test_a_cv_without_a_summary_still_gets_an_objective():
+    objective = _objective(_tex(resume_text=_NO_SUMMARY_CV))
+    assert objective, "a CV with no summary produced no Objective at all"
+    assert "Backend Engineer with hands-on experience in Python" in objective
+    assert "\\textit{Targeting the Backend Engineer role at Acme.}" in objective
+
+
+def test_the_generated_objective_only_says_what_the_cv_says():
+    """Nothing is inferred about the person: every skill named in the
+    paragraph is one the CV listed, and no employer or date that is absent
+    from the document appears in it."""
+    objective = _objective(_tex(resume_text=_NO_SUMMARY_CV))
+    for skill in ("Python", "FastAPI", "PostgreSQL", "Redis"):
+        assert skill in objective
+    assert "Google" not in objective
+    assert "2024" not in objective
+
+
+def test_the_generated_objective_does_not_repeat_the_target_role():
+    """The old draft prefixed every sentence with the role, so a CV whose
+    experience line was the role itself read "Backend Engineer ... Backend
+    Engineer." in one paragraph."""
+    cv = ("Jane Doe\njane@example.com\nAustin, TX\n\n"
+          "Experience\nBackend Engineer\nShipped 100% uptime\n"
+          "Education\nBS Computer Science\n")
+    objective = _objective(_tex(resume_text=cv))
+    assert objective.count("Backend Engineer") <= 2, objective
+
+
+def test_an_objective_still_appears_without_a_skills_section():
+    """Skills are only one input. A CV with dates in its experience lines has
+    enough to say where the person has worked, and that is quoted instead."""
+    cv = ("Jane Doe\njane@example.com\nAustin, TX\n\n"
+          "Experience\nAcme Corp - Senior Backend Engineer, 2021 to present\n"
+          "- Built the billing service\n")
+    objective = _objective(_tex(resume_text=cv))
+    assert "Acme Corp - Senior Backend Engineer, 2021 to present" in objective
+
+
+def test_an_empty_cv_still_gets_no_objective():
+    """With nothing to analyse the section stays out rather than emitting a
+    paragraph made of filler."""
+    objective = _objective(_tex(resume_text="Jane Doe\njane@example.com\n"))
+    assert objective == ""
+
+
+def test_the_generated_objective_is_latex_safe_and_ascii():
+    cv = ("Jane Doe\njane@example.com\nAustin, TX\n\n"
+          "Technical Skills\nLanguages: Python, R&D, C#, F_sh\n\n"
+          "Experience\nAcme Corp - Backend Engineer, 2021 to present\n")
+    tex = _tex(resume_text=cv)
+    objective = _objective(tex)
+    assert "R\\&D" in objective and "C\\#" in objective and "F\\_sh" in objective
+    assert not [ch for ch in tex if ord(ch) > 126]

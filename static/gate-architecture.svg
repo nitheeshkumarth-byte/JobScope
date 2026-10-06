@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-label="JobScope runtime architecture">
+  <!--
+    Decorative backdrop for the sign-in gate. Rendered as a CSS mask, so only the
+    alpha channel is used and the shape inherits the app's accent colour in both
+    themes. Self-contained on purpose: no scripts, no foreignObject, no toolbar -
+    embedding the 760 KB Archify document itself would drag its own UI and theme
+    state into the login page.
+
+    The layout mirrors the real request path in dashboard.py: browser -> FastAPI
+    -> auth gate -> agent -> MCP servers -> stores and outbound services.
+    Motion is dash-flow along the connectors plus a slow opacity breath on the
+    lanes. prefers-reduced-motion is honoured by the host page, which pauses the
+    element rather than by anything here.
+  -->
+  <defs>
+    <style>
+      .wire { fill: none; stroke: #fff; stroke-width: 1.6; stroke-opacity: .5; }
+      .flow { fill: none; stroke: #fff; stroke-width: 2.2; stroke-opacity: .95;
+              stroke-linecap: round; stroke-dasharray: 10 46;
+              animation: flowMove 3.4s linear infinite; }
+      .flow.b { animation-duration: 4.6s; animation-delay: -1.1s; }
+      .flow.c { animation-duration: 5.2s; animation-delay: -2.4s; }
+      .box { fill: #fff; fill-opacity: .12; stroke: #fff; stroke-opacity: .55;
+             stroke-width: 1.4; }
+      .box.core { fill-opacity: .2; stroke-opacity: .8; }
+      .lane { animation: breathe 9s ease-in-out infinite; }
+      .lane.alt { animation-duration: 11.5s; animation-delay: -3s; }
+      @keyframes flowMove { to { stroke-dashoffset: -112; } }
+      @keyframes breathe { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+    </style>
+  </defs>
+
+  <g class="lane">
+    <!-- UI -->
+    <rect class="box" x="470" y="24" width="260" height="56" rx="12"/>
+    <rect class="box core" x="500" y="46" width="200" height="12" rx="6" fill-opacity=".5"/>
+
+    <!-- API -->
+    <path class="wire" d="M600 80 V116"/>
+    <path class="flow" d="M600 80 V116"/>
+    <rect class="box" x="440" y="116" width="320" height="60" rx="12"/>
+    <rect class="box" x="470" y="140" width="120" height="12" rx="6" fill-opacity=".5"/>
+    <rect class="box" x="606" y="140" width="124" height="12" rx="6" fill-opacity=".35"/>
+
+    <!-- Auth + stores -->
+    <path class="wire" d="M600 176 V214"/>
+    <path class="flow" d="M600 176 V214"/>
+    <path class="wire" d="M520 214 V246"/>
+    <path class="wire" d="M680 214 V246"/>
+    <rect class="box" x="430" y="246" width="180" height="58" rx="12"/>
+    <rect class="box" x="590" y="246" width="180" height="58" rx="12"/>
+
+    <!-- Agent -->
+    <path class="wire" d="M520 304 V344"/>
+    <path class="flow" d="M520 304 V344"/>
+    <path class="wire" d="M680 304 V344"/>
+    <path class="flow b" d="M680 304 V344"/>
+    <rect class="box core" x="430" y="344" width="340" height="64" rx="12"/>
+    <circle cx="470" cy="376" r="9" fill="#fff" fill-opacity=".55"/>
+    <rect class="box" x="496" y="368" width="150" height="16" rx="8" fill-opacity=".45"/>
+
+    <!-- MCP servers -->
+    <path class="wire" d="M600 408 V444"/>
+    <path class="flow c" d="M600 408 V444"/>
+    <path class="wire" d="M600 444 H240 V478"/>
+    <path class="wire" d="M600 444 H600 V478"/>
+    <path class="wire" d="M600 444 H960 V478"/>
+    <path class="flow" d="M600 444 H240 V478"/>
+    <path class="flow b" d="M600 444 H960 V478"/>
+    <rect class="box" x="120" y="478" width="240" height="58" rx="12"/>
+    <rect class="box" x="480" y="478" width="240" height="58" rx="12"/>
+    <rect class="box" x="840" y="478" width="240" height="58" rx="12"/>
+
+    <!-- Outbound + stores -->
+    <path class="wire" d="M240 536 V590 H360"/>
+    <path class="flow" d="M240 536 V590 H360"/>
+    <path class="wire" d="M600 536 V590"/>
+    <path class="flow b" d="M600 536 V590"/>
+    <path class="wire" d="M960 536 V590 H840"/>
+    <path class="flow c" d="M960 536 V590 H840"/>
+    <rect class="box" x="360" y="562" width="200" height="56" rx="12"/>
+    <rect class="box" x="620" y="562" width="200" height="56" rx="12"/>
+    <rect class="box" x="240" y="662" width="240" height="56" rx="12"/>
+    <rect class="box" x="500" y="662" width="240" height="56" rx="12"/>
+    <rect class="box" x="760" y="662" width="240" height="56" rx="12"/>
+    <path class="wire" d="M460 618 V662"/>
+    <path class="wire" d="M720 618 V662"/>
+    <path class="wire" d="M360 690 H240"/>
+    <path class="wire" d="M840 690 H760"/>
+    <path class="flow" d="M360 690 H240"/>
+    <path class="flow b" d="M840 690 H760"/>
+  </g>
+</svg>

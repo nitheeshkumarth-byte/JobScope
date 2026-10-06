@@ -323,8 +323,36 @@ header > * { max-width: 100%; }
 .rmodal .rjdbox:focus { outline: none; border-color: var(--accent); }
 .rmodal .rjdraw { display: flex; align-items: center; gap: 10px; padding: 8px 0 10px; }
 .rmodal .rjdn { font-size: 11.5px; color: var(--muted); }
-.rmodal .rjdfetch { display: flex; align-items: center; gap: 9px; padding: 0 0 10px; font-size: 11.5px; color: var(--muted); }
 .rmodal .rjdfetch .spin { flex: none; }
+.rmodal .rjdcheck { display: flex; align-items: center; gap: 7px; padding: 0 0 11px; font-size: 12px; color: var(--text); cursor: pointer; }
+.rmodal .rjdcheck input { accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
+.rmodal .rjdcheck span { color: var(--muted); }
+
+/* ATS-readiness estimate. Sits under the preview and above the footer, so it
+   reads as a note about the document the user is looking at. */
+.rmodal .ats { border-top: 1px solid var(--border); background: var(--surface-2); padding: 12px 16px 14px; }
+.rmodal .ats-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.rmodal .ats-score { font-size: 21px; font-weight: 700; letter-spacing: -.4px; color: var(--text); font-variant-numeric: tabular-nums; }
+.rmodal .ats-score.good { color: #16a34a; }
+.rmodal .ats-score.fair { color: #d97706; }
+.rmodal .ats-score.weak { color: #dc2626; }
+.rmodal .ats-band { font-size: 12px; color: var(--muted); }
+.rmodal .ats-why { font-size: 11px; color: var(--muted); }
+.rmodal .ats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px 14px; margin-top: 9px; }
+.rmodal .ats-row { display: flex; align-items: baseline; gap: 7px; font-size: 11.5px; }
+.rmodal .ats-row b { font-weight: 600; color: var(--text); }
+.rmodal .ats-row span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.rmodal .ats-bar { flex: 1; height: 4px; border-radius: 3px; background: var(--border); overflow: hidden; max-width: 90px; }
+.rmodal .ats-bar i { display: block; height: 100%; background: var(--accent); }
+.rmodal .ats-list { margin: 9px 0 0; padding: 0; list-style: none; }
+.rmodal .ats-list li { font-size: 11.5px; color: var(--muted); padding-left: 13px; position: relative; line-height: 1.5; }
+.rmodal .ats-list li::before { content: "\2192"; position: absolute; left: 0; color: var(--accent); }
+.rmodal .ats-kw { font-size: 11.5px; color: var(--muted); margin-top: 9px; }
+.rmodal .ats-kw b { color: var(--text); font-weight: 600; }
+.rmodal .ats-proj { font-size: 11.5px; color: var(--muted); margin-top: 7px; }
+.rmodal .ats-proj b { color: var(--text); font-weight: 600; }
+.rmodal .ats-warn { font-size: 11.5px; color: #d97706; margin-top: 7px; }
+
 #rBodyTex { margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
 .rmodal .rfoot { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface); }
 .rmodal .rdesc { font-size: 12px; color: var(--muted); flex: 1; }
@@ -560,6 +588,9 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
 .gatecard { width: 100%; max-width: 380px; }
 .gatetop { text-align: center; margin-bottom: 20px; }
 .gatesub { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+.gatearchlinks { display: flex; justify-content: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.garchlink { font-size: 11.5px; color: var(--accent); text-decoration: none; opacity: .95; }
+.garchlink:hover { text-decoration: underline; opacity: 1; }
 .gateform { display: flex; flex-direction: column; gap: 12px; }
 .gateform[hidden] { display: none; }
 .gateform label { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--muted); }
@@ -686,6 +717,44 @@ body.booted header { animation-delay: .06s; }
 }
 @keyframes aurora { to { transform: translate3d(-4%, -3%, 0) scale(1.12) rotate(6deg); } }
 @keyframes gridDrift { to { background-position: 46px 92px, -46px 46px; } }
+
+/* The runtime architecture, drawn behind the sign-in card.
+
+   Used as a CSS *mask*, not an <img>: only its alpha channel is read, so the
+   line work takes the app's accent colour in both themes without a second copy
+   of the asset. It sits at z-index -3, under the existing aurora (-2) and grid
+   (-1), and takes pointer-events: none so it can never intercept a click on the
+   form in front of it. The whole element is aria-hidden: it is decoration, and a
+   screen reader should meet the form first. */
+.gatearch {
+  position: absolute; inset: 0; z-index: -3; pointer-events: none;
+  opacity: .16;
+  -webkit-mask-image: url("/static/arch-extract.svg");
+          mask-image: url("/static/arch-extract.svg");
+  -webkit-mask-size: min(1180px, 128%) auto; mask-size: min(1180px, 128%) auto;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  animation: archDrift 64s ease-in-out infinite alternate;
+}
+@keyframes archDrift {
+  from { transform: translate3d(-1.6%, -1%, 0) scale(1); }
+  to   { transform: translate3d(1.6%, 1.2%, 0) scale(1.035); }
+}
+/* Use the full HTML document as the background itself, masked through the SVG? No.
+   Instead, we embed the document in an iframe for viewing; for the backdrop we
+   already have the extracted SVG mask. Keep the mask as-is. */
+/* Backgrounded tabs still get rAF and still burn battery. The gate's endless
+   loops only, and only via play-state - the artwork keeps its position. */
+html.archPaused .gate::before,
+html.archPaused .gate::after,
+html.archPaused .gatearch,
+html.archPaused .gatemark .ring,
+html.archPaused .gatemark .core,
+html.archPaused .gatetop .brand .dot,
+html.archPaused .gateticker .gtrack { animation-play-state: paused; }
+/* A narrow window crops the diagram's edges; fade it out rather than showing a
+   half-diagram, which reads as a rendering fault. */
+@media (max-width: 720px), (max-height: 520px) { .gatearch { opacity: .1; } }
 
 .gatestage { position: relative; width: 100%; max-width: 420px; display: flex; flex-direction: column; align-items: center; }
 .gatecard {
@@ -827,7 +896,8 @@ body.booted header { animation-delay: .06s; }
      decorative gate loops plus the mark and the board ticker. */
   .node.live .pill::after, .typing i, .spin,
   .gate::before, .gate::after, .gatemark .ring, .gatemark .core,
-  .gatetop .brand .dot, .gatecheck::before, .gateticker .gtrack {
+  .gatetop .brand .dot, .gatecheck::before, .gateticker .gtrack,
+  .gatearch {
     animation: none !important;
   }
   /* The list stagger uses animation-delay, which the global duration clamp
@@ -1195,6 +1265,13 @@ main.chat::-webkit-scrollbar, .rbody::-webkit-scrollbar, .slist::-webkit-scrollb
         <button class="btn ghost" id="rJdRegen">Tailor to this description</button>
         <span class="rjdn" id="rJdCount"></span>
       </div>
+      <!-- Projects are read from the GitHub link already on the CV, so nothing
+           is typed here and no account is configured. Off by default: it costs
+           API requests and does nothing for a CV with no link. -->
+      <label class="rjdcheck" for="rGitHub">
+        <input type="checkbox" id="rGitHub">
+        <span>Add matching projects from my CV's GitHub link</span>
+      </label>
       <!-- Shown only while a background fetch for this posting is outstanding,
            or when it turned up text the resume on screen was not built from.
            Not a spinner over the whole modal: the resume is already usable, and
@@ -1207,6 +1284,9 @@ main.chat::-webkit-scrollbar, .rbody::-webkit-scrollbar, .slist::-webkit-scrollb
     </div>
     <div class="rbody" id="rBodyPreview"><div class="empty">Building LaTeX resume&hellip;</div></div>
     <pre class="rbody" id="rBodyTex" style="display:none"></pre>
+    <!-- An estimate, not an official vendor score: six components, each with
+         the specific reason it lost points, so the fixes are actionable. -->
+    <div class="ats" id="rAts" hidden></div>
     <div class="rfoot">
       <span class="rdesc" id="rDesc"></span>
       <button class="btn ghost" id="rCopy" title="Copy the .tex to your clipboard">Copy LaTeX</button>
@@ -1217,6 +1297,7 @@ main.chat::-webkit-scrollbar, .rbody::-webkit-scrollbar, .slist::-webkit-scrollb
 </div>
 
 <div class="gate" id="gate" hidden>
+  <div class="gatearch" aria-hidden="true"></div>
   <button class="iconbtn gtheme" id="gTheme" title="Switch theme">Dark</button>
   <div class="gatestage">
   <div class="gatemark" aria-hidden="true"><span class="ring"></span><span class="core">J</span></div>
@@ -1224,6 +1305,9 @@ main.chat::-webkit-scrollbar, .rbody::-webkit-scrollbar, .slist::-webkit-scrollb
     <div class="gatetop">
       <div class="brand" style="justify-content:center"><span class="dot"></span>JobScope</div>
       <p class="gatesub" id="gateSub">Sign in to your account</p>
+      <div class="gatearchlinks">
+        <a href="/static/jobscope-runtime-architecture.html" target="_blank" rel="noopener" class="garchlink">View architecture (full document)</a>
+      </div>
     </div>
 
     <!-- sign in / create account -->
@@ -1636,6 +1720,8 @@ function openResume(job) {
   $("rDesc").textContent = "";
   _rTex = ""; _rFile = "Resume.tex";
   $("rBodyPreview").style.display = "";
+  $("rAts").hidden = true;
+  $("rAts").innerHTML = "";
   $("rBodyPreview").innerHTML = '<div class="empty"><span class="spin"></span> Building LaTeX resume — fetching posting &amp; ranking skills…</div>';
   $("rBodyTex").textContent = "";
   switchRTab("pv");
@@ -1662,7 +1748,64 @@ function _jdNote(r) {
     ? " Matched " + r.rag_hits + " passage" + (r.rag_hits === 1 ? "" : "s") + " from "
       + (r.rag_sources || []).join(", ") + "."
     : " No matching passages found in your document library.";
-  return how + hits + " Compiles with pdflatex.";
+  var gh = (r.github_projects || []).length
+    ? " Added " + r.github_projects.length + " project"
+      + (r.github_projects.length === 1 ? "" : "s") + " from github.com/" + esc(r.github_handle || "") + "."
+    : (r.github_error ? " No GitHub projects — " + esc(r.github_error) : "");
+  return how + hits + gh + " Compiles with pdflatex.";
+}
+
+/* The ATS panel shows where the points went, not just the total: a single
+   number gives nobody anything to act on. Every component carries its own
+   reason, and the keyword list is the posting's vocabulary that the resume
+   does not yet use. */
+var _ATS_LABELS = { contact: "Contact details", sections: "Sections",
+                    structure: "Structure", dates: "Dates",
+                    keywords: "JD keywords", evidence: "Evidence" };
+
+function _atsBand(a) {
+  return a >= 80 ? "good" : a >= 60 ? "fair" : "weak";
+}
+
+function renderAts(r) {
+  var box = $("rAts"), a = r && r.ats;
+  if (!a || typeof a.total !== "number") { box.hidden = true; box.innerHTML = ""; return; }
+  var band = _atsBand(a.total), h = "";
+  h += '<div class="ats-head"><span class="ats-score ' + band + '">'
+     + Math.round(a.total) + '<span style="font-size:12px;font-weight:500;color:var(--muted)">/100</span></span>'
+     + '<span class="ats-band">ATS-readiness estimate</span>'
+     + '<span class="ats-why">not an official vendor score</span></div>';
+  h += '<div class="ats-grid">';
+  Object.keys(_ATS_LABELS).forEach(function (k) {
+    var c = (a.breakdown || {})[k];
+    if (!c) return;
+    var pct = c.max ? Math.max(0, Math.min(100, Math.round(c.score / c.max * 100))) : 0;
+    h += '<div class="ats-row"><b>' + _ATS_LABELS[k] + '</b>'
+       + '<div class="ats-bar"><i style="width:' + pct + '%"></i></div>'
+       + '<span>' + c.score + '/' + c.max + '</span></div>';
+  });
+  h += "</div>";
+  var issues = a.issues || [];
+  if (issues.length) {
+    h += '<ul class="ats-list">' + issues.slice(0, 8).map(function (i) {
+      return "<li>" + esc(i) + "</li>"; }).join("") + "</ul>";
+  }
+  var missing = a.missing_keywords || [];
+  if (missing.length) {
+    h += '<div class="ats-kw"><b>From this posting, not on the resume:</b> '
+       + esc(missing.slice(0, 12).join(", "))
+       + (missing.length > 12 ? " (+" + (missing.length - 12) + " more)" : "")
+       + " — add only what you have actually done.</div>";
+  }
+  var gh = r.github_projects || [];
+  if (gh.length) {
+    h += '<div class="ats-proj"><b>From github.com/' + esc(r.github_handle || "") + ":</b> "
+       + gh.map(function (p) { return esc(p.name); }).join(", ")
+       + " — each matched against its own README.</div>";
+  }
+  if (r.github_error) h += '<div class="ats-warn">' + esc(r.github_error) + "</div>";
+  box.innerHTML = h;
+  box.hidden = false;
 }
 
 async function generateResume(job) {
@@ -1672,8 +1815,10 @@ async function generateResume(job) {
     var jd = $("rJd").value.trim();
     $("rJdCount").textContent = jd ? jd.length.toLocaleString() + " characters" : "";
     $("rBodyPreview").innerHTML = '<div class="empty"><span class="spin"></span> Building LaTeX resume — ' + (jd ? "matching your pasted description" : "fetching posting") + " &amp; ranking skills…</div>";
+    const gh = $("rGitHub") && $("rGitHub").checked;
+    $("rAts").hidden = true;
     const res = await api("/api/resume/gen", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: job.title || "", company: job.company || "", location: job.location || "", link: job.link || "", source: job.source || "", github_url: $("cfgGithub").value.trim() || "", jd_text: jd, job_desc: job.desc || "" }) });
+      body: JSON.stringify({ title: job.title || "", company: job.company || "", location: job.location || "", link: job.link || "", source: job.source || "", github_url: $("cfgGithub").value.trim() || "", jd_text: jd, job_desc: job.desc || "", github_projects: !!gh }) });
     const r = await res.json();
     if (!r.ok) {
       $("rBodyPreview").innerHTML = '<div class="empty">Failed to build resume — ' + esc(r.error || "server error") + "</div>";
@@ -1690,6 +1835,7 @@ async function generateResume(job) {
       : '<div class="empty">Preview unavailable — open the LaTeX tab.</div>';
     $("rBodyTex").textContent = _rTex;
     $("rDesc").textContent = _jdNote(r);
+    renderAts(r);
     startDescPoll(job);
   } catch (e) {
     $("rBodyPreview").innerHTML = '<div class="empty">Request failed — ' + esc(e.message) + "</div>";
@@ -1900,6 +2046,15 @@ function applyTheme(next) {
 function toggleTheme() { applyTheme(state.theme === "light" ? "dark" : "light"); }
 $("themeBtn").onclick = toggleTheme;
 $("gTheme").onclick = toggleTheme;
+
+/* A hidden tab still runs CSS animations - they just cost battery and heat
+   for nobody. Pause the gate's endless loops while the tab is in the
+   background. Scoped to the gate's own decorative layers: nothing the user is
+   interacting with is touched, and the animation resumes untouched on return
+   because play-state, not display, is what changes. */
+document.addEventListener("visibilitychange", function () {
+  document.documentElement.classList.toggle("archPaused", document.hidden);
+});
 
 /* ---------- settings / resume / suggestions ---------- */
 function openDrawer(id) { $(id).classList.add("show"); $("overlay").classList.add("show"); }

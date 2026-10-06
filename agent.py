@@ -41,8 +41,8 @@ from langgraph.graph import END, MessagesState, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 import filters
-from filters import (FALLBACK_SENDERS, JOBS_MARKER, boards_location,
-                     detect_board, keep_job)
+from filters import (JOBS_MARKER, boards_location,
+detect_board, keep_job)
 
 load_dotenv()
 
@@ -740,24 +740,41 @@ async def create_runtime() -> MCPRuntime:
     # The "command" MUST be sys.executable: a bare "python" resolves to
     # whatever's first on PATH (may be a different interpreter with no deps).
     python_exe = sys.executable
+    # Every GMAIL_* variable is forwarded, not just the first account pair.
+    #
+    # This is why "Gmail returns nothing" was so hard to diagnose from the app
+    # side while a direct script worked: the tool subprocess did NOT inherit
+    # os.environ, and this dict only carried GMAIL_ADDRESS /
+    # GMAIL_APP_PASSWORD. So inside the MCP server:
+    #   * account 2 did not exist (no GMAIL_ADDRESS_2), so half the alert mail
+    #     was unreachable,
+    #   * GMAIL_SENDERS was unset, so per-mailbox sender config was ignored,
+    #   * GMAIL_CACHE_DB was unset, so the subprocess looked for its cache in
+    #     the launch CWD rather than beside this file, found nothing, and every
+    #     query re-synced into an empty database.
+    # Forwarding the prefix keeps one .env as the single source of truth and
+    # makes the subprocess behave exactly like a direct import.
+    gmail_env = {k: v for k, v in os.environ.items()
+                 if k.startswith("GMAIL_")}
     client = MultiServerMCPClient({
         "github": {
             "command": python_exe,
             "args": ["mcp_server_github.py"],
             "transport": "stdio",
-            "env": {
-                "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN", ""),
-                "GITHUB_USERNAME": os.environ.get("GITHUB_USERNAME", ""),
-            },
+            # No username any more: the owner is an argument taken from the CV's
+            # own GitHub link, so one deployment serves every account correctly.
+            # The token is optional - public profiles work without it, and it only
+            # raises the API rate limit - so it is forwarded when present and
+            # simply omitted otherwise.
+            "env": {k: v for k, v in
+                    (("GITHUB_TOKEN", os.environ.get("GITHUB_TOKEN")),
+                     ) if v},
         },
         "gmail": {
             "command": python_exe,
             "args": ["mcp_server_gmail.py"],
             "transport": "stdio",
-            "env": {
-                "GMAIL_ADDRESS": os.environ.get("GMAIL_ADDRESS", ""),
-                "GMAIL_APP_PASSWORD": os.environ.get("GMAIL_APP_PASSWORD", ""),
-            },
+            "env": gmail_env,
         },
         "indeed_scraper": {
             "command": python_exe,
@@ -865,14 +882,26 @@ async def create_agent(cfg: AgentConfig | None = None,
         if source == "gmail":
             try:
                 gmail = _find_tool(tools, "search_job_emails")
-                # ONE sender per run. FALLBACK_SENDERS holds two, and querying
-                # both in parallel is exactly what produced the "two job search
-                # emails" the user reported. Ask again to check the other one.
+                # One call, not one call per sender.
+                #
+                # The tool reads the local alert cache, which is populated by an
+                # explicit sync and refreshed by the tool itself when stale. The
+                # previous design issued one IMAP login per (account, sender)
+                # pair on every query, so a role search re-downloaded full
+                # RFC822 messages for every alert in the mailbox, re-parsed
+                # them, and was capped by GMAIL_SEARCH_BUDGET — which meant
+                # that with two mailboxes configured, the second mailbox's
+                # senders were the ones that got cut.
+                #
+                # Per-account sender configuration still decides what gets
+                # indexed (filters.gmail_senders_for_account -> sync), it just
+                # no longer multiplies the number of queries.
                 calls.append({
                     "id": "g0", "type": "tool_call", "name": gmail.name,
-                    "args": {"sender": FALLBACK_SENDERS[0],
+                    "args": {"sender": "",
                              "days_back": cfg.days_back,
-                             "max_results": cfg.max_results},
+                             "max_results": cfg.max_results,
+                             "account": 0},
                 })
             except RuntimeError:
                 pass  # gmail server missing
@@ -999,29 +1028,30 @@ async def create_agent(cfg: AgentConfig | None = None,
         gmail_tool = _find_tool(tools, "search_job_emails")
         parts = []
         structured = []
-        # Both alert senders in parallel: separate IMAP connections, so the
-        # two searches compete instead of serializing their connect+login.
-        results = await asyncio.gather(
-            *[asyncio.wait_for(
+        # One call for every mailbox and every sender, read from the local
+        # cache. This used to gather one IMAP search per sender, all against
+        # mailbox 1: with two accounts configured it could not read the second
+        # mailbox at all, and it re-downloaded every alert on each fallback.
+        # `sender: ""` means every indexed sender; `account: 0` means every
+        # mailbox, so the fallback now sees all of the cached alerts.
+        try:
+            res = await asyncio.wait_for(
                 gmail_tool.ainvoke({
-                    "sender": sender,
+                    "sender": "",
                     "days_back": cfg.days_back,
                     "max_results": cfg.max_results,
+                    "account": 0,
                 }),
-                timeout=60,
-            ) for sender in FALLBACK_SENDERS],
-            return_exceptions=True,
-        )
-        for res in results:
-            if isinstance(res, Exception):  # keep the run alive, report to the LLM
+                timeout=120,
+            )
+            if isinstance(res, Exception):
                 parts.append(f"search_job_emails failed: {res}")
-                continue
-            # MCP tools return content as a list of blocks, not a str — normalize.
-            res_text = _text_content(res)
-            parts.append(res_text)
-            # Keep the machine-readable listings (with links) too, so the
-            # final report carries a working Apply button per job.
-            structured.extend(_extract_struct_from(res_text))
+            else:
+                res_text = _text_content(res)
+                parts.append(res_text)
+                structured.extend(_extract_struct_from(res_text))
+        except asyncio.TimeoutError:
+            parts.append("search_job_emails timed out reading the Gmail cache")
 
         kept = list({j["link"]: j for j in structured if _keep_job(j, cfg)}.values())
         if kept:
