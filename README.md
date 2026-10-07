@@ -122,7 +122,7 @@ that decides whether a listing reaches you is a pure function and is covered:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest tests -q     # 1138 tests
+.\.venv\Scripts\python.exe -m pytest tests -q     # 1139 tests
 ```
 
 `tests/` is mostly regression tests for bugs that actually shipped — the

@@ -4,8 +4,9 @@ Two ways in, chosen automatically:
 
 * `N8N_API_KEY` is set in the environment or `.env` -> the n8n Public API.
   The two credentials are created there (or reused if they already exist),
-  their ids are patched into the workflow, then the workflow is created and
-  activated. No container restart, nothing else on the machine is touched.
+  their ids are patched into the workflow, then the workflow is created (or
+  updated in place when one with the same name exists) and activated. No
+  container restart, nothing else on the machine is touched.
 * No API key -> the running `n8n` Docker container via the n8n CLI
   (`n8n import:credentials`, `n8n import:workflow`, `n8n update:workflow`).
   CLI imports only become visible after a restart, so this path restarts the
@@ -145,17 +146,22 @@ def import_via_api(base: str, key: str, env: dict[str, str],
               "imported with placeholder ids (set them in the n8n UI).")
     workflow = prepare_workflow(env, screen, ollama)
 
-    created = api_call("POST", f"{base}/api/v1/workflows", key,
-                       {"name": workflow["name"], "nodes": workflow["nodes"],
-                        "connections": workflow["connections"],
-                        "settings": workflow.get("settings", {})})
-    if created.status_code >= 400 and "already exists" in created.text:
-        print("  workflow already exists - re-imports replace it via the UI; "
-              "skipping creation.")
-        return None
-    created.raise_for_status()
-    wf_id = str(created.json()["id"])
-    print(f"  created workflow id {wf_id}")
+    body = {"name": workflow["name"], "nodes": workflow["nodes"],
+            "connections": workflow["connections"],
+            "settings": workflow.get("settings", {})}
+    listed = api_call("GET", f"{base}/api/v1/workflows?limit=250", key)
+    listed.raise_for_status()
+    wf_id = next((str(row["id"]) for row in listed.json().get("data", [])
+                  if row.get("name") == workflow["name"]), None)
+    if wf_id:
+        updated = api_call("PUT", f"{base}/api/v1/workflows/{wf_id}", key, body)
+        updated.raise_for_status()
+        print(f"  updated workflow id {wf_id}")
+    else:
+        created = api_call("POST", f"{base}/api/v1/workflows", key, body)
+        created.raise_for_status()
+        wf_id = str(created.json()["id"])
+        print(f"  created workflow id {wf_id}")
 
     for path in (f"/api/v1/workflows/{wf_id}/activate",):
         try:

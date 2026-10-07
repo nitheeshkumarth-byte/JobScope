@@ -111,3 +111,56 @@ def test_the_import_script_points_n8n_at_ollama_through_docker():
     assert mod.ollama_base_url(
         {"N8N_OLLAMA_BASE_URL": "http://ollama:11434",
          "OLLAMA_URL": "http://127.0.0.1:11434"}) == "http://ollama:11434"
+
+
+def test_a_re_run_updates_the_existing_workflow_instead_of_duplicating():
+    """Re-imports must PUT over the workflow of the same name, not POST a
+    second copy that leaves an orphaned duplicate behind."""
+    mod = _load_import_module()
+
+    class _FakeResp:
+        def __init__(self, body, status=200):
+            self._body = body
+            self.status_code = status
+            self.text = json.dumps(body)
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise AssertionError(self.text)
+
+        def json(self):
+            return self._body
+
+    calls: list[tuple[str, str]] = []
+
+    def fake_api(method, url, key=None, payload=None, timeout=15):
+        calls.append((method, url))
+        if method == "GET" and url.endswith("/credentials?limit=250"):
+            return _FakeResp({"data": []})
+        if method == "POST" and url.endswith("/credentials"):
+            return _FakeResp({"id": "abc", "name": payload["name"]})
+        if method == "GET" and url.endswith("/workflows?limit=250"):
+            return _FakeResp({"data": [{"id": "wf42",
+                                        "name": "JobScope Resume Screening"}]})
+        if method == "PUT" and url.endswith("/workflows/wf42"):
+            return _FakeResp({"id": "wf42"})
+        if method == "POST" and url.endswith("/workflows/wf42/activate"):
+            return _FakeResp({})
+        raise AssertionError(f"unexpected {method} {url}")
+
+    orig = mod.api_call
+    mod.api_call = fake_api
+    try:
+        wf = _load_workflow()
+        out = mod.import_via_api("http://n8n", "k",
+                                 {"SCREEN_TOKEN": "sekret", "OLLAMA_URL":
+                                  "http://127.0.0.1:11434"}, wf)
+    finally:
+        mod.api_call = orig
+
+    assert out == "wf42"
+    upserts = [(m, u) for m, u in calls if "workflows" in u and "/activate" not in u
+               and "?limit" not in u and "credentials" not in u]
+    assert upserts == [("PUT", "http://n8n/api/v1/workflows/wf42")]  # never POST
+    assert any(m == "POST" and u.endswith("/workflows/wf42/activate")
+               for m, u in calls)
