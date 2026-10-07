@@ -65,3 +65,6 @@ gmail_cache.db-shm
 
 gmail_oauth_token.json
 gmail_oauth_token.json*
+
+client_secret*.json
+client_secret*.json.bak
