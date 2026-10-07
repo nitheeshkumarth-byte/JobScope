@@ -62,3 +62,6 @@ gmail_cache.db-shm
 # Cached public GitHub repository metadata and READMEs, keyed by handle. Pure
 # derived data with a TTL - regenerating it costs a handful of API calls.
 .github_cache/
+
+gmail_oauth_token.json
+gmail_oauth_token.json*
