@@ -2196,3 +2196,136 @@ def test_every_description_origin_is_named_in_the_footer():
         assert f'r.jd_origin === "{origin}"' in note
     assert "No posting text available" in note, \
         "no wording for the case where there was no posting text at all"
+
+
+# --------------------------------------------------------------------------
+# Gmail fetch button
+# --------------------------------------------------------------------------
+
+
+def _gmail_ctx(days_back=60):
+    from types import SimpleNamespace
+    return SimpleNamespace(bundle=SimpleNamespace(
+        cfg=SimpleNamespace(days_back=days_back)))
+
+
+def test_gmail_sync_endpoint_summarizes_what_landed(monkeypatch):
+    """The button needs the first line of the sync summary plus the cache total,
+    so the transcript can say how much mail was read without re-querying."""
+    import gmail_index
+    import mcp_server_gmail
+    seen = {}
+
+    def fake_sync(days_back=0, account=0, **kw):
+        seen["days_back"] = days_back
+        seen["account"] = account
+        return "mailbox 1: 3 msgs, 9 listings"
+
+    monkeypatch.setattr(mcp_server_gmail, "sync_gmail_cache", fake_sync)
+    monkeypatch.setattr(gmail_index, "count_listings", lambda *a, **k: 9)
+    monkeypatch.setattr(gmail_index, "sender_breakdown", lambda *a, **k: [])
+
+    out = asyncio.run(d.gmail_sync(d.GmailSyncRequest(), _gmail_ctx(45)))
+    assert out["ok"] is True
+    assert out["days_back"] == 45           # blank body -> use the profile window
+    assert seen["account"] == 0             # 0 sweeps every configured mailbox
+    assert seen["days_back"] == 45
+    assert out["summary"].startswith("mailbox 1")
+    assert out["cached_total"] == 9
+
+
+def test_gmail_sync_endpoint_honours_an_explicit_window(monkeypatch):
+    import gmail_index
+    import mcp_server_gmail
+    monkeypatch.setattr(mcp_server_gmail, "sync_gmail_cache",
+                        lambda **kw: "Cached 1 message, 2 listings.")
+    monkeypatch.setattr(gmail_index, "count_listings", lambda *a, **k: 2)
+    monkeypatch.setattr(gmail_index, "sender_breakdown", lambda *a, **k: [])
+
+    out = asyncio.run(d.gmail_sync(d.GmailSyncRequest(days_back=7), _gmail_ctx(60)))
+    assert out["days_back"] == 7
+
+
+def test_gmail_sync_failure_is_surfaced_not_swallowed(monkeypatch):
+    """A dead Gmail token must reach the UI as a 502, otherwise the button
+    would report success on an empty cache."""
+    import gmail_index
+    import mcp_server_gmail
+    from fastapi import HTTPException
+
+    def boom(**kw):
+        raise RuntimeError("no token")
+
+    monkeypatch.setattr(mcp_server_gmail, "sync_gmail_cache", boom)
+    monkeypatch.setattr(gmail_index, "count_listings", lambda *a, **k: 0)
+    monkeypatch.setattr(gmail_index, "sender_breakdown", lambda *a, **k: [])
+
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(d.gmail_sync(d.GmailSyncRequest(), _gmail_ctx()))
+    assert err.value.status_code == 502
+    assert "no token" in err.value.detail
+
+
+def test_gmail_listings_endpoint_maps_rows_to_cards(monkeypatch):
+    """Gmail rows carry sender/sent_at, not the board card shape. The endpoint
+    has to translate them - the deck renders title/company/location/link and
+    labels each card with its sender."""
+    import gmail_index
+    rows = [
+        {"title": "Dev", "company": "Acme", "location": "Remote",
+         "link": "http://x", "sender": "jobalerts-noreply@linkedin.com",
+         "sent_at": "2026-01-02T00:00:00", "account": 1},
+        {"title": "Ops", "company": "Beta", "location": "NY",
+         "link": "http://y", "sender": "donotreply@jobalert.indeed.com",
+         "sent_at": "2026-01-01T00:00:00", "account": 1},
+    ]
+    monkeypatch.setattr(
+        gmail_index, "search_listings",
+        lambda sender="", account=None, query="", days_back=None, limit=50, path=None:
+            rows if account == 1 else [])
+    monkeypatch.setattr(gmail_index, "count_listings", lambda *a, **k: 2)
+
+    out = asyncio.run(d.gmail_listings(days_back=0, query="", limit=0,
+                                       ctx=_gmail_ctx()))
+    assert out["total"] == 2
+    assert out["jobs"][0]["title"] == "Dev"          # newest first
+    assert out["jobs"][0]["source"] == "jobalerts-noreply@linkedin.com"
+    assert out["jobs"][0]["salary"] == ""
+    assert out["sources"]["jobalerts-noreply@linkedin.com"] == 1
+    assert out["cached_total"] == 2
+
+
+def test_gmail_listings_caps_the_deck_size(monkeypatch):
+    """A 200-row deck would be unusable, so the cap holds even when a client
+    asks for more - and each account is over-fetched so the sender interleave
+    has room to work, rather than being pre-truncated to the cap."""
+    import gmail_index
+    seen = {}
+
+    def fake_search(sender="", account=None, query="", days_back=None,
+                    limit=50, path=None):
+        seen["limit"] = limit
+        n = min(limit, 250)
+        return [{"title": f"T{account}-{i}", "company": "C",
+                 "location": "Remote", "link": "http://x",
+                 "sender": f"s{account}",
+                 "sent_at": f"2026-01-{(i % 28) + 1:02d}T00:00:00",
+                 "account": account} for i in range(n)]
+
+    monkeypatch.setattr(gmail_index, "search_listings", fake_search)
+    monkeypatch.setattr(gmail_index, "count_listings", lambda *a, **k: 0)
+    out = asyncio.run(d.gmail_listings(days_back=0, query="", limit=9999,
+                                       ctx=_gmail_ctx()))
+    assert seen["limit"] > 200, "the pool must be over-fetched, not capped early"
+    assert out["total"] == 200
+
+
+def test_the_gmail_button_calls_the_sync_then_lists():
+    script = _script()
+    handler = script.split("async function fetchGmailJobs(")[1]
+    assert 'api("/api/gmail/sync"' in handler
+    assert 'api("/api/gmail/listings' in handler
+    assert "renderDeck(data" in handler
+    assert '$("gmailBtn").onclick = fetchGmailJobs' in script
+    assert 'id="gmailBtn"' in _html()
+

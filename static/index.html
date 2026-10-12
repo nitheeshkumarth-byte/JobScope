@@ -1100,6 +1100,7 @@ main.chat::-webkit-scrollbar, .rbody::-webkit-scrollbar, .slist::-webkit-scrollb
 <button class="iconbtn" id="sidebarBtn" title="Saved sessions / profiles">Sessions</button>
 <button class="iconbtn" id="logsBtn" title="Run logs">History</button>
 <button class="iconbtn" id="settingsBtn" title="Role, skills, model">Settings</button>
+<button class="iconbtn" id="gmailBtn" title="Fetch job-alert emails from Gmail and show them">Gmail</button>
 <button class="iconbtn dangerbtn" id="resetAllBtn" title="Delete every session, resume, skill and filter, and start completely empty">Reset</button>
 </header>
 
@@ -1620,6 +1621,55 @@ async function pollVerify(id, box, btn) {
     if (box) box.textContent = "Lost contact with the server while verifying.";
   }
 }
+
+/* Fetch Gmail job alerts on demand: sweep the mailbox into the local cache,
+   then render whatever landed as a deck. The sync is a network scan (can take a
+   while), so the button locks while it runs and the Gmail circuit node shows
+   progress. Listing rendering reads the cache, not the network. */
+async function fetchGmailJobs() {
+  const btn = $("gmailBtn");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  circReset();
+  circ("gmail", "live", "scanning your Gmail job alerts");
+  appendMsg("user", "Fetch Gmail job alerts");
+  const b = appendMsg("assistant", "");
+  b._raw = "Scanning your Gmail job-alert emails…";
+  b.innerHTML = markdown(b._raw);
+  try {
+    const sres = await api("/api/gmail/sync", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    });
+    if (!sres.ok) {
+      let d = "Gmail fetch failed (" + sres.status + ").";
+      try { d = (await sres.json()).detail || d; } catch (_) {}
+      throw new Error(d);
+    }
+    const sync = await sres.json();
+    const lres = await api("/api/gmail/listings?limit=40");
+    const data = await lres.json();
+    const first = String(sync.summary || "").split("\n")[0] || "Synced.";
+    const senders = Object.keys(data.sources || {}).length;
+    b._raw = first + "\n\n" + (data.total
+      ? "Showing " + data.total + " of " + data.cached_total +
+        " cached listing(s) from " + senders + " sender(s)."
+      : "No job listings found in that window.");
+    b.innerHTML = markdown(b._raw);
+    if (data.jobs && data.jobs.length) {
+      renderDeck(data, "Gmail job alerts");
+      circ("gmail", "done", data.total + " listing(s) from Gmail");
+    } else {
+      circ("gmail", "fail", "no job listings indexed");
+    }
+  } catch (e) {
+    b._raw = "Could not fetch Gmail: " + (e.message || e);
+    b.innerHTML = markdown(b._raw);
+    circ("gmail", "fail", "Gmail fetch failed");
+  } finally {
+    btn.disabled = false;
+  }
+}
+$("gmailBtn").onclick = fetchGmailJobs;
 
 /* Decks used to be a single global (state.deck / state.deckIdx) plus hardcoded
    element ids, so exactly one deck could exist: renderDeck removed the old one

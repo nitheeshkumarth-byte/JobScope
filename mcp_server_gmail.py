@@ -644,7 +644,6 @@ def search_job_emails(sender: str = "", days_back: int = 60, max_results: int = 
                       account: int = 0, query: str = "",
                       resync_if_stale: bool = True) -> str:
     accounts = [1] if account != 0 else [1, 2]
-    rows: list[dict] = []
     if resync_if_stale:
         for acct in accounts:
             try:
@@ -652,14 +651,18 @@ def search_job_emails(sender: str = "", days_back: int = 60, max_results: int = 
                     sync_gmail_cache(days_back=days_back, account=acct)
             except Exception:
                 pass
+    pool: list[dict] = []
     for acct in accounts:
         try:
-            rows += gmail_index.search_listings(sender=sender, account=acct, query=query,
-                                               days_back=days_back, limit=max_results)
+            # Over-fetch per account, then interleave across senders. Sorting a
+            # per-account top-N by date let one prolific sender (LinkedIn's
+            # 18-listing digests) fill the whole result and push Indeed out.
+            pool += gmail_index.search_listings(sender=sender, account=acct, query=query,
+                                                days_back=days_back,
+                                                limit=max(max_results * 6, 200))
         except Exception:
             pass
-    rows.sort(key=lambda r: r.get("sent_at", ""), reverse=True)
-    rows = rows[:max_results]
+    rows = gmail_index.diverse_listings(pool, max_results)
     by_sender: Dict[str, int] = {}
     for r in rows:
         k = r.get("sender") or "unknown"

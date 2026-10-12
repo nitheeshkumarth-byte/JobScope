@@ -267,6 +267,43 @@ def search_listings(sender: str = "", account: int | None = None,
         return [dict(r) for r in conn.execute(" ".join(sql), args)]
 
 
+def diverse_listings(rows: list[dict], limit: int) -> list[dict]:
+    """Round-robin `rows` across senders, newest-first within each sender.
+
+    A plain date sort lets one prolific sender monopolise the feed. LinkedIn's
+    digest mails each carry ~18 listings stamped with a single timestamp, so a
+    top-40 slice came back almost entirely LinkedIn and Indeed - which posts a
+    smaller alert every day - disappeared from the deck entirely. Interleaving
+    by sender keeps every source represented, which is the difference between
+    "we are missing Indeed" and a mixed list.
+
+    Senders are visited in order of their newest item, so the freshest source
+    still leads. `limit` caps the result; a missing sender is never invented.
+    """
+    buckets: dict[str, list[dict]] = {}
+    for r in rows:
+        buckets.setdefault(r.get("sender") or "", []).append(r)
+    for bucket in buckets.values():
+        bucket.sort(key=lambda r: r.get("sent_at", ""), reverse=True)
+    order = sorted(
+        buckets,
+        key=lambda s: (buckets[s][0].get("sent_at", "") if buckets[s] else ""),
+        reverse=True)
+    out: list[dict] = []
+    while len(out) < limit:
+        progressed = False
+        for sender in order:
+            bucket = buckets[sender]
+            if bucket:
+                out.append(bucket.pop(0))
+                progressed = True
+                if len(out) >= limit:
+                    break
+        if not progressed:
+            break
+    return out
+
+
 def count_listings(account: int | None = None,
                    path: str | None = None) -> int:
     init(path)

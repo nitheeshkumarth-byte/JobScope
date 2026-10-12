@@ -143,6 +143,41 @@ def test_limit_is_respected(store):
     assert len(gi.search_listings(limit=3, path=store)) == 3
 
 
+def test_one_prolific_sender_cannot_crowd_out_another(store):
+    """The bug behind "we are missing Indeed": LinkedIn digests add ~18 rows at
+    one timestamp, so a date-ordered top-N is all LinkedIn and Indeed vanishes.
+    Round-robin selection must keep a slot for the smaller sender."""
+    rows = [{"title": f"LI {i}", "company": "", "location": "",
+             "link": f"https://li/{i}", "sender": "jobalerts-noreply@linkedin.com",
+             "sent_at": "2026-10-12T10:42:33"} for i in range(30)]
+    rows.append({"title": "Indeed job", "company": "", "location": "",
+                 "link": "https://indeed/1", "sender": "donotreply@match.indeed.com",
+                 "sent_at": "2026-10-11T20:18:34"})
+    picked = gi.diverse_listings(rows, 10)
+    senders = [r["sender"] for r in picked]
+    assert len(picked) == 10
+    assert "donotreply@match.indeed.com" in senders, \
+        "the smaller sender must not be crowded out"
+    # Freshest source leads, and neither sender is exhausted early.
+    assert senders[0] == "jobalerts-noreply@linkedin.com"
+    assert senders.count("donotreply@match.indeed.com") <= 1
+
+
+def test_diverse_listings_is_newest_first_within_a_sender(store):
+    rows = [{"title": f"J{i}", "company": "", "location": "",
+             "link": f"https://x/{i}", "sender": "donotreply@jobalert.indeed.com",
+             "sent_at": f"2026-10-{i:02d}T00:00:00"} for i in range(1, 6)]
+    picked = gi.diverse_listings(rows, 10)
+    assert [r["title"] for r in picked] == ["J5", "J4", "J3", "J2", "J1"]
+
+
+def test_diverse_listings_stops_when_the_pool_runs_out(store):
+    rows = [{"title": "A", "sender": "s1", "sent_at": "2026-01-01T00:00:00"},
+            {"title": "B", "sender": "s2", "sent_at": "2026-01-02T00:00:00"}]
+    assert len(gi.diverse_listings(rows, 50)) == 2
+    assert gi.diverse_listings([], 10) == []
+
+
 def test_sender_breakdown_counts_both_tables(store):
     gi.upsert_messages([_msg("<a@1>", [
         {"title": "A", "company": "", "location": "", "link": "https://x/1"},

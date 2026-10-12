@@ -647,6 +647,13 @@ class VerifyBoardRequest(BaseModel):
     query: str = ""
 
 
+class GmailSyncRequest(BaseModel):
+    """Optional overrides for an on-demand Gmail fetch. Blank = use the defaults."""
+    days_back: int = 0
+    query: str = ""
+    limit: int = 0
+
+
 class ResumeGenRequest(BaseModel):
     """Flashcard fields for one listing - used to build its tailored resume."""
     title: str = ""
@@ -1965,6 +1972,76 @@ async def verify_board_status(job_id: str, ctx: Ctx = Depends(build_ctx)):
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown verification job.")
     return job
+
+
+@app.post("/api/gmail/sync")
+async def gmail_sync(req: GmailSyncRequest, ctx: Ctx = Depends(build_ctx)):
+    """Fetch job-alert mail from Gmail into the local cache, on demand.
+
+    The button in the UI calls this, so the user does not have to wait for a
+    board hunt to fall back to Gmail. Blocking (a network sweep of every alert
+    sender), so it runs on a worker thread rather than the event loop. Returns
+    the sync summary plus a per-sender breakdown so the UI can show what landed.
+    """
+    import gmail_index
+    default_days = int(getattr(ctx.bundle.cfg, "days_back", 0) or 60)
+    days = req.days_back or default_days
+
+    def _do():
+        import mcp_server_gmail as gmail
+        return gmail.sync_gmail_cache(days_back=days, account=0)
+
+    try:
+        summary = await run_in_threadpool(_do)
+    except Exception as exc:
+        raise HTTPException(status_code=502,
+                            detail=f"Gmail fetch failed: {exc}")
+    return {"ok": True, "days_back": days, "summary": summary,
+            "cached_total": gmail_index.count_listings(),
+            "senders": gmail_index.sender_breakdown()}
+
+
+@app.get("/api/gmail/listings")
+async def gmail_listings(days_back: int = 0, query: str = "", limit: int = 0,
+                         ctx: Ctx = Depends(build_ctx)):
+    """The cached Gmail job listings, ready to render as a deck.
+
+    Reads the cache the sync populated - it does not hit the network, so polling
+    this is cheap. `senders` carries the per-sender counts so the deck can say
+    where each batch of listings came from.
+    """
+    import gmail_index
+    default_days = int(getattr(ctx.bundle.cfg, "days_back", 0) or 60)
+    days = days_back or default_days
+    cap = limit or 40
+    cap = max(1, min(200, int(cap)))
+    # Pull a wide pool per account, THEN interleave across senders and slice.
+    # Limiting each account to `cap` before the merge is what let a prolific
+    # sender crowd Indeed out of the deck: the per-account top-N were all
+    # LinkedIn, so Indeed never made it into the pool to be selected at all.
+    pool: list[dict] = []
+    for acct in (1, 2):
+        try:
+            pool += gmail_index.search_listings(account=acct, query=query or "",
+                                                days_back=days,
+                                                limit=max(cap * 6, 200))
+        except Exception:
+            pass
+    rows = gmail_index.diverse_listings(pool, cap)
+    jobs = [{
+        "source": r.get("sender") or "Gmail",
+        "title": r.get("title") or "",
+        "company": r.get("company") or "",
+        "location": r.get("location") or "",
+        "salary": "",
+        "link": r.get("link") or "",
+    } for r in rows]
+    by_sender: dict[str, int] = {}
+    for j in jobs:
+        by_sender[j["source"]] = by_sender.get(j["source"], 0) + 1
+    return {"sources": by_sender, "total": len(jobs), "jobs": jobs,
+            "days_back": days,
+            "cached_total": gmail_index.count_listings()}
 
 
 @app.get("/api/config")
