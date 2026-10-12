@@ -481,33 +481,24 @@ def test_a_query_on_a_fresh_cache_never_opens_imap(store, monkeypatch):
 
 
 def test_a_stale_cache_is_refreshed_once(store, monkeypatch):
-    """An hour-old cache triggers exactly one sync, not one per query."""
-    import imaplib
+    """An hour-old cache triggers exactly one sync, not one per query.
+
+    Transport is OAuth (Gmail API), so the sync is stubbed at the
+    `sync_gmail_cache` boundary rather than at an IMAP connection.
+    """
     monkeypatch.setenv("GMAIL_CACHE_DB", store)
     calls = []
 
-    class _FakeConn:
-        def select(self, box):
-            return "OK", [b""]
+    def _fake_sync(days_back=3650, account=0):
+        calls.append(account)
+        gi.upsert_messages([_msg("<stale@1>", [
+            {"title": "Synced DevOps", "company": "", "location": "",
+             "link": "https://in.indeed.com/rc/clk/dl?jk=xyz"}],
+            sent="2025-10-15T10:22:33")], store)
+        gi.record_sync(account or 1, 1, path=store)
+        return "synced"
 
-        def search(self, charset, crit):
-            calls.append(crit)
-            return "OK", [b""]
-
-        def fetch(self, mid, spec):
-            import email as _e
-            raw = _e.message_from_string(
-                "Message-ID: <stale@1>\nFrom: \"indeed\" <donotreply@jobalert.indeed.com>\n"
-                "Date: Wed, 15 Oct 2025 10:22:33 +0000\nSubject: Indeed job alert\n\n"
-                "View job: https://in.indeed.com/rc/clk/dl?jk=xyz\n")
-            return "OK", [(b"1 (RFC822 {1}", raw.as_bytes())]
-
-        def logout(self):
-            return "BYE", [b""]
-
-    monkeypatch.setattr(imaplib, "IMAP4_SSL",
-                        lambda host, *a, **k: _FakeConn())
-    monkeypatch.setattr(g, "_connect", lambda account=1: _FakeConn())
+    monkeypatch.setattr(g, "sync_gmail_cache", _fake_sync)
 
     out = _unwrapped(g.search_job_emails)(query="", days_back=3650, max_results=5)
     assert calls, "a stale cache should have triggered a sync"
@@ -515,20 +506,17 @@ def test_a_stale_cache_is_refreshed_once(store, monkeypatch):
 
 
 def test_a_sync_failure_does_not_break_an_existing_query(store, monkeypatch):
-    """A query must still answer from the cache when IMAP is unreachable."""
-    import imaplib
+    """A query must still answer from the cache when the sync fails."""
     monkeypatch.setenv("GMAIL_CACHE_DB", store)
     gi.upsert_messages([_msg("<a@1>", [
         {"title": "Cached DevOps Role", "company": "", "location": "",
          "link": "https://in.indeed.com/rc/clk/dl?jk=cached"}])], store)
-    for acct in (1, 2):
-        gi.record_sync(acct, 1, path=store)
 
     def _boom(*a, **k):
         raise OSError("network down")
-    monkeypatch.setattr(imaplib, "IMAP4_SSL", _boom)
-    monkeypatch.setattr(g, "_connect", lambda account=1: (_ for _ in ()).throw(
-        RuntimeError("network down")))
+    monkeypatch.setattr(g, "sync_gmail_cache", _boom)
+    # Force the refresh path: a stubbed failure must not take the query down.
+    monkeypatch.setattr(gi, "is_stale", lambda *a, **k: True)
 
     out = _unwrapped(g.search_job_emails)(query="devops", days_back=3650,
                                          max_results=5)

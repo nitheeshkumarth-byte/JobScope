@@ -296,6 +296,11 @@ header > * { max-width: 100%; }
 .decknote.wall ul { margin: 8px 0 0; padding-left: 18px; }
 .decknote.wall li { margin: 3px 0; }
 .decknote.wall p { margin: 8px 0 0; }
+.btnverify { margin-left: 6px; padding: 2px 9px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--accent); cursor: pointer; }
+.btnverify:hover:not(:disabled) { border-color: var(--accent); }
+.btnverify:disabled { opacity: .55; cursor: default; }
+.verifybox { margin: 5px 0 0; font-size: 11.5px; color: var(--muted); }
+.verifybox.ok { color: var(--text); }
 
 /* Ghost variant of .btnglow — the per-card "LaTeX resume" action. */
 .btnglow.ghost { flex: 0 0 auto; padding: 9px 13px; font-size: 12px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
@@ -1388,6 +1393,20 @@ function circReset() {
   document.querySelectorAll(".node").forEach(n => n.classList.remove("live", "done", "fail"));
   PLINES.forEach(p => $(p).classList.remove("on"));
 }
+// Freeze the pipeline when a run ends.
+//
+// A node left in the `live` state after the stream closes keeps pulsing forever
+// (the ringpulse animation is keyed on `.node.live`), and paintLines() keeps a
+// connector drawn whenever the node before it is `done` - so a finished search
+// left the whole chain shimmering. Settle every live node to done (or leave a
+// failure red) and stop the connector flow.
+function circStop() {
+  document.querySelectorAll(".node.live").forEach(function (n) {
+    n.classList.remove("live");
+    if (!n.classList.contains("fail")) n.classList.add("done");
+  });
+  PLINES.forEach(p => $(p).classList.remove("on"));
+}
 function circ(node, cls, text) {
   const el = document.querySelector(`.node[data-node="${node}"]`);
   if (el) {
@@ -1529,14 +1548,77 @@ function deckNotes(p) {
     ? p.blocked_reasons : null;
   if (blocked) {
     const rows = Object.keys(blocked).map(function (k) {
-      return '<li><b>' + esc(k) + '</b> — ' + esc(blocked[k]) + '</li>';
+      return '<li><b>' + esc(k) + '</b> — ' + esc(blocked[k]) +
+        ' <button class="btnverify" type="button" data-board="' + esc(k) +
+        '">Verify in browser</button><div class="verifybox" hidden></div></li>';
     }).join("");
     out.push('<details class="decknote wall"><summary>' + Object.keys(blocked).length +
       ' source' + (Object.keys(blocked).length > 1 ? "s" : "") +
       ' could not be searched</summary><ul>' + rows +
-      '</ul><p class="sub">These sites block automated requests from this network. They are not broken in the app, and no search can pull from them until they change that.</p></details>');
+      '</ul><p class="sub">These sites block automated requests from this network. If JobScope is open on a desktop, "Verify in browser" opens a real window so you can clear the challenge yourself; otherwise no search can pull from them.</p></details>');
   }
   return out.length ? '<div class="decknotes">' + out.join("") + "</div>" : "";
+}
+
+/* Manual bot-wall verification. Some boards answer automated requests with a
+   captcha no machine can tick, so the honest fix is a real window the person
+   solves. The backend opens that window (see manual_verify.py); this side just
+   starts the job and polls it, then drops the recovered listings into a deck.
+   Delegated from the transcript so it survives every deck re-render. */
+document.addEventListener("click", function (e) {
+  const btn = e.target && e.target.closest && e.target.closest(".btnverify");
+  if (!btn) return;
+  e.preventDefault();
+  startVerify(btn, btn.getAttribute("data-board") || "");
+});
+
+async function startVerify(btn, board) {
+  if (btn.disabled) return;
+  const box = btn.parentNode.querySelector(".verifybox");
+  btn.disabled = true;
+  if (box) { box.hidden = false; box.className = "verifybox"; box.textContent = "Opening a browser window…"; }
+  try {
+    const res = await api("/api/verify-board", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ board: board }),
+    });
+    if (!res.ok) {
+      let detail = "Could not start verification.";
+      try { detail = (await res.json()).detail || detail; } catch (_) {}
+      if (box) box.textContent = detail;
+      btn.disabled = false;
+      return;
+    }
+    const job = await res.json();
+    pollVerify(job.id, box, btn);
+  } catch (_) {
+    if (box) box.textContent = "Could not reach the server.";
+    btn.disabled = false;
+  }
+}
+
+async function pollVerify(id, box, btn) {
+  try {
+    const res = await api("/api/verify-board/" + encodeURIComponent(id));
+    if (!res.ok) { if (box) box.textContent = "That verification job was not found."; return; }
+    const job = await res.json();
+    if (job.state === "done") {
+      if (box) { box.className = "verifybox ok"; box.textContent = "Done — recovered " + job.count + " listing(s)."; }
+      if (job.listings && job.listings.length) renderDeck({ jobs: job.listings }, "Verified: " + (job.board || "board"));
+      btn.disabled = false;
+      return;
+    }
+    if (job.state === "blocked" || job.state === "failed") {
+      if (box) box.textContent = job.message || "Verification did not succeed.";
+      btn.disabled = false;
+      return;
+    }
+    if (box) box.textContent = job.message || "Waiting for you to solve the challenge…";
+    setTimeout(function () { pollVerify(id, box, btn); }, 1500);
+  } catch (_) {
+    if (box) box.textContent = "Lost contact with the server while verifying.";
+  }
 }
 
 /* Decks used to be a single global (state.deck / state.deckIdx) plus hardcoded
@@ -2013,6 +2095,7 @@ function handleFrame(frame) { frame.split("\n").forEach(emitFrame); }
 
 function finalize(bubble, runFailed) {
   const failed = !!runFailed || $("banner").classList.contains("show");
+  circStop();
   if (runFailed) { $("bannerMsg").textContent = runFailed; $("banner").classList.add("show"); }
   if (bubble && !(bubble._raw || "").trim() && !failed) bubble.textContent = "_no response_";
   state.busy = failed;

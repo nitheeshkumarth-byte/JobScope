@@ -1558,6 +1558,20 @@ def test_reduced_motion_is_respected():
     assert "scroll-behavior: auto" in motion
 
 
+def test_a_finished_run_stops_the_pipeline_animation():
+    """A node left `live` after the stream closes pulses forever (ringpulse is
+    keyed on `.node.live`) and a connector stays drawn while the node before it
+    is `done`, so a finished search left the whole chain shimmering. finalize()
+    must settle the pipeline instead."""
+    script = _script()
+    assert "function circStop(" in script
+    stop = script.split("function circStop(")[1].split("\n}")[0]
+    assert 'classList.remove("live")' in stop, "a live node keeps pulsing"
+    assert 'classList.remove("on")' in stop, "the connectors keep flowing"
+    fin = script.split("function finalize(")[1].split("\n}")[0]
+    assert "circStop()" in fin, "a finished run never freezes the pipeline"
+
+
 def test_the_gate_animates_in_and_out_without_js_timing():
     """The fade is driven by a class, not a timer: a setTimeout to re-hide the
     gate is the classic way to leave it stuck on screen."""

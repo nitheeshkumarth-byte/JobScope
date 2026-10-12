@@ -635,6 +635,18 @@ class RunRequest(BaseModel):
     message: str
 
 
+class VerifyBoardRequest(BaseModel):
+    """Which board (or raw URL) to open a browser for, so a human can solve it.
+
+    `board` is resolved to its entry URL and query params by manual_verify, so
+    the UI only has to send the board name it already has. `url` is the escape
+    hatch for a posting whose board this process does not know.
+    """
+    board: str = ""
+    url: str = ""
+    query: str = ""
+
+
 class ResumeGenRequest(BaseModel):
     """Flashcard fields for one listing - used to build its tailored resume."""
     title: str = ""
@@ -1916,6 +1928,45 @@ async def public_boards():
     return {"boards": _board_names(), "default_boards": _default_board_names()}
 
 
+@app.post("/api/verify-board")
+async def verify_board(req: VerifyBoardRequest, ctx: Ctx = Depends(build_ctx)):
+    """Open a visible browser so the signed-in user can clear a bot wall.
+
+    Returns a job id to poll at GET /api/verify-board/{job_id}. The browser opens
+    on the machine running JobScope, so this is only meaningful when the user is
+    at that machine - manual_verify.enabled() is False on a headless host, and
+    the 400 says so rather than silently starting a job that can never show a
+    window.
+    """
+    import manual_verify
+
+    if not manual_verify.enabled():
+        raise HTTPException(
+            status_code=400,
+            detail=("Manual verification needs a visible browser, and none is "
+                    "available here. Set JOBSCOPE_MANUAL_WALL=on only on a "
+                    "machine with a desktop session."))
+    board = (req.board or "").strip()
+    url = (req.url or "").strip()
+    if not board and not url:
+        raise HTTPException(status_code=400,
+                            detail="Give a board name or a URL to verify.")
+    if board and not url and not manual_verify.resolve(board, req.query or ""):
+        raise HTTPException(status_code=404, detail=f"Unknown board: {board}")
+    return manual_verify.start(url=url, board=board, query=req.query or "")
+
+
+@app.get("/api/verify-board/{job_id}")
+async def verify_board_status(job_id: str, ctx: Ctx = Depends(build_ctx)):
+    """Poll one manual-verification job. Terminal states: done, blocked, failed."""
+    import manual_verify
+
+    job = manual_verify.status(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown verification job.")
+    return job
+
+
 @app.get("/api/config")
 async def get_config(ctx: Ctx = Depends(build_ctx)):
     """Current agent configuration, exposed so the UI can render its state."""
@@ -2886,18 +2937,26 @@ def already_serving(host: str, port: int) -> str | None:
     import socket
     import urllib.request
 
+    # A wildcard host is a bind target, not a browsable address: 0.0.0.0 and ::
+    # are not routable in a browser, and on Windows binding the wildcard
+    # succeeds even while another process already holds the port on 127.0.0.1.
+    # That hid a running copy and let a second server start on a port whose
+    # loopback traffic still went to the first, so the new one looked
+    # unreachable. Probe loopback instead of the wildcard.
+    probe = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         # Deliberately NOT setting SO_REUSEADDR: on Windows that flag lets a
         # bind succeed against a live port, which would hide the very conflict
         # this exists to detect.
         try:
-            sock.bind((host, port))
+            sock.bind((probe, port))
         except OSError:
             pass
         else:
             return None
     try:
-        with urllib.request.urlopen(f"http://{host}:{port}/", timeout=2) as resp:
+        with urllib.request.urlopen(f"http://{probe}:{port}/", timeout=2) as resp:
             body = resp.read(200_000).decode("utf-8", "replace")
     except Exception:
         return (f"Port {port} is held by another program, so JobScope did not "
@@ -2908,7 +2967,7 @@ def already_serving(host: str, port: int) -> str | None:
     if "JobScope" in body:
         # ASCII only: this prints to a Windows console, whose default code page
         # (cp1252) turns an em-dash into a replacement glyph.
-        return (f"JobScope is already running at http://{host}:{port}/ - "
+        return (f"JobScope is already running at http://{probe}:{port}/ - "
                 f"nothing to start.\nOpen that address, or stop the running "
                 f"instance first:\n"
                 f"  Stop-Process -Id (Get-NetTCPConnection -LocalPort {port} "
@@ -2928,6 +2987,13 @@ if __name__ == "__main__":
     # LAN - only do that behind a real TLS terminator, because the session
     # cookie is marked Secure only when the request itself is https.
     host = os.environ.get("HOST", "127.0.0.1")
+    # A wildcard host means "every interface", which a browser cannot open:
+    # http://0.0.0.0:8000 fails with ERR_ADDRESS_INVALID. Point the user at the
+    # address that works on this machine before uvicorn logs the wildcard form.
+    if host in ("0.0.0.0", "::"):
+        print(f"Binding all interfaces (HOST={host}). Open "
+              f"http://127.0.0.1:{port}/ in your browser - not "
+              f"http://{host}:{port}/, which browsers reject.", flush=True)
     # reload=True re-imports the module on every edit, so a change to
     # dashboard.py / filters.py is picked up without hunting for the running
     # process. Off unless asked for: it restarts the app mid-run, which would

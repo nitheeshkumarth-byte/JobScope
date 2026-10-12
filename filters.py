@@ -55,10 +55,18 @@ INDEED_JOBALERT_SENDER = "donotreply@jobalert.indeed.com"
 # The LinkedIn address that carries job alerts. Measured across both mailboxes:
 # 16 + 1 messages, ~8 of them genuine job alerts.
 LINKEDIN_ALERT_SENDER = "jobs-noreply@linkedin.com"
+# LinkedIn's second alert stream. Measured on this inbox: 3 messages parsed into
+# 18 listings ("Software Developer at Elements Energy", ...). Distinct from
+# jobs-noreply, so the two together are what cover LinkedIn's alerts.
+LINKEDIN_JOBS_DIGEST_SENDER = "jobalerts-noreply@linkedin.com"
+# WeWorkRemotely's featured-role mail. 3 messages -> 3 listings.
+WEWORKREMOTELY_ALERT_SENDER = "hello@m.weworkremotely.com"
 FALLBACK_SENDERS = (
     INDEED_JOBALERT_SENDER,
     INDEED_ALERT_SENDER,
     LINKEDIN_ALERT_SENDER,
+    LINKEDIN_JOBS_DIGEST_SENDER,
+    WEWORKREMOTELY_ALERT_SENDER,
     GOOGLE_CAREERS_SENDER,
 )
 # Every sender we know how to read. Used only to pick a default when the user

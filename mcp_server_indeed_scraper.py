@@ -691,6 +691,13 @@ except Exception:          # ImportError, or a broken optional browser dep
     _boards = None
     _SCRAPLING_AVAILABLE = False
 
+# Optional manual bot-wall solving (a visible browser a person clears). Guarded
+# for the same reason as boards: the MCP server must import without it.
+try:
+    import manual_verify as _manual
+except Exception:
+    _manual = None
+
 
 def default_boards() -> dict:
     """The boards an all-boards sweep probes.
@@ -837,6 +844,34 @@ BOARDS = {
 }
 
 
+def _try_manual_solve(name: str, query: str) -> list[Job]:
+    """Open a visible browser for one walled board and wait for the user.
+
+    Returns Job rows, or [] when manual solving is disabled, the board cannot be
+    resolved, or the person did not get through in time. Never raises: the caller
+    is already handling an exception and must not be handed a second one.
+    """
+    if _manual is None:
+        return []
+    try:
+        if not (_manual.enabled() and _manual.inline_enabled()):
+            return []
+        result = _manual.solve_inline(name, query)
+    except Exception:
+        return []
+    if not result.get("ok"):
+        return []
+    jobs: list[Job] = []
+    for d in result.get("listings") or []:
+        try:
+            jobs.append(Job(name, d.get("title", ""), d.get("company", ""),
+                            d.get("location", ""), d.get("salary", ""),
+                            d.get("link", "")))
+        except Exception:
+            continue
+    return jobs
+
+
 def _scope_label(location: str, remote_only: bool, work_modes=None,
                  regions=None, countries=None) -> str:
     """One-line description of the filters actually in force, for the summary
@@ -951,6 +986,22 @@ def search_job_boards(query: str, location: str = "Remote",
                 _fail_until.pop(name, None)
             return name, NO_MATCHES
         except Exception as exc:
+            # A wall is the one failure a human can fix. When the operator opted
+            # into inline solving (JOBSCOPE_MANUAL_WALL=on), open the visible
+            # browser here and wait for them, then run the SAME filter/select
+            # pipeline the normal path uses - so a manually cleared board returns
+            # exactly what a clean automated fetch would have.
+            manual_rows = _try_manual_solve(name, q or query)
+            if manual_rows:
+                rows = _apply_filters(_dedupe(manual_rows), remote_only,
+                                      work_modes, regions, countries)
+                rows = [j for j in rows
+                        if not is_senior_or_experienced(j.title, j.location)]
+                rows = _select(rows, query, cap=MAX_FRESH_SCAN)
+                if rows:
+                    with _block_lock:
+                        _fail_until.pop(name, None)
+                    return name, rows[:MAX_FRESH_SCAN]
             with _block_lock:
                 _fail_until[name] = time.time() + BLOCK_CACHE_SECONDS
             return name, f"blocked ({_friendly(exc)})"
