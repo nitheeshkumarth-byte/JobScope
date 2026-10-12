@@ -1,0 +1,1020 @@
+% ============================================================================
+%  JobScope — Full Technical Documentation
+%  User guide + developer reference for the JobScope platform.
+%
+%  Compile with:  pdflatex JobScope_Documentation.tex   (run twice for ToC)
+%  Packages required (all standard): tikz, listings, booktabs, hyperref,
+%  enumitem, geometry, xcolor, titlesec, fancyhdr, multirow, longtable.
+% ============================================================================
+\documentclass[11pt,a4paper]{article}
+
+% ---- packages --------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amssymb}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+
+% ---- colours (defined BEFORE hyperref) --------------------------------------
+\definecolor{indigo}{HTML}{4F46E5}
+\definecolor{violet}{HTML}{7C3AED}
+\definecolor{teal}{HTML}{0D9488}
+\definecolor{codebg}{HTML}{0F172A}
+\definecolor{surface}{HTML}{F1F5F9}
+\definecolor{amber}{HTML}{B45309}
+
+\usepackage[colorlinks=true,linkcolor=indigo!75,urlcolor=teal]{hyperref}
+
+% ---- code listing style -----------------------------------------------------
+\lstset{
+  basicstyle=\ttfamily\footnotesize\color{white},
+  backgroundcolor=\color{codebg},
+  commentstyle=\color{teal},
+  keywordstyle=\color{orange!90},
+  stringstyle=\color{green!70},
+  numbers=left, numberstyle=\tiny\color{gray}, numbersep=6pt,
+  frame=single, rulecolor=\color{gray!40}, breaklines=true,
+  showstringspaces=false, aboveskip=8pt, belowskip=8pt,
+}
+
+% ---- section styling --------------------------------------------------------
+\titleformat{\section}{\Large\bfseries\color{indigo}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{violet}}{\thesubsection}{0.5em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{teal}}{\thesubsubsection}{0.5em}{}
+\setlist{itemsep=2pt, topsep=4pt}
+
+% ---- header / footer --------------------------------------------------------
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{grayed} JobScope --- Technical Documentation}
+\fancyhead[R]{\small\color{grayed} \leftmark}
+\fancyfoot[C]{\small\color{grayed} \thepage}
+\definecolor{grayed}{HTML}{64748B}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ---- handy commands ---------------------------------------------------------
+\newcommand{\file}[1]{\texttt{\small #1}}
+\newcommand{\tool}[1]{\texttt{#1}}
+\newcommand{\nodepill}[1]{{\footnotesize\bfseries\color{white}\colorbox{indigo}{#1}}}
+\newcommand{\env}[1]{\texttt{\small #1}}
+\newcommand{\api}[2]{\texttt{\small #1\,#2}}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+
+\begin{document}
+
+% ============================================================================
+%  TITLE PAGE
+% ============================================================================
+\begin{titlepage}
+  \centering
+  \vspace*{2.2cm}
+  {\color{indigo}\rule{\textwidth}{2pt}}
+
+  \vspace{0.9cm}
+  {\fontsize{32}{38}\selectfont\bfseries\color{indigo} JobScope}\\[6pt]
+  {\Large Full Technical Documentation\\[2pt]
+   User guide and developer reference}
+
+  \vspace{0.9cm}
+  {\color{indigo}\rule{\textwidth}{2pt}}
+
+  \vspace{2.4cm}
+  \begin{minipage}{0.8\textwidth}
+    \small
+    \textbf{Abstract.} This document is the complete reference for JobScope,
+    a locally-run AI job-hunting assistant built on LangGraph, Ollama, and
+    the Model Context Protocol. It covers installation and first run; the
+    agent state machine and its deterministic routing; the nine-board
+    scraper and its anti-bot layers; the Gmail OAuth cache; the
+    BM25-backed, structure-preserving resume pipeline and explainable ATS
+    score; the full FastAPI endpoint surface and SSE event protocol;
+    authentication, sessions, and the SQLite data model; every environment
+    variable; the seven-step tutorial progression; testing; and operations
+    (logging, troubleshooting, security).
+  \end{minipage}
+
+  \vfill
+  {\small \today \\[2pt]
+   Build target: Python 3.14, Windows / PowerShell \\[2pt]
+   File: \file{docs/JobScope\_Documentation.tex}}
+\end{titlepage}
+
+\tableofcontents
+\clearpage
+
+% ============================================================================
+\section{Getting Started}
+\label{sec:start}
+
+\subsection{Prerequisites}
+\begin{itemize}[leftmargin=2em]
+  \item Python 3.11+ (developed on 3.14).
+  \item \href{https://ollama.com/download}{Ollama} running locally with a
+        model pulled (default \tool{llama3.1}).
+  \item Optional: Gmail OAuth client secret (for the job-alert fallback).
+  \item Optional: GitHub personal access token (public reads work without
+        one; a token raises the 60~req/h anonymous rate limit).
+\end{itemize}
+
+\subsection{Installation}
+\begin{lstlisting}[language=PowerShell]
+git clone <this-repo>
+cd jobscope
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1            # bash: source .venv/bin/activate
+python -m pip install -r requirements.txt
+pip install -r requirements-dev.txt     # pytest + pyflakes
+python -m playwright install chromium   # for browser-mode scraping
+
+Copy-Item .env.example .env             # then edit your values
+ollama pull llama3.1
+\end{lstlisting}
+
+Key pinned dependencies: \file{langgraph} 1.2.11, \file{langchain-core}
+1.6.2, \file{langchain-ollama} 1.1.0, \file{mcp} 1.30.0,
+\file{langchain-mcp-adapters} 0.3.2, \file{fastapi} 0.116.1,
+\file{uvicorn} 0.53.0, \file{chainlit} 2.8.0, \file{pypdf} 6.19.0,
+\file{pymupdf} 1.28.2, \file{rapidocr} 3.9.2, \file{onnxruntime} 1.30.0,
+vendored \file{Scrapling} 0.4.15 (\code{[fetchers]} extra).
+
+\subsection{Gmail OAuth setup}
+\begin{lstlisting}[language=PowerShell]
+python gmail_login.py
+\end{lstlisting}
+One-shot interactive consent (\code{gmail.readonly} scope) against
+\file{client_secret.json}; writes \file{gmail\_oauth\_token.json}. The MCP
+Gmail server reuses and auto-refreshes this token. SMTP
+(\env{SMTP\_HOST} $\ldots$) is configured separately for account
+verification and password-reset emails.
+
+\subsection{Launch options}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Interface} & \textbf{Command}\\
+\midrule
+Dashboard UI & \file{python dashboard.py} $\rightarrow$
+               \link{http://127.0.0.1:8000}\\
+Alternate port & \file{python dashboard.py --port 9000}\\
+Dev auto-reload & \file{uvicorn dashboard:app --reload --port 8000}\\
+Chainlit chat & \file{chainlit run ui.py}\\
+CLI full hunt & \file{python step7\_scraper\_with\_fallback.py "Find ..."}\\
+Agent self-check & \file{python agent.py}\\
+Gmail OAuth login & \file{python gmail\_login.py}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The first registered account becomes the \textbf{owner} and inherits any
+legacy \file{profiles.json} data. If SMTP is not configured, register
+returns a \code{dev\_link} so verification works locally.
+
+% ============================================================================
+\section{Architecture Overview}
+\label{sec:arch}
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth, node distance=1.2cm and 1.5cm,
+  box/.style={draw=#1!70, fill=#1!10, rounded corners=4pt, align=center,
+              inner sep=5pt, font=\small}]
+  \node[box=indigo] (dash) {FastAPI dashboard\\ \scriptsize dashboard.py + SPA};
+  \node[box=violet, right=of dash] (chat) {Chainlit / CLI\\ \scriptsize ui.py, step7};
+  \node[box=violet, below=of dash, xshift=1.6cm] (agent)
+    {LangGraph agent\\ \scriptsize agent.py\\ \scriptsize agent$\to$tools$\to$router$\to$prep/fallback};
+  \node[box=teal, below=of agent, xshift=-2.2cm] (mcp)
+    {MCP servers (stdio)\\ \scriptsize scraper $|$ gmail $|$ github};
+  \node[box=violet!60, below=of agent, xshift=2.2cm] (ollama)
+    {Ollama LLM\\ \scriptsize :11434};
+  \node[box=gray!60, below=of mcp, xshift=-0.8cm] (boards)
+    {9 job boards\\ \scriptsize HTTPS / browser};
+  \node[box=gray!60, below=of mcp, xshift=1.4cm] (gmail)
+    {Gmail API\\ \scriptsize OAuth};
+  \draw[->,thick,indigo] (dash) -- node[above,font=\scriptsize]{SSE :8000} (agent);
+  \draw[->,thick,violet] (chat) -- node[above,font=\scriptsize]{astream} (agent);
+  \draw[->,thick,violet] (agent) -- node[right,font=\scriptsize]{prompt} (ollama);
+  \draw[->,thick,teal] (agent) -- node[left,font=\scriptsize]{tool calls} (mcp);
+  \draw[->,thick,gray] (mcp) -- (boards);
+  \draw[->,thick,gray] (mcp) -- (gmail);
+\end{tikzpicture}
+\end{center}
+
+\textbf{Invariants:}
+\begin{itemize}[leftmargin=2em]
+  \item One compiled graph: \code{create\_agent()} is shared by dashboard,
+        chat UI, and CLI.
+  \item MCP servers are \emph{stdio subprocesses}, not network services.
+        Only ports 8000 (dashboard) and 11434 (Ollama) are open locally.
+  \item Every job source ends with a machine-readable
+        \code{###JOBS\_JSON###} payload (deck feed for the UI, structured
+        status for the router).
+  \item Filtering, routing, and tailoring are deterministic code; the LLM
+        generates prose and can be bypassed entirely.
+\end{itemize}
+
+% ============================================================================
+\section{Project Layout}
+\label{sec:layout}
+
+\begin{center}
+\begin{tabular}{@{}lp{9.6cm}@{}}
+\toprule
+\textbf{File} & \textbf{Purpose}\\
+\midrule
+\file{agent.py} & Agent core: \code{AgentConfig}, MCP client, graph, router,
+                   query builder, template summariser\\
+\file{dashboard.py} & FastAPI backend: auth, SSE runs, resume/RAG/Gmail APIs,
+                       JSONL logging, bundle cache\\
+\file{ui.py} & Chainlit chat frontend\\
+\file{filters.py} & Single source of truth: seniority, experience, India-tied,
+                     work modes, regions, countries, board aliases, role
+                     synonyms, alert senders\\
+\file{boards.py} & Scrapling parsers: TLS impersonation + browser escalation\\
+\file{mcp\_server\_indeed\_scraper.py} & MCP \tool{search\_job\_boards}
+                                          (9 boards, 40\,s deadline, seen-memory)\\
+\file{mcp\_server\_gmail.py} & MCP \tool{sync\_gmail\_cache} +
+                               \tool{search\_job\_emails} (Gmail API/OAuth)\\
+\file{mcp\_server\_github.py} & MCP \tool{list\_github\_repos} +
+                                 \tool{get\_repo\_readme}\\
+\file{mcp\_server\_gmail\_oauth\_fixed.py} & Legacy superseded Gmail server
+                                              (contains a SyntaxError; not imported)\\
+\file{gmail\_login.py} & One-shot OAuth consent $\rightarrow$
+                          \file{gmail\_oauth\_token.json}\\
+\file{gmail\_index.py} & SQLite cache of job-alert mail (messages, listings,
+                          sync state)\\
+\file{manual\_verify.py} & Human-in-the-loop bot-wall solving (visible Chromium)\\
+\file{job\_desc.py} & Background job-description fetch + 24\,h cache\\
+\file{resume\_generator.py} & ATS \LaTeX{} resume builder +
+                               \texttt{tex\_to\_html} preview\\
+\file{resume\_data.py} & Canonical resume content (fallback when no CV)\\
+\file{rag\_store.py} & Okapi BM25 document library + retrieval\\
+\file{ats\_score.py} & Explainable 100-point ATS score\\
+\file{cv\_ocr.py} & Tier-2 OCR (PyMuPDF + RapidOCR) for image-only CVs\\
+\file{github\_projects.py} & JD-relevant repo matching + README summarisation\\
+\file{auth.py} & SQLite auth: users, sessions, tokens, profiles, RAG docs,
+                  JD cache\\
+\file{mailer.py} & SMTP sender: verify / reset / welcome emails\\
+\file{step1\_basics.py} $\ldots$ \file{step7\_scraper\_with\_fallback.py} &
+Seven-step tutorial progression\\
+\file{tests/} & 22 pytest modules\\
+\file{static/} & Dashboard SPA (\file{index.html} single file) + SVG assets\\
+\file{logs/} & JSONL run/error logs (auto-created)\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ============================================================================
+\section{The LangGraph Agent (\file{agent.py})}
+\label{sec:agent}
+
+\subsection{AgentConfig}
+Dataclass centralising runtime behaviour. Environment-backed defaults come
+from \code{load\_config()}:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Field} & \textbf{Default} & \textbf{Notes}\\
+\midrule
+\code{model} & \code{llama3.1} & \env{OLLAMA\_MODEL}\\
+\code{num\_ctx} & 8192 & \env{OLLAMA\_NUM\_CTX}\\
+\code{target\_role} & Junior Data Analyst\ldots & \env{TARGET\_ROLE}\\
+\code{target\_roles} & \code{[]} & multi-select; first entry drives the query\\
+\code{days\_back} / \code{max\_results} & 60 / 10 & \env{JOB\_DAYS\_BACK}, \env{JOB\_MAX\_RESULTS}\\
+\code{skills} / \code{resume\_text} & \code{[]} / \code{""} & from CV upload\\
+\code{remote\_only} & \code{False} & legacy flag; work-mode chips win\\
+\code{work\_modes} / \code{countries} & \code{[]} & active filters\\
+\code{regions} & \code{[]} & retired; kept for old profiles\\
+\code{preferred\_cities} / \code{exclude\_locations} & \code{[]} & \\
+\code{role\_suggestions} / \code{github\_url} & \code{[]} / \code{""} & \\
+\code{summary\_mode} & \code{template} & \env{AGENT\_SUMMARY\_MODE} (\code{template}$\mid$\code{llm})\\
+\code{seen\_scope} & \code{""} & \code{"u\{user\_id\}"}; never shown to the model\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{State and nodes}
+\code{AgentState(MessagesState)} plus \code{fallback\_used: bool}.
+
+\begin{description}[leftmargin=6.2em, style=nextline]
+  \item[\nodepill{agent}] Fresh hunt $\rightarrow$ emits one
+        \code{AIMessage} with parallel tool calls (zero inference).
+        Afterwards, \code{template} mode renders the answer in code from the
+        \code{###JOBS\_JSON###} payload; \code{llm} mode invokes an unbound
+        \code{ChatOllama} on a trimmed context (tool dumps removed via
+        \code{RemoveMessage}).
+  \item[\nodepill{tools}] Prebuilt \tool{ToolNode}; parallel calls run
+        concurrently.
+  \item[\nodepill{prep}] Winner selection in code (boards if non-empty,
+        else filtered Gmail); builds the summary payload with
+        \code{###JOBS\_JSON###}.
+  \item[\nodepill{fallback}] Legacy sequential path; pulls Gmail senders in
+        parallel under a 120\,s \code{asyncio.wait\_for}.
+\end{description}
+
+\subsection{Routing}
+\code{route\_after\_tools} (in order):
+\begin{enumerate}[leftmargin=2.2em]
+  \item \code{fallback\_used} set $\rightarrow$ \code{agent}.
+  \item Any Gmail/email \code{ToolMessage} present $\rightarrow$ \code{prep}.
+  \item User named one board $\rightarrow$ \code{prep}.
+  \item Latest scraper result contains a blocked marker $\rightarrow$
+        \code{fallback}.
+  \item Else $\rightarrow$ \code{agent}.
+\end{enumerate}
+
+Blocked markers (prose fallback; structured payload takes precedence):
+\begin{lstlisting}
+"all boards were blocked", "captcha", "http 403", "fall back",
+"no job links", "couldn't extract", "request failed", "js-rendered"
+\end{lstlisting}
+
+\subsection{Query construction}
+\code{search\_query\_from(cfg)}: role reduced by \code{\_board\_role\_phrase}
+(aside stripping, separator splits, qualifier drops, typo fixes
+\code{devloper}$\rightarrow$\code{developer} $\ldots$), then up to two CV
+skills appended (multi-word first; substrings/near-duplicates skipped);
+never empty. \code{board\_tool\_args} adds location
+(\code{filters.boards\_location}), \code{remote\_only}, normalized
+work-modes/countries, \code{seen\_scope}, and \code{board} when named.
+
+\subsection{MCP runtime}
+\code{create\_runtime()} builds one \code{MultiServerMCPClient} with three
+stdio servers launched via \code{sys.executable}:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Key} & \textbf{Script} & \textbf{Env forwarded}\\
+\midrule
+\code{github} & \file{mcp\_server\_github.py} & \env{GITHUB\_TOKEN} if set\\
+\code{gmail} & \file{mcp\_server\_gmail.py} & all \env{GMAIL\_*}\\
+\code{indeed\_scraper} & \file{mcp\_server\_indeed\_scraper.py} & none\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Tool discovery costs $\sim$3.4\,s: the dashboard caches the runtime for the
+app lifetime and agent bundles per \code{(user\_id, profile\_id)}.
+\code{AgentBundle.reconfigure(cfg)} rebuilds the graph while reusing the
+runtime.
+
+% ============================================================================
+\section{Filtering Rules (\file{filters.py})}
+\label{sec:filters}
+
+All rules are pure functions shared by scraper and agent.
+
+\begin{description}[leftmargin=6.4em, style=nextline]
+  \item[SENIORITY\_FILTER] Title+location match: senior, lead, principal,
+        staff, architect, director, manager, vp, vice president, chief,
+        head of. \emph{Never} the company name.
+  \item[EXPERIENCE\_FILTER] $\geq$5-year requirements with lookbehinds
+        sparing \emph{less than / fewer than / under / up to / max / to};
+        digit-hyphen guard spares \emph{0-2 years}.
+  \item[INDIA\_TOKENS] Indian cities/states + \emph{Remote-India}; WFH
+        exempt, India-scoped remote (\emph{remote-india}, \emph{wfh-india})
+        checked before the exemption.
+  \item[Work modes] \code{WORK\_MODES = \{remote, wfh, hybrid, onsite\}};
+        \code{listing\_work\_modes} reads explicit statements only;
+        unstated arrangements kept at search time.
+  \item[Countries / regions] $\sim$84 canonical countries with aliases and
+        region membership; blank location dropped when a filter is active;
+        \emph{worldwide} matches everything. Regions retired from the UI.
+  \item[keep\_job] Master gate: $\pi(j)$ = not senior $\wedge$ not 5+yr
+        $\wedge$ (not India-tied or WFH-exempt) $\wedge$ mode $\wedge$
+        country $\wedge$ valid http(s) link.
+\end{description}
+
+Supporting APIs: \code{detect\_board} / \code{canonical\_board} (9 board
+aliases), \code{role\_synonyms\_for} / \code{related\_roles} ($\sim$30
+synonym families), \code{normalize\_work\_modes} / \code{normalize\_countries}
+/ \code{normalize\_cities}, \code{boards\_location} (builds the location
+string boards receive), \code{gmail\_search\_plan} (account/sender pairs,
+budget 3).
+
+% ============================================================================
+\section{MCP Tool Servers}
+\label{sec:mcp}
+
+Each server declares tools with \code{@mcp.tool()} and runs
+\code{mcp.run(transport="stdio")}.
+
+\subsection{\file{mcp\_server\_indeed\_scraper.py}}
+\tool{search\_job\_boards(query, location="Remote", remote\_only=True,
+board=None, work\_modes=None, regions=None, countries=None,
+seen\_scope="")} $\rightarrow$ human status lines + \code{###JOBS\_JSON###}.
+
+\begin{itemize}[leftmargin=2em]
+  \item Nine boards; default sweep excludes Naukri, Glassdoor, Foundit
+        (\code{NOT\_DEFAULT}); \code{board="linkedin"} (or an alias)
+        restricts the sweep.
+  \item \code{GLOBAL\_DEADLINE = 40\,s}; one thread-pool worker per board;
+        stragglers \emph{blocked (timed out)}; pool cancelled without
+        waiting.
+  \item Failed boards cached 90\,s (\code{BLOCK\_CACHE\_SECONDS}).
+  \item Thin results ($<12$) trigger one sibling-role widening sweep
+        (\code{[ALSO]} line).
+  \item Dedupe on \code{(title.lower(), link)}; \code{MAX\_JOBS = 20}
+        returned; ranking de-ranks repeats, never drops them.
+  \item Seen-memory: 400 links $\times$ 16 LRU scopes;
+        \code{forget\_scope("u\{id\}")} called by dashboard reset.
+  \item Manual wall hook: on probe exception, if
+        \code{JOBSCOPE\_MANUAL\_WALL=on}, \code{manual\_verify} opens a
+        visible browser and results re-enter the same filter pipeline.
+  \item Payload keys: \code{sources}, \code{source\_detail},
+        \code{blocked}, \code{blocked\_reasons}, \code{no\_matches},
+        \code{boards\_worked}, \code{widened\_to}, \code{total},
+        \code{fresh}, \code{repeats}, \code{remote\_only},
+        \code{work\_modes}, \code{regions}, \code{countries},
+        \code{jobs[]}.
+\end{itemize}
+
+\subsection{\file{mcp\_server\_gmail.py}}
+\begin{itemize}[leftmargin=2em]
+  \item \tool{sync\_gmail\_cache(days\_back=3650, account=0)} --- Gmail API
+        over OAuth; default syncs both mailboxes;
+        \code{from:"sender" after:YYYY/MM/DD} queries; raw messages parsed
+        and upserted into \file{gmail\_cache.db}; 403/429 retried with
+        exponential backoff (4 tries).
+  \item \tool{search\_job\_emails(sender="", days\_back=60,
+        max\_results=10, account=0, query="", resync\_if\_stale=True)} ---
+        answers from cache; auto-resync when stale ($>$1\,h); over-fetch
+        then \code{diverse\_listings} round-robin by sender.
+  \item Parsing: footer truncation, tracking-param stripping, multi-listing
+        split around view-job/apply anchors, best-link ranking, body cap
+        1200 chars, title cap 90.
+\end{itemize}
+
+\subsection{\file{mcp\_server\_github.py}}
+\begin{itemize}[leftmargin=2em]
+  \item \tool{list\_github\_repos(github\_url\_or\_username)} ---
+        \code{GET /users/\{u\}/repos?per\_page=100\&sort=updated};
+        forks filtered; PAT optional.
+  \item \tool{get\_repo\_readme(github\_url\_or\_username, repo\_name)} ---
+        base64-decoded README capped at 3000 chars.
+\end{itemize}
+
+% ============================================================================
+\section{Board Scraping (\file{boards.py})}
+\label{sec:boards}
+
+\begin{center}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Board} & \textbf{Strategy} & \textbf{Default} & \textbf{Notes}\\
+\midrule
+Indeed & impersonation & yes & \code{\_indeed\_params}\\
+LinkedIn & impersonation & yes & \code{f\_WT=2} remote filter\\
+Naukri & browser & opt-in & JS shell; needs signed-in session\\
+Glassdoor & impersonation & opt-in & \\
+Foundit & browser & opt-in & 403 over plain HTTP\\
+Internshala & impersonation & yes & WFH internships page\\
+WeWorkRemotely & impersonation + rerank & yes & board ignores query params\\
+Remotive & JSON API & yes & \code{/api/remote-jobs}\\
+Arbeitnow & JSON API & yes & \code{/api/job-board-api}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{fetch(url, params, timeout=25, browser=False, ...)}: cheap path =
+Scrapling \code{Fetcher} with pinned Chrome JA3 impersonation; browser path
+= \code{StealthyFetcher} (patchright + Chromium, Cloudflare solving,
+resource blocking). \textbf{scrape(spec, query, timeout=30, escalate=True)}
+escalates once on \code{BoardWall}/\code{ThrottledOrUnparsed}/zero rows.
+
+\textbf{Wall detection} (\code{\_looks\_walled}): nine phrases matched
+against rendered body text only --- verify-you-are-a-human, are-you-a-robot,
+unusual-traffic, access-denied, enable-javascript, checking-your-browser,
+cf-browser-verification, incapsula, pardon-the-interruption.
+
+% ============================================================================
+\section{Gmail Cache (\file{gmail\_index.py})}
+\label{sec:gmailcache}
+
+Append-only SQLite (WAL, single write lock) with three tables:
+
+\begin{center}
+\begin{tabular}{@{}llp{7.6cm}@{}}
+\toprule
+\textbf{Table} & \textbf{PK} & \textbf{Contents}\\
+\midrule
+\code{mail\_messages} & \code{msg\_id} & account, sender, subject, body
+  ($\leq$1200 chars), sent\_at, metadata\\
+\code{mail\_listings} & \code{(msg\_id, ordinal)} & extracted title, company,
+  location, salary, link\\
+\code{mail\_sync\_state} & \code{account} & last sync time, counts, error\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+API: \code{upsert\_messages}, \code{search\_listings} (AND of whitespace
+terms over title/company/location), \code{diverse\_listings} (sender
+round-robin), \code{is\_stale} (default 1\,h), \code{count\_listings},
+\code{sender\_breakdown}, \code{record\_sync}. Override the file with
+\env{GMAIL\_CACHE\_DB}. Nothing is ever deleted.
+
+% ============================================================================
+\section{Resume Pipeline}
+\label{sec:resume}
+
+\subsection{CV intake (\api{POST}{/api/resume})}
+Multipart upload $\leq$8\,MB. Extraction tiers: pypdf (PDF), docx2txt,
+striprtf, plain decode; if $<$200 alphabetic characters survive, Tier-2 OCR
+(PyMuPDF 150\,dpi render + RapidOCR ONNX, 4 pages / 45\,s / conf $\geq$0.55
+defaults). Then: \code{extract\_skills} (\env{RESUME\_EXTRACT\_MODE=strict}
+takes only literal CV keywords), \code{suggest\_roles} (60-role rubric),
+\code{infer\_location}, \code{detect\_links} (GitHub/LinkedIn). Each upload
+creates and activates a fresh profile.
+
+\subsection{BM25 retrieval (\file{rag\_store.py})}
+Okapi BM25 ($k_1=1.5$, $b=0.75$) over 260-char bullet/paragraph chunks
+(independent units, no greedy packing). Tokenizer folds
+\code{c++}$\rightarrow$\code{cpp}, \code{.net}$\rightarrow$\code{dotnet}
+$\ldots$, strips a short stop list, light-stems trailing \code{s}
+(length $>$4). Storage: \code{rag\_documents} rows in \file{users.db}
+($\leq$400\,000 chars/doc). \code{retrieve(uid, query, k=8)} returns
+score-positive top-$k$ chunks with provenance
+\code{doc\_name\#index}.
+
+\subsection{Generation (\file{resume\_generator.py})}
+\code{build\_resume(cfg, job, desc, github\_url, rag\_hits, ...)}
+$\rightarrow$ \code{(latex, filename)}:
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item Posting text $P=$ desc $\oplus$ role $\oplus$ company (CV
+        deliberately excluded from the ranking query).
+  \item Skill groups reordered by 49-term posting lexicon hits; never
+        deleted or added.
+  \item Experience/Project bullets stably reordered within each entry by
+        BM25$(P,\cdot)$; whole spans move; chronology untouched.
+  \item Objective from CV summary (or synthesised strictly from CV lines)
+        + targeting line seeded by top matched skills.
+  \item Optional GitHub projects merged after CV projects
+        (\code{\_merge\_github\_projects}, alphanumeric-normalized
+        dedupe).
+  \item ATS template: 10\,pt article, \code{\textbackslash section*}
+        headings, single column, no tables, accent \texttt{1F4E79},
+        \code{\textbackslash heading}/\code{\textbackslash subheading}
+        macros; \code{\_lx} escapes; \code{\_ascii\_fold} maps unicode
+        symbols.
+  \item \code{tex\_to\_html}: regex preview without a TeX install.
+\end{enumerate}
+
+JD resolution priority: pasted $\rightarrow$ carried $\rightarrow$ fresh
+\file{job\_desc} cache $\rightarrow$ \code{desc\_snippet(link)}; a
+background fetch (\code{job\_desc.ensure}, 2 Chromium workers, 24\,h TTL,
+URL-normalized shared cache) always runs and the modal polls
+\api{GET}{/api/resume/desc}.
+
+\subsection{ATS score (\file{ats\_score.py})}
+$S=\sum_c w_c s_c$, clamped $[0,100]$: contact 12, sections 14, structure
+16, dates 16, keywords 26 ($\sqrt{\text{coverage}}\times 26$, spread
+damp), evidence 16. Bands: $\geq$85 strong, $\geq$70 good, $\geq$55 fair,
+else weak. Accepts \LaTeX{} or HTML (identically normalised). Returns
+\code{total, band, breakdown, issues, hits, missing, keyword\_total}.
+
+\subsection{GitHub projects (\file{github\_projects.py})}
+\code{find\_projects(url\_or\_username, jd\_text, max\_projects=3)}:
+username from CV; list repos (forks/archived/mirror-like filtered); score
+$=2.0\times$ shared JD-vocabulary terms $+$0.5 if described; fetch only
+matching READMEs (24\,h disk cache in \code{.github\_cache/}); a bullet is
+emitted only if summary and README share $\geq1$ tech term
+(\code{\_REPO\_TERMS}). Rate-limit errors degrade to empty, never fail the
+resume.
+
+% ============================================================================
+\section{Dashboard API (\file{dashboard.py})}
+\label{sec:api}
+
+All routes require the \code{js\_session} cookie unless marked
+\emph{public}. A global middleware sets \code{Cache-Control: no-store}.
+
+\subsection{Authentication}
+\begin{center}
+\begin{tabular}{@{}lp{8.8cm}@{}}
+\toprule
+\textbf{Route} & \textbf{Purpose}\\
+\midrule
+\api{GET}{/api/auth/state} & bootstrap (first-run flag), auth/verify state,
+  SMTP configured?, idle countdown\\
+\api{POST}{/api/auth/register} & \code{\{email,password\}}; first account =
+  owner + legacy migration; session cookie; verify mail or \code{dev\_link}\\
+\api{POST}{/api/auth/resend} & re-issue verify link (session required)\\
+\api{GET}{/api/auth/verify} & \code{?token=} consume (24\,h, single-use)
+  $\rightarrow$ verified + welcome mail\\
+\api{POST}{/api/auth/login} & identical error for unknown vs wrong password\\
+\api{POST}{/api/auth/logout} & destroy session, clear cookie\\
+\api{GET}{/api/auth/session} & read-only idle countdown\\
+\api{POST}{/api/auth/extend} & +5\,min idle (cannot revive expired)\\
+\api{POST}{/api/auth/identity} & \code{\{nickname?,avatar?\}} (12 avatars)\\
+\api{GET}{/api/auth/avatars} & avatar catalogue\\
+\api{POST}{/api/auth/forgot} & always \code{\{ok:true\}}; reset mail (2\,h)\\
+\api{POST}{/api/auth/reset} & \code{\{token,password\}}; kills all sessions\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Application}
+\begin{center}
+\begin{tabular}{@{}lp{8.8cm}@{}}
+\toprule
+\textbf{Route} & \textbf{Purpose}\\
+\midrule
+\api{GET}{/} & serve SPA\\
+\api{GET}{/api/boards} & \emph{public} board list + defaults\\
+\api{GET}{/api/config} & full config + option catalogues + tool names\\
+\api{POST}{/api/config} & rebuild runtime + agent; persist profile; clear
+  bundle cache\\
+\api{GET/POST}{/api/profiles} & list / create session profiles\\
+\api{POST}{/api/profiles/activate} & snapshot live cfg, swap, rebuild\\
+\api{POST}{/api/profiles/delete} & delete (default undeletable)\\
+\api{POST}{/api/reset} & wipe non-default profiles, runs, RAG docs,
+  seen-memory\\
+\api{POST}{/api/run} & \textbf{SSE stream} of a full run\\
+\api{GET}{/api/logs} & recent runs ($\leq$50) + errors ($\leq$20)\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Resume, RAG, screening}
+\begin{center}
+\begin{tabular}{@{}lp{8.8cm}@{}}
+\toprule
+\textbf{Route} & \textbf{Purpose}\\
+\midrule
+\api{POST}{/api/resume} & CV upload $\rightarrow$ skills/roles/location;
+  new active profile\\
+\api{POST}{/api/resume/detect} & re-detect GitHub links from stored CV\\
+\api{POST}{/api/resume/gen} & tailored \LaTeX{} + preview + ATS for one job\\
+\api{GET}{/api/resume/desc} & poll background JD fetch
+  (\code{ready}/\code{pending}/\code{empty})\\
+\api{GET/POST/DELETE}{/api/rag/docs} & document library CRUD\\
+\api{POST}{/api/screen} & \emph{Header \code{X-JobScope-Token}} vs
+  \env{SCREEN\_TOKEN}; M2M ATS screening\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Gmail and boards}
+\begin{center}
+\begin{tabular}{@{}lp{8.8cm}@{}}
+\toprule
+\textbf{Route} & \textbf{Purpose}\\
+\midrule
+\api{POST}{/api/gmail/sync} & sync job-alert mail into cache\\
+\api{GET}{/api/gmail/listings} & diverse cached listings (accounts pooled)\\
+\api{POST}{/api/verify-board} & start manual wall solve (needs
+  \env{JOBSCOPE\_MANUAL\_WALL})\\
+\api{GET}{/api/verify-board/\{job\_id\}} & poll
+  (\code{done}/\code{blocked}/\code{failed})\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{SSE event protocol (\api{POST}{/api/run})}
+Frames: \code{data: \{json\}\textbackslash n\textbackslash n}.
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{type} & \textbf{Payload}\\
+\midrule
+\code{status} & \code{stage: starting $\mid$ done} + message\\
+\code{token} & streamed LLM chunks (template mode emits full answer once)\\
+\code{tool\_start} / \code{tool\_end} & \code{\{name, args\}} /
+  \code{\{name, output$\leq$900\}}\\
+\code{jobs} & parsed deck payload $\rightarrow$ flashcards\\
+\code{fallback} & boards blocked; using Gmail\\
+\code{error} & \code{\{message, run\}} banner with Retry/Restart\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Graph streaming uses \code{astream(stream\_mode=["messages","updates"],
+recursion\_limit=60)}; payload $=$ \code{[system\_message(cfg),
+HumanMessage(text)]}.
+
+\subsection{Server behaviour}
+\begin{itemize}[leftmargin=2em]
+  \item Lifespan: \code{auth.init\_db()}; one cached MCP runtime;
+        per-request \code{Ctx} resolution (session $\rightarrow$ profile
+        $\rightarrow$ bundle).
+  \item Bundle cache keyed \code{(uid, profile\_id)}; profile field
+        overrides env defaults; \code{seen\_scope=u\{uid\}}.
+  \item Constants: \code{MAX\_UPLOAD\_BYTES = 8\,MB},
+        \code{MAX\_RUNS\_KEPT = 60}, \code{LOG\_SCAN\_DAYS} 7 days,
+        \code{MIN\_PASSWORD = 8}, skill-extraction LLM timeout 180\,s.
+  \item Bind: \env{HOST} (default 127.0.0.1), \code{--port} default 8000;
+        \code{already\_serving()} probes loopback before start.
+\end{itemize}
+
+% ============================================================================
+\section{Frontend (\file{static/index.html})}
+\label{sec:frontend}
+
+Single-file SPA (Inter + JetBrains Mono, CDN fallback):
+
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{Auth gate:} sign-in/sign-up, verify-inbox, reset/set-new
+        password; board marquee fed by public \api{GET}{/api/boards}.
+  \item \textbf{Header:} idle clock + extend, identity pill (nickname +
+        avatar), theme toggle, Sessions / History / Settings / Gmail /
+        Reset buttons.
+  \item \textbf{Circuit pipeline:} SVG nodes agent $\rightarrow$ boards
+        $\rightarrow$ router $\rightarrow$ gmail $\rightarrow$ report;
+        animated dash connectors driven by \code{tool\_start}/\code{tool\_end}/
+        \code{fallback}/\code{status} frames; frozen at run end.
+  \item \textbf{Flashcard decks:} per-run deck units with prev/next, dots,
+        swipe, keyboard; source/title/company/location/salary tags;
+        \emph{Apply now} link; \emph{LaTeX resume} button opening the
+        resume modal.
+  \item \textbf{Resume modal:} Preview / LaTeX tabs, paste-JD box +
+        Tailor, background-fetch notice + Regenerate, GitHub-projects
+        checkbox, ATS panel, Copy / Download .tex / Download HTML.
+  \item \textbf{Settings drawer:} role suggestions, editable role/city/
+        work-mode/country chips, resume dropzone + skill chips, OCR
+        notice, document library, model/days/max-results, \emph{Save \&
+        restart agent}.
+  \item \textbf{History drawer:} recent runs/errors with Retry/Restart.
+  \item SSE consumed via \code{fetch} reader splitting on \code{\textbackslash n\textbackslash n};
+        401/403 responses re-show the gate.
+\end{itemize}
+
+Client timers: idle tick 1\,s / resync 30\,s; verify-board poll 1.5\,s;
+JD-desc poll 4\,s $\times$ 30. localStorage holds only the theme.
+
+% ============================================================================
+\section{Authentication \& Data Model (\file{auth.py})}
+\label{sec:auth}
+
+\subsection{Security model}
+\begin{itemize}[leftmargin=2em]
+  \item Passwords: \code{hashlib.scrypt} $N=2^{14}, r=8, p=1$, 32-byte
+        key, 16-byte salt; stored \code{scrypt\$n\$r\$p\$salt\$hash};
+        constant-time verify; failed logins burn time against a dummy hash.
+  \item Sessions: 32-byte \code{token\_urlsafe}; SHA-256 digest only;
+        cookie \code{js\_session}; idle 25\,min (touch on authed requests,
+        extend +5\,min) + absolute 30-day expiry.
+  \item Email tokens: single-use verify (24\,h) / reset (2\,h); digest
+        storage; re-issue retires previous unused tokens.
+\end{itemize}
+
+\subsection{Schema (\file{users.db})}
+\begin{center}
+\begin{tabular}{@{}lp{3.2cm}p{7.2cm}@{}}
+\toprule
+\textbf{Table} & \textbf{Key} & \textbf{Columns (summary)}\\
+\midrule
+\code{users} & \code{id} & email (UNIQUE NOCASE), password\_hash,
+  created\_at, verified\_at, is\_owner, nickname, avatar\\
+\code{sessions} & \code{token\_hash} & user\_id FK CASCADE, created\_at,
+  expires\_at, active\_profile, last\_seen\\
+\code{email\_tokens} & \code{token\_hash} & user\_id FK, purpose
+  (verify/reset), created/expires/used\\
+\code{profiles} & \code{(user\_id, id)} & name, created\_at, is\_default,
+  JSON data\\
+\code{rag\_documents} & \code{(user\_id, id)} & name, kind, text,
+  created\_at\\
+\code{job\_desc\_cache} & \code{url} & text, source, fetched\_at
+  (not user-scoped)\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Profile JSON canonical shape (from \code{blank\_profile}): \code{name,
+resume\_text, github\_url, skills, cities, roles, role\_suggestions,
+work\_modes, regions, countries, remote\_only}.
+
+% ============================================================================
+\section{Configuration Reference}
+\label{sec:config}
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Variable} & \textbf{Meaning} & \textbf{Default}\\
+\midrule
+\env{OLLAMA\_URL} & Ollama endpoint & \code{http://localhost:11434}\\
+\env{OLLAMA\_MODEL} & model name & \code{llama3.1}\\
+\env{OLLAMA\_NUM\_CTX} & context window & 8192\\
+\env{AGENT\_SUMMARY\_MODE} & \code{template} $\mid$ \code{llm} & \code{template}\\
+\env{RESUME\_EXTRACT\_MODE} & \code{strict} $\mid$ \code{auto} $\mid$
+  \code{fast} $\mid$ \code{llm} & \code{strict}\\
+\env{TARGET\_ROLE} & default target role & Junior Data Analyst\ldots\\
+\env{JOB\_DAYS\_BACK} / \env{JOB\_MAX\_RESULTS} & email window / cap & 60 / 10\\
+\env{GITHUB\_TOKEN} / \env{GITHUB\_USERNAME} & GitHub PAT / handle & ---\\
+\env{GMAIL\_OAUTH\_CREDENTIALS} & client secret path & \code{client\_secret.json}\\
+\env{GMAIL\_OAUTH\_TOKEN\_FILE} & token path & \code{gmail\_oauth\_token.json}\\
+\env{GMAIL\_CACHE\_DB} & mail cache & \code{gmail\_cache.db}\\
+\env{SMTP\_HOST/PORT/USER/PASSWORD/FROM/TLS/TIMEOUT} & outbound mail & 587, TLS on, 15\,s\\
+\env{AUTH\_DEV\_LINKS} & dev links in responses & off\\
+\env{HOST} / \env{APP\_URL} & bind / base URL & \code{127.0.0.1} / \code{http://localhost:8000}\\
+\env{SCREEN\_TOKEN} & enables \api{POST}{/api/screen} & disabled\\
+\env{JOBSCOPE\_MANUAL\_WALL} & \code{auto} $\mid$ \code{on} $\mid$ \code{off} & \code{auto}\\
+\env{JOBSCOPE\_MANUAL\_SECONDS} & manual budget & 240\\
+\env{JOBSCOPE\_OCR} \code{\_MAX\_PAGES \_DPI \_SECONDS \_MIN\_CONF} &
+  OCR tier & \code{auto} / 4 / 150 / 45 / 0.55\\
+\env{N8N\_URL} / \env{N8N\_API\_KEY} / \env{N8N\_OLLAMA\_BASE\_URL} &
+  optional workflow hooks & ---\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\file{.env} is never committed; \file{.env.example} is the template.
+
+% ============================================================================
+\section{Manual Wall Solving (\file{manual\_verify.py})}
+\label{sec:manual}
+
+\code{JOBSCOPE\_MANUAL\_WALL}:
+\begin{itemize}[leftmargin=2em]
+  \item \code{auto} --- enabled iff a display exists (always on
+        Windows/macOS; needs \env{DISPLAY}/\env{WAYLAND\_DISPLAY} on Linux).
+  \item \code{on} --- forced; also allows inline solving during a running
+        search (never on \code{auto}).
+  \item \code{off} --- disabled.
+\end{itemize}
+
+Flow: \code{start(board, query)} $\rightarrow$ daemon thread opens visible
+Chromium (persistent \code{.browser\_profile}; resources/ads
+\emph{not} blocked, because a captcha widget is an image) $\rightarrow$
+polls every 1.5\,s until cleared or deadline $\rightarrow$ page considered
+cleared only when the wall detector is false \emph{and} the board's parser
+returns rows $\rightarrow$ listings re-enter the standard filter pipeline.
+Job states: \code{starting $\rightarrow$ waiting $\rightarrow$ done $\mid$
+blocked $\mid$ failed}; bounded to 50 concurrent jobs.
+
+% ============================================================================
+\section{Job Description Fetch (\file{job\_desc.py})}
+\label{sec:jobdesc}
+
+Two-tier cheapest-first: HTTP impersonation, then browser
+(\code{network\_idle=False} --- posting pages are $\sim$8\,s vs 131\,s with
+idle waits). Never raises; total failure stores an empty row so the wall is
+not re-attacked until TTL. Selectors per board (LinkedIn, Indeed,
+Greenhouse, Lever, Ashby, Workable, generic); wall-marked text is never
+cached as a description. Cache: \code{job\_desc\_cache} table, 24\,h TTL,
+URL-normalized keys (scheme/host case, fragments, tracking params, sorted
+query). Async facade: \code{status\_of} / \code{ensure} (2-worker pool,
+one in-flight fetch per URL).
+
+% ============================================================================
+\section{Tutorial Progression (step1--step7)}
+\label{sec:tutorial}
+
+\begin{center}
+\begin{tabular}{@{}clp{8.2cm}@{}}
+\toprule
+\textbf{Step} & \textbf{File} & \textbf{Teaches}\\
+\midrule
+1 & \file{step1\_basics.py} & TypedDict state, three nodes, START/END --- no LLM\\
+2 & \file{step2\_agent\_with\_tool.py} & \code{@tool}, MessagesState,
+  bind\_tools, ToolNode, tools\_condition + Ollama health check\\
+3 & \file{step3\_github\_tool.py} & GitHub REST tools with Bearer PAT\\
+4 & \file{step4\_mcp\_client.py} & Standalone MCP server + runtime discovery\\
+5 & \file{step5\_two\_mcp\_servers.py} & Local stdio + remote
+  \code{streamable\_http} (Indeed; needs OAuth token)\\
+6 & \file{step6\_gmail\_source.py} & Gmail as a source (tutorial IMAP +
+  app password; explicit env forwarding)\\
+7 & \file{step7\_scraper\_with\_fallback.py} & Thin CLI over shared
+  \file{agent.py}; deterministic fallback\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ============================================================================
+\section{Testing}
+\label{sec:testing}
+
+\begin{lstlisting}[language=PowerShell]
+pytest                       # full suite
+pytest -m "not slow"         # skip real-OCR / live-network tests
+pytest tests/test_filters.py -v
+pytest tests/test_agent.py -v
+\end{lstlisting}
+
+\begin{itemize}[leftmargin=2em]
+  \item \file{pytest.ini}: \code{testpaths = tests} (prevents recursion
+        into vendored \file{Scrapling-main/}), \code{norecursedirs},
+        \code{addopts = -q}, marker \code{slow}.
+  \item \file{conftest.py}: autouse \code{isolate\_personal\_data} fixture
+        redirects \file{users.db} and \file{profiles.json} into a temp dir
+        --- no test touches real account data.
+  \item 22 modules: agent, auth, auth\_routes, boards, cv\_ocr, dashboard,
+        filters, github\_and\_ats, gmail\_index, job\_desc, mailer,
+        manual\_verify, n8n\_workflow, rag\_routes, rag\_resume,
+        rag\_store, resume, role\_suggest, scraper, screen\_route,
+        session\_identity, verify\_boards\_verdict.
+\end{itemize}
+
+% ============================================================================
+\section{Operations}
+\label{sec:ops}
+
+\subsection{Logging}
+\code{\_log(record, kind)} appends JSONL to
+\file{logs/runs-YYYYMMDD.jsonl} or \file{logs/errors-YYYYMMDD.jsonl}
+(timestamps auto-added; \code{OSError} swallowed). Run lifecycle:
+\code{start} (user, message, skills, model, modes, profile) $\rightarrow$
+\code{done} (tools, token\_chars, duration\_s, jobs) or \code{error}
+(traceback). Additional events: \code{config\_updated},
+\code{resume\_upload}, \code{resume\_generated}, \code{login\_failed},
+\code{password\_reset}, \code{reset}, \code{screen\_resume},
+\code{rag\_doc\_added}, \ldots. In-memory ring: 60 runs per account; the
+History drawer tails 7 days of errors (newest first).
+
+\subsection{Troubleshooting}
+\begin{center}
+\begin{tabular}{@{}p{4.6cm}p{8.6cm}@{}}
+\toprule
+\textbf{Symptom} & \textbf{Fix}\\
+\midrule
+All boards blocked & Expected on datacentre IPs; Gmail fallback fires
+  automatically. Set \env{JOBSCOPE\_MANUAL\_WALL=on} for interactive
+  solving\\
+Gmail 403 & Re-run \file{gmail\_login.py}; check scope and
+  \file{client\_secret.json}\\
+Slow runs & CPU-only inference; smaller model, GPU Ollama, or keep
+  \code{template} summary mode\\
+\code{watchfiles} install fails & Harmless; uvicorn works without it\\
+Empty resume preview & CV didn't parse; check upload preview; install
+  pymupdf + rapidocr for scans\\
+Port busy & \code{python dashboard.py --port 9000}\\
+Tests hit real data & Impossible --- autouse sandbox fixture\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Security notes}
+\begin{itemize}[leftmargin=2em]
+  \item Git-ignored: \file{.env}, \file{client\_secret.json},
+        \file{gmail\_oauth\_token.json}, \file{users.db},
+        \file{gmail\_cache.db}, \code{.browser\_profile/}.
+  \item Bind to \code{127.0.0.1} by default; expose only behind a trusted
+        reverse proxy with TLS.
+  \item \api{POST}{/api/screen} is header-token gated and disabled unless
+        \env{SCREEN\_TOKEN} is set.
+  \item Session cookies are HTTP-only by default via Starlette; idle
+        timeout limits stolen-cookie value.
+  \item SMTP dev links (\env{AUTH\_DEV\_LINKS}) must stay off in
+        production.
+\end{itemize}
+
+% ============================================================================
+\section{Appendix}
+\label{sec:appendix}
+
+\subsection{SSE frame example}
+\begin{lstlisting}[language=Python, numbers=none]
+data: {"type":"status","stage":"starting","message":"Agent starting..."}
+
+data: {"type":"tool_start","name":"search_job_boards","args":"{\"query\": ...}"}
+
+data: {"type":"tool_end","name":"search_job_boards","output":"Job search..."}
+
+data: {"type":"jobs","payload":{"sources":{"Remotive":8,...},"jobs":[...]}}
+
+data: {"type":"status","stage":"done"}
+\end{lstlisting}
+
+\subsection{JOBS\_JSON payload shape}
+\begin{lstlisting}[language=Python, numbers=none]
+###JOBS_JSON###
+{"sources": {"Indeed": 12, "LinkedIn": "blocked", ...},
+ "blocked": ["LinkedIn"], "blocked_reasons": {"LinkedIn": "http 403"},
+ "total": 12, "fresh": 9, "repeats": 3, "remote_only": true,
+ "work_modes": ["remote"], "countries": [],
+ "jobs": [{"source": "Remotive", "title": "...", "company": "...",
+           "location": "Remote", "salary": "", "link": "https://..."}]}
+\end{lstlisting}
+
+\subsection{Glossary}
+\begin{description}[leftmargin=6em, style=nextline]
+  \item[MCP] Model Context Protocol --- stdio subprocess tool servers.
+  \item[ATS] Applicant Tracking System --- resume-parsing hiring software.
+  \item[BM25] Okapi Best-Match 25, the lexical ranking function used for
+        retrieval.
+  \item[JA3] TLS client-fingerprint standard used for HTTP impersonation.
+  \item[SSE] Server-Sent Events --- one-directional HTTP streaming used by
+        \api{POST}{/api/run}.
+  \item[Seen-memory] Per-account LRU of previously shown job links.
+  \item[Deck] The flashcard rendering of a \code{###JOBS\_JSON###} payload.
+\end{description}
+
+\vfill
+\begin{center}
+{\small\color{gray} End of technical documentation.\quad
+ JobScope --- generated \today}
+\end{center}
+
+\end{document}

@@ -1,0 +1,810 @@
+% ============================================================================
+%  JobScope — Research Document
+%  A study of deterministic agent orchestration, local-first retrieval, and
+%  structure-preserving resume generation for automated job hunting.
+%
+%  Compile with:  pdflatex JobScope_Research.tex   (run twice for the ToC)
+%  Packages required (all standard): amsmath, amssymb, booktabs, geometry,
+%  hyperref, graphicx, xcolor, listings, enumitem, titlesec, fancyhdr.
+% ============================================================================
+\documentclass[11pt,a4paper]{article}
+
+% ---- packages --------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage[margin=2.7cm]{geometry}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{multirow}
+
+% ---- colours (defined BEFORE hyperref) --------------------------------------
+\definecolor{indigo}{HTML}{4F46E5}
+\definecolor{violet}{HTML}{7C3AED}
+\definecolor{teal}{HTML}{0D9488}
+\definecolor{codebg}{HTML}{0F172A}
+\definecolor{grayed}{HTML}{64748B}
+
+\usepackage[colorlinks=true,linkcolor=indigo!75,urlcolor=teal,citecolor=violet]{hyperref}
+
+% ---- code listing style -----------------------------------------------------
+\lstset{
+  basicstyle=\ttfamily\footnotesize\color{white},
+  backgroundcolor=\color{codebg},
+  commentstyle=\color{teal},
+  keywordstyle=\color{orange!90},
+  stringstyle=\color{green!70},
+  numbers=left, numberstyle=\tiny\color{gray}, numbersep=6pt,
+  frame=single, rulecolor=\color{gray!40}, breaklines=true,
+  showstringspaces=false, aboveskip=8pt, belowskip=8pt,
+}
+
+% ---- section styling --------------------------------------------------------
+\titleformat{\section}{\Large\bfseries\color{indigo}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{violet}}{\thesubsection}{0.5em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{teal}}{\thesubsubsection}{0.5em}{}
+\setlist{itemsep=2pt, topsep=4pt}
+
+% ---- header / footer --------------------------------------------------------
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{grayed} JobScope --- Research Document}
+\fancyhead[R]{\small\color{grayed} \leftmark}
+\fancyfoot[C]{\small\color{grayed} \thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ---- handy commands ---------------------------------------------------------
+\newcommand{\file}[1]{\texttt{\small #1}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\vect}[1]{\mathbf{#1}}
+\newcommand{\term}[1]{\textit{#1}}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+
+\begin{document}
+
+% ============================================================================
+%  TITLE PAGE
+% ============================================================================
+\begin{titlepage}
+  \centering
+  \vspace*{2.2cm}
+  {\color{indigo}\rule{\textwidth}{2pt}}
+
+  \vspace{0.9cm}
+  {\fontsize{30}{36}\selectfont\bfseries\color{indigo} JobScope}\\[8pt]
+  {\Large Deterministic Orchestration, Local-First Retrieval, and\\[2pt]
+   Structure-Preserving Generation\\[4pt]
+   for an Automated Job-Hunting Agent}
+
+  \vspace{0.8cm}
+  {\color{indigo}\rule{\textwidth}{2pt}}
+
+  \vspace{2.2cm}
+  \begin{minipage}{0.82\textwidth}
+    \small
+    \textbf{Abstract.}
+    Job searching at scale is a dual problem: finding relevant listings across
+    fragmented, bot-defended sources, and presenting a candidate's true
+    experience in a form that survives both human review and automated
+    applicant-tracking systems (ATS). We present \textbf{JobScope}, a
+    locally-run job-hunting agent that combines (i)~a LangGraph state machine
+    with \emph{deterministic} graph-edge routing between a nine-board parallel
+    scraper and a Gmail job-alert fallback, (ii)~Okapi BM25 retrieval over the
+    candidate's own documents as a hallucination-free alternative to dense
+    embeddings, and (iii)~a resume generator that only \emph{reorders} the
+    candidate's existing content to match a job description, coupled with an
+    explainable 100-point ATS scoring model. The system runs entirely on
+    consumer hardware against a local LLM (Ollama), exposes a FastAPI
+    dashboard with Server-Sent Events streaming, and treats every judgement
+    that can be made in code as code: seniority, geography, work-mode, and
+    fallback decisions never depend on prompt following. We describe the
+    architecture, formalise the retrieval and scoring components, report
+    engineering measurements collected during development, and discuss
+    limitations and threats to validity.
+  \end{minipage}
+
+  \vfill
+  {\small \today \\[2pt]
+   Build target: Python 3.14, Windows / PowerShell \\[2pt]
+   File: \file{docs/JobScope\_Research.tex}}
+\end{titlepage}
+
+\tableofcontents
+\clearpage
+
+% ============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+Modern job hunting is a high-volume, multi-channel activity. A single
+candidate may need to monitor dozens of boards, digest daily alert emails,
+tailor a resume to each posting, and track applications --- work that is
+mechanical, repetitive, and poorly served by existing tools. Commercial
+aggregators centralise listings but rarely personalise; generative-AI resume
+tools rewrite content, risking claims the candidate cannot defend; and
+cloud-based agents send resumes and credentials through third-party services.
+
+JobScope was built as a counterpoint on three axes:
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Local-first privacy.} Inference (Ollama), storage (SQLite),
+        logs (JSONL), and resume data never leave the machine. Network egress
+        is limited to job boards, the Gmail/GitHub APIs, and optional SMTP.
+  \item \textbf{Deterministic control flow.} Every decision that can be made
+        from structured signals --- whether boards were blocked, which source
+        won, which listings are senior or India-tied --- is made in code.
+        The LLM is used only where genuine judgement helps, and can be
+        bypassed entirely (\code{AGENT\_SUMMARY\_MODE=template}).
+  \item \textbf{Truthful generation.} The resume pipeline \emph{reorders}
+        the candidate's own words; it never invents skills, rewrites bullets,
+        or fabricates experience. Retrieval over the candidate's documents is
+        performed with Okapi BM25, whose scores are inspectable term-level
+        evidence rather than opaque vector similarities.
+\end{enumerate}
+
+The system grew out of a seven-step tutorial progression
+(\file{step1\_basics.py} $\rightarrow$ \file{step7\_scraper\_with\_fallback.py})
+that each isolate one architectural lesson; the production agent
+(\file{agent.py}) is the fixed point of that progression.
+
+\subsection{Problem statement}
+\label{sec:problem}
+
+Given a target role, a candidate profile (CV text, skills, preferred work
+modes and countries), and untrusted external sources, the system must:
+
+\begin{itemize}[leftmargin=2em]
+  \item retrieve job listings from multiple heterogeneous sources within a
+        bounded time, despite active bot-defence (HTTP 403, CAPTCHA,
+        JS-only shells);
+  \item degrade gracefully to an alternative source (Gmail job alerts) when
+        the primary channel fails \emph{without} an LLM deciding to do so;
+  \item apply candidate-specific filters (seniority, experience, geography,
+        work arrangement) consistently across all sources;
+  \item generate a resume tailored to a specific posting that contains only
+        content the candidate actually wrote, in an ATS-parseable format;
+  \item score the result with a decomposable, actionable metric; and
+  \item do all of the above on a single machine with no paid API.
+\end{itemize}
+
+\subsection{Contributions}
+\label{sec:contrib}
+
+\begin{enumerate}[leftmargin=2em]
+  \item A \textbf{deterministic fallback architecture} in which the
+        boards$\rightarrow$Gmail transition is a graph edge guarded by
+        machine-readable blocked markers, eliminating prompt-driven routing
+        failure (Section~\ref{sec:orchestration}).
+  \item A \textbf{parallel collect / code select} execution pattern that
+        dispatches all sources in a single agent step and resolves the
+        winner without LLM round-trips (Section~\ref{sec:orchestration}).
+  \item A \textbf{local-first mail cache} design that replaces per-query
+        IMAP/API search with one-shot OAuth sync into SQLite, improving
+        latency and robustness (Section~\ref{sec:mailcache}).
+  \item A \textbf{structure-preserving resume generator} whose only
+        transformation is relevance-ordered reordering of the candidate's own
+        content, backed by BM25 evidence (Section~\ref{sec:resume}).
+  \item An \textbf{explainable ATS scoring model} with six weighted
+        components and per-issue diagnostics (Section~\ref{sec:ats}).
+  \item A \textbf{layered anti-bot strategy} --- TLS impersonation,
+        headless-browser escalation, hard global deadlines, and an honest
+        human-in-the-loop CAPTCHA path (Section~\ref{sec:scraping}).
+\end{enumerate}
+
+% ============================================================================
+\section{Related Work and Background}
+\label{sec:related}
+
+\subsection{Job aggregation and scraping}
+Commercial aggregators (Indeed, LinkedIn, Google Jobs) centralise listings
+but impose anti-automation measures: TLS fingerprinting, CAPTCHA walls, and
+JS-only rendering. Academic and open-source scraping work addresses these
+with browser automation (Selenium/Playwright) or HTTP client impersonation.
+JobScope adopts the latter as its cheap path (\code{curl\_cffi} JA3
+impersonation via Scrapling) and escalates to a patchright-controlled
+Chromium only on failure --- a stratagem consistent with measured cost
+differences (Section~\ref{sec:scraping}).
+
+\subsection{LLM agents and tool use}
+ReAct-style agents interleave reasoning and tool calls, delegating tool
+selection to the model. This is flexible but fragile under small context
+windows and local CPU models: prose instructions to ``fall back if blocked''
+are frequently ignored or misparsed. JobScope instead follows the
+``architecture over prompts'' school --- control-flow decisions are compiled
+into the graph, and the model is consulted only for content generation. This
+mirrors findings that deterministic routers outperform prompted routers in
+constrained tool environments.
+
+\subsection{Retrieval: BM25 vs.\ dense embeddings}
+Dense bi-encoder retrieval dominates open-domain QA at corpus scale, but
+its advantages shrink at \emph{personal-document} scale (tens to hundreds of
+chunks). Okapi BM25~\cite{robertson2009} requires no model download, runs on
+any Python install (no torch wheels needed on bleeding-edge interpreters),
+and yields term-level explanations --- directly usable as resume provenance
+(``this bullet was selected because it contains \textit{django, rest,
+sql}''). JobScope therefore uses BM25 exclusively and treats embeddings as
+future work for cross-document semantic matching.
+
+\subsection{ATS systems and resume parseability}
+Applicant-tracking systems parse resumes with heuristic extractors that
+break on tables, multi-column layouts, graphics, and free-form headings.
+Canonical advice --- single column, standard section headings, no tables,
+parsable dates, keyword coverage --- is encoded directly in JobScope's
+LaTeX template and reflected as penalties in the ATS score
+(Section~\ref{sec:ats}), closing the loop between generation and evaluation.
+
+\subsection{Generative resume tools and hallucination}
+LLM resume writers paraphrase and embellish, producing claims candidates
+cannot defend in interviews. JobScope's design constraint --- ``a generated
+resume must never assert something the candidate did not write'' --- is
+enforced architecturally: the generator receives only candidate-sourced text
+and performs reorder/selection operations, never abstractive rewriting.
+
+% ============================================================================
+\section{System Architecture}
+\label{sec:arch}
+
+Figure~\ref{fig:arch} presents the runtime architecture. The system has four
+layers: interfaces (FastAPI dashboard, Chainlit chat, CLI), the LangGraph
+agent core, MCP tool servers (stdio subprocesses), and external services
+(boards, Gmail API, GitHub API, Ollama).
+
+\begin{figure}[htbp]
+\centering
+\fbox{\parbox{0.92\textwidth}{\small
+\textbf{Interfaces} (dashboard \file{dashboard.py} + SPA, chat \file{ui.py},
+CLI \file{step7\_*.py}) $\xrightarrow{\text{SSE / astream}}$
+\textbf{Agent core} (\file{agent.py}: nodes \code{agent}, \code{tools},
+\code{prep}, \code{fallback}; router \code{route\_after\_tools})
+$\xrightarrow{\text{MCP stdio}}$
+\textbf{Tool servers} (\file{mcp\_server\_indeed\_scraper.py},
+\file{mcp\_server\_gmail.py}, \file{mcp\_server\_github.py})
+$\xrightarrow{\text{HTTPS / OAuth}}$
+\textbf{External} (9 boards, Gmail API, GitHub API, Ollama). \\
+\textbf{Persistence:} \file{users.db} (auth/profiles/RAG/JD cache),
+\file{gmail\_cache.db} (mail index), \file{logs/*.jsonl} (runs/errors).
+}}
+\caption{JobScope runtime layers. MCP servers are subprocesses, not network
+services; only ports 8000 (dashboard) and 11434 (Ollama) are open locally.}
+\label{fig:arch}
+\end{figure}
+
+\subsection{Agent state machine}
+\label{sec:orchestration}
+
+The graph is a LangGraph \code{StateGraph} over \code{AgentState}
+(\code{MessagesState} plus a \code{fallback\_used} boolean):
+
+\begin{lstlisting}[language=Python]
+START -> agent -> (tools_condition)
+          "tools"   -> tools
+          "__end__" -> END
+tools -> route_after_tools
+          "prep"     | "fallback" | "agent"
+prep -> agent ; fallback -> agent
+\end{lstlisting}
+
+\subsubsection{The collect step skips the LLM}
+On a fresh hunt the \code{agent} node does not call the model. It emits a
+single \code{AIMessage} whose parallel \code{tool\_calls} invoke
+\code{search\_job\_boards} (or \code{search\_job\_emails} when the request
+names a mail source). This ``deterministic collect'' removes the LLM
+tool-decision round-trip --- the slowest component on local CPU --- from the
+critical path, and guarantees the fan-out happens even when the model would
+have hesitated.
+
+\subsubsection{Deterministic routing}
+After tools execute, \code{route\_after\_tools} inspects state:
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item If \code{fallback\_used} is set, return \code{agent}
+        (summarise; never loop).
+  \item If any Gmail/email \code{ToolMessage} is present, return
+        \code{prep} --- the parallel-collect path has run.
+  \item If the user explicitly named one board, return \code{prep}
+        (Gmail was never collected; legacy fallback would be wrong).
+  \item If the most recent scraper result contains a blocked marker, return
+        \code{fallback} (legacy sequential path).
+  \item Otherwise return \code{agent} to write the final answer.
+\end{enumerate}
+
+\subsubsection{Blocked markers}
+A multi-board sweep can fail on some boards yet still return jobs, so the
+bare token ``blocked'' is not a trigger. The marker set is
+$\mathcal{B} = \{$\code{"all boards were blocked"}, \code{"captcha"},
+\code{"http 403"}, \code{"fall back"}, \code{"no job links"},
+\code{"couldn't extract"}, \code{"request failed"}, \code{"js-rendered"}$\}$.
+Structured per-source statuses from the \code{###JOBS\_JSON###} payload
+(\code{blocked}, \code{blocked\_reasons}) take precedence over prose
+matching when present.
+
+\subsubsection{Winner selection in \code{prep}}
+Let $J_b$ be the board listings and $J_g$ the filtered Gmail listings after
+the shared predicate $\pi$ (Section~\ref{sec:filters}). The prep node
+computes
+\begin{equation}
+  J^{\*} =
+  \begin{cases}
+    \pi(J_b) & \text{if } |J_b| > 0 \\
+    \pi(J_g) & \text{otherwise.}
+  \end{cases}
+\end{equation}
+No LLM participates. The selected set, an optional fallback note, and the
+machine-readable deck payload are handed back to the \code{agent} node, which
+renders the final answer via a pure function \code{\_template\_summary} in
+the default configuration.
+
+\subsection{Configuration model}
+\code{AgentConfig} (dataclass) centralises model, context window, target
+roles, skills, resume text, work modes, countries, preferred cities,
+GitHub URL, summary mode, and the per-account \code{seen\_scope}. Environment
+variables seed defaults via \code{load\_config()}; per-user profiles override
+them at bundle-build time. The compiled bundle is cached per
+\texttt{(user\_id, profile\_id)} pair.
+
+% ============================================================================
+\section{Data Acquisition}
+\label{sec:acquisition}
+
+\subsection{Layered scraping strategy}
+\label{sec:scraping}
+
+JobScope scrapes nine sources: Indeed, LinkedIn, Naukri, Glassdoor, Foundit,
+Internshala, WeWorkRemotely (HTML boards) plus Remotive and Arbeitnow
+(keyless JSON APIs). HTML boards use a two-tier fetcher:
+
+\begin{description}[leftmargin=6.2em, style=nextline]
+  \item[Cheap path (default)] Scrapling \code{Fetcher} with
+        \code{curl\_cffi} TLS/JA3 impersonation pinned to Chrome, stealthy
+        headers, $\sim$1\,s per board.
+  \item[Browser path] \code{StealthyFetcher} (patchright + Chromium) with
+        Cloudflare solving, ad/resource blocking, network-idle waits for
+        search pages; $\sim$15--45\,s. Used for JS-only boards and as a
+        single escalation on \code{BoardWall} / \code{ThrottledOrUnparsed}
+        / zero-row results.
+\end{description}
+
+\textbf{Blocked detection.} HTTP 403/429 or any $\geq 400$ status raises
+\code{BoardWall}; a loaded page yielding no cards raises
+\code{ThrottledOrUnparsed} (distinct because escalation helps in the latter
+case). A challenge-page detector matches nine phrases against the
+\emph{rendered body text} --- never raw HTML, so embedded reCAPTCHA site
+keys on healthy pages do not false-positive.
+
+\textbf{Bounded parallel sweep.} One thread-pool worker per board races
+against a global deadline $T = 40$\,s:
+\begin{equation}
+  \text{result}_i =
+  \begin{cases}
+    \text{listings}_i & t_i < T \\
+    \texttt{"blocked (timed out)"} & \text{otherwise}
+  \end{cases}
+\end{equation}
+Stragglers are cancelled (\code{cancel\_futures=True}); failures are cached
+for 90\,s to prevent retry storms. Thin sweeps ($< 12$ listings) trigger one
+sibling-role widening pass over healthy boards only.
+
+\textbf{Dedup and seen-memory.} Listings are deduplicated on
+$(\text{title}^{\text{lower}}, \text{link})$. A per-account LRU memory
+(400 links $\times$ 16 scopes) keyed by \code{seen\_scope = "u\{id\}"}
+ensures repeated hunts surface fresh cards; repeats are retained but
+labelled, preserving recall while improving perceived novelty.
+
+\subsection{Human-in-the-loop CAPTCHA resolution}
+\label{sec:manual}
+
+CAPTCHA checkboxes are intentionally unsolvable by machines; JobScope does
+not pretend otherwise. With \code{JOBSCOPE\_MANUAL\_WALL=on}, a blocked
+board opens a \emph{visible} Chromium window with a persistent profile
+(\code{.browser\_profile}, preserving logins across runs). The page is
+considered cleared only when (a) the wall detector returns false
+\emph{and} (b) the board's own parser extracts $\geq 1$ rows --- a strict
+criterion, because a marker-free ``Sign in to LinkedIn'' page is long but
+useless. Jobs progress through
+$\texttt{starting} \rightarrow \texttt{waiting} \rightarrow
+\{\texttt{done}, \texttt{blocked}, \texttt{failed}\}$ with a default
+240\,s budget, pollable via the dashboard.
+
+\subsection{Local-first Gmail cache}
+\label{sec:mailcache}
+
+Reading job alerts via live IMAP/API search per query proved fragile:
+sender-address drift matched 1 message where 378 existed, full-RFC822
+downloads were slow, and providers rate-limit. JobScope inverts the model:
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item \textbf{Sync once} --- \code{sync\_gmail\_cache} uses the Gmail API
+        over OAuth 2.0 (\code{gmail.readonly}); per alert sender
+        $s$ it issues
+        $\texttt{from:"}s\texttt{" after:}\textit{cutoff}$, fetches raw
+        messages (429/403 retried with exponential backoff), parses them,
+        and upserts into SQLite (WAL).
+  \item \textbf{Query locally} --- \code{search\_job\_emails} answers from
+        the cache, auto-resyncing when older than one hour.
+  \item \textbf{Diversify} --- over-fetching pools are passed through a
+        sender round-robin \code{diverse\_listings} so one LinkedIn digest
+        cannot monopolise the deck.
+\end{enumerate}
+
+\textbf{Parsing.} Tracking footers are truncated; junk URLs (legal,
+unsubscribe, pixels) dropped; known tracking parameters stripped while
+preserving job identifiers (\code{?jk=}, LinkedIn ids); multi-listing
+digests are split around ``view job''/``apply'' anchors with a four-line
+context window; the best job link is ranked
+$\text{direct posting} > \text{job path} > \text{employer host} >
+\text{click-tracker} > \text{search page}$. Bodies are capped at 1200
+characters to protect the LLM context budget.
+
+% ============================================================================
+\section{Filtering as Code}
+\label{sec:filters}
+
+All listing predicates live in \file{filters.py}, imported by both the
+scraper and the agent so the two cannot drift. The master gate is:
+
+\begin{equation}
+\pi(j) = \neg\,\text{senior}(j) \;\wedge\;
+         \neg\,\text{exp}(j) \;\wedge\;
+         \bigl(\neg\,\text{india}(j) \vee \text{wfh-exempt}(j)\bigr)
+         \;\wedge\;
+         \text{mode}(j) \;\wedge\;
+         \text{country}(j) \;\wedge\;
+         \text{link}(j)
+\end{equation}
+
+\begin{description}[leftmargin=6.4em, style=nextline]
+  \item[senior$(j)$] Title $\cup$ location match
+        $\{$senior, lead, principal, staff, architect, director, manager,
+        vp, chief, head-of$\}$ --- \emph{never} the company name.
+  \item[exp$(j)$] Requires $\geq 5$ years
+        (\code{5+ years}, \code{5-8 yrs}, \code{min 5 years} $\ldots$),
+        with lookbehinds sparing \code{less than 5 years}, \code{up to 5},
+        and digit-hyphen guards sparing \code{0-2 years}.
+  \item[india$(j)$] Matches Indian cities/states and \code{Remote-India}
+        tokens. Genuine WFH is exempt; India-scoped remote
+        (\code{remote-india}, \code{wfh-india}) is checked \emph{before}
+        the exemption and is not spared.
+  \item[mode$(j)$] Work-mode chips (remote/wfh/hybrid/onsite) matched
+        against explicit statements only; unstated arrangements are kept at
+        search time (recall-preserving).
+  \item[country$(j)$] $\sim$84 canonical countries with aliases; blank
+        locations are dropped when a filter is active; \code{worldwide}
+        matches everything.
+  \item[link$(j)$] Requires a valid \code{http(s)} URL so every card is
+        Apply-able.
+\end{description}
+
+The system prompt mirrors these rules so the LLM can \emph{explain}
+decisions in prose, but enforcement never depends on it.
+
+% ============================================================================
+\section{Retrieval and Resume Generation}
+\label{sec:resume}
+
+\subsection{Okapi BM25 over personal documents}
+\label{sec:bm25}
+
+The candidate's CV and uploaded documents are chunked into independent
+units (bullets kept whole, 260-char soft cap, no greedy packing --- unit
+independence lets the JD select between bullets). Tokens are lowercased,
+folded (\code{c++}$\rightarrow$\code{cpp}, \code{.net}$\rightarrow$
+\code{dotnet} $\ldots$), stop-worded, and lightly stemmed (trailing
+\code{s} when length $> 4$).
+
+For query $Q$ (the job description plus title and company) and chunk
+$\vect{d}$, the Okapi BM25 score is
+\begin{equation}
+\text{BM25}(Q,\vect{d}) = \sum_{t \in Q^{*}}
+  \text{idf}(t)\,
+  \frac{f(t,\vect{d})\,(k_1+1)}
+       {f(t,\vect{d}) + k_1\!\left(1-b+b\,\frac{|\vect{d}|}{\overline{\text{dl}}}\right)}
+\end{equation}
+with $k_1 = 1.5$, $b = 0.75$, $Q^{*}$ the de-duplicated query terms, and
+the smoothed, floored idf
+\begin{equation}
+\text{idf}(t) = \max\!\left(0,\;
+  \ln\frac{1 + n - \text{df}(t) + 0.5}{\text{df}(t) + 0.5}\right).
+\end{equation}
+Top-$k$ chunks ($k=8$, score $> 0$) become \emph{rag hits}: evidence for
+bullet reordering and the resume's provenance line
+(\emph{``Tailored from: <document>\#<chunk>''}). If the active profile has
+no CV, the highest-scoring uploaded document is borrowed wholesale as the
+CV --- still candidate-authored content.
+
+\subsection{Structure-preserving tailoring}
+\label{sec:tailoring}
+
+Let $C$ be the parsed CV with skill groups $G_1..G_m$ and entries
+$E_1..E_n$ (each a list of bullets). Given posting text
+$P = \text{desc} \oplus \text{role} \oplus \text{company}$:
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item \textbf{Skill-group reorder:} groups are sorted by hits of a
+        49-term posting lexicon; groups are never deleted or augmented.
+  \item \textbf{Bullet reorder within entries:} bullets of each $E_i$ are
+        stably sorted by $\text{BM25}(P, \text{bullet})$; entry order and
+        chronology are untouched; whole line spans move together.
+  \item \textbf{Objective:} quoted from the CV summary (or synthesised
+        strictly from CV lines) plus a targeting line seeded by the top
+        matched skills.
+  \item \textbf{Optional GitHub merge:} public repos are scored against $P$
+        ($2.0\times$ shared JD-vocabulary terms $+\,0.5$ if described),
+        only matching READMEs are fetched (24\,h disk cache), and a repo
+        bullet is emitted only if its summary shares $\geq 1$ tech term with
+        its own README --- an anti-hallucination guard.
+\end{enumerate}
+
+The generator's transformation is therefore a pure reordering/selection
+function $T(C, P) = C'$ with
+$\text{content}(C') \subseteq \text{content}(C)$: no claim can appear that
+the candidate did not write. Output is an ATS-safe \LaTeX{} article
+(10\,pt, single column, \code{\textbackslash section*} headings, no tables,
+accent \texttt{1F4E79}) plus a regex-based HTML preview requiring no TeX
+installation in the browser.
+
+\subsection{Explainable ATS scoring}
+\label{sec:ats}
+
+The score is a weighted sum $S = \sum_{c} w_c\,s_c$ over six components
+with $S$ clamped to $[0, 100]$:
+
+\begin{center}
+\begin{tabular}{@{}lcl@{}}
+\toprule
+\textbf{Component} & $\boldsymbol{w_c}$ & \textbf{Signal}\\
+\midrule
+Contact    & 12 & name, email, phone, location, LinkedIn, GitHub \\
+Sections   & 14 & canonical headings (skills 3.5, experience 4.0,
+                   projects 2.5, $\ldots$) \\
+Structure  & 16 & starts at 16; penalties for tables, multi-column,
+                   graphics, absent headings, thin content \\
+Dates      & 16 & ranges/full dates $+$8, coverage $\geq 2$ dated entries,
+                   Present marker, ambiguity penalties \\
+Keywords   & 26 & $s_k = \sqrt{\text{coverage}}\cdot 26$, damped
+                   $\times 0.9$ if hits cluster outside Skills \\
+Evidence   & 16 & quantified outcomes, action verbs, bullet count,
+                   GitHub presence \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Bands: $\geq 85$ strong, $\geq 70$ good, $\geq 55$ fair, else weak. Every
+component emits human-readable notes, and the response lists
+\code{issues}, \code{hits}, and \code{missing} --- the design rule being
+\emph{a score that cannot be argued with is worse than no score}. The same
+function accepts either \LaTeX{} or HTML input (normalised identically), so
+the preview and the source score identically.
+
+\subsection{OCR tier for scanned CVs}
+\label{sec:ocr}
+
+When text-layer extraction yields fewer than 200 alphabetic characters, a
+second tier renders PDF pages with PyMuPDF at 150\,dpi and reads them with
+RapidOCR (PaddleOCR models on ONNX, CPU-only). On a synthetic 150-dpi A4
+scan the pipeline measured \textbf{3.15\% character error rate} at
+\textbf{99.5\% mean confidence}, recovering emails and phone numbers
+exactly --- in contrast to a vision-LLM alternative measured at
+$\sim$2.5 tokens/s with a tendency to invent contact details. The tier is
+bounded (4 pages, 45\,s default) and drops lines below a confidence floor.
+
+% ============================================================================
+\section{Evaluation}
+\label{sec:evaluation}
+
+JobScope is a systems contribution; formal user studies are future work.
+We report engineering measurements collected during development that
+validated each design choice.
+
+\subsection{Scraping cost and coverage}
+\label{sec:eval-scrape}
+
+\begin{center}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Board} & \textbf{Path} & \textbf{Latency} & \textbf{Yield}\\
+\midrule
+Indeed (cheap)      & impersonation & $\sim$1.2\,s & 32 cards (HTTP 200)\\
+Indeed (browser)    & Chromium      & $\sim$44\,s  & 75 cards\\
+LinkedIn            & impersonation & $\sim$0.9\,s & 60 cards\\
+Glassdoor           & impersonation & $\sim$1.4\,s & 30 cards\\
+Internshala (WFH)   & impersonation & $\sim$0.8\,s & 50 cards\\
+WeWorkRemotely      & impersonation & $\sim$1.6\,s & 10 cards (+ rerank)\\
+Naukri              & browser       & $\sim$21\,s  & 0 (needs login)\\
+Foundit             & browser       & ---         & 403 walled\\
+Remotive / Arbeitnow & JSON API     & $\sim$1\,s   & live every run\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Consequences: (i)~the cheap path is $\sim$35$\times$ cheaper than the
+browser path on Indeed, justifying escalate-on-failure; (ii)~the global
+40\,s deadline leaves headroom for the four healthy live sources while
+bounding worst-case latency; (iii)~a \emph{mixed} multi-source deck is the
+norm, with the Gmail fallback reserved for fully-blocked runs rather than
+being the steady state.
+
+\subsection{Retrieval design}
+\label{sec:eval-rag}
+
+Embeddings were rejected for this workload because (i)~the corpus is
+hundreds of chunks --- well inside BM25's competitive regime;
+(ii)~torch wheels are unstable on Python 3.14, the development target;
+(iii)~BM25 needs no model download and starts instantly on CPU-only
+machines; and (iv)~term-level scores double as resume provenance evidence.
+The trade-off accepted is weaker semantic matching (e.g.\ synonymy beyond
+the light stemmer), documented as a limitation with dense re-ranking listed
+as future work.
+
+\subsection{Generation integrity}
+The generator was designed against a concrete failure mode observed in
+LLM-written resumes: fluent claims the candidate cannot defend. The
+reorder-only invariant makes such claims structurally impossible ---
+verification reduces to checking that emitted content is a subsequence of
+candidate input per section. The GitHub merge guard (summary--README term
+overlap) was added after a restaurant-demo repository scored 5.5 against an
+unrelated JD under a naive scorer; restricting scoring to JD vocabulary
+closed the bug.
+
+\subsection{OCR accuracy}
+As reported in Section~\ref{sec:ocr}: 3.15\% CER / 99.5\% mean confidence
+on a synthetic scan, with exact email/phone recovery --- sufficient for the
+downstream skill extractor, which only needs literal keyword presence.
+
+\subsection{Operational reliability}
+\begin{itemize}[leftmargin=2em]
+  \item IMAP connect timeouts (15\,s) plus
+        \code{asyncio.wait\_for} (60--120\,s) per tool call guarantee no
+        single source can hang a run.
+  \item Failed-board caching (90\,s) and the global sweep deadline prevent
+        retry storms against walled hosts.
+  \item MCP tool discovery ($\sim$3.4\,s) is amortised by caching the
+        runtime for the application lifetime and agent bundles per user
+        profile.
+  \item All blocking work (OCR, sync, ATS, \LaTeX{} rendering) is
+        dispatched to worker threads so the event loop never blocks.
+\end{itemize}
+
+% ============================================================================
+\section{Threats to Validity}
+\label{sec:threats}
+
+\begin{description}[leftmargin=6.4em, style=nextline]
+  \item[External validity] Measurements reflect one network vantage point
+        (residential/ISP IP, India). Datacentre IPs will see strictly more
+        bot-walls; board HTML changes will break parsers until selectors
+        are updated.
+  \item[Internal validity] ``Blocked'' classification depends on marker
+        phrases that evolve with anti-bot copy. The structured
+        \code{blocked} payload mitigates but does not eliminate drift.
+  \item[Construct validity] The ATS score approximates vendor behaviour;
+        real ATS vendors publish no ground truth. Keyword coverage is a
+        proxy for match quality, damped and spread-checked to reduce
+        gaming.
+  \item[Content integrity] The reorder-only invariant holds for generated
+        sections, but the \emph{canonical} resume content
+        (\file{resume\_data.py}) is itself user-maintained source data; its
+        truthfulness is the candidate's responsibility.
+\end{description}
+
+% ============================================================================
+\section{Limitations}
+\label{sec:limitations}
+
+\begin{itemize}[leftmargin=2em]
+  \item Indeed/LinkedIn/Naukri/Glassdoor/Foundit regularly bot-wall plain
+        HTTP; Naukri effectively requires a signed-in browser session and
+        is opt-in only.
+  \item Scrapers return page one only; pagination is unimplemented.
+  \item Gmail retrieval is term-matching over a local cache, not semantic;
+        Google Careers alerts are loose matches by nature.
+  \item English-only tokenisation and stemming.
+  \item BM25 cannot match paraphrases lacking surface terms; no dense
+        fallback exists.
+  \item The Chainlit UI is single-turn per message (each message re-runs
+        with system context); the dashboard is the primary interface.
+  \item \file{mcp\_server\_gmail\_oauth\_fixed.py} is a superseded variant
+        containing a SyntaxError and is intentionally not imported.
+  \item PDF table extraction flattens pipes/tabs; glued camelCase words are
+        not repaired.
+\end{itemize}
+
+% ============================================================================
+\section{Future Work}
+\label{sec:future}
+
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{Scheduled digests:} OS-scheduler/n8n-triggered nightly
+        hunts with JSON persistence and outbound SMTP digests
+        (infrastructure hooks \code{N8N\_URL}, \code{N8N\_API\_KEY}
+        already present).
+  \item \textbf{Browser-first scraping} for the walled big-six boards, with
+        shared persistent sessions.
+  \item \textbf{Dense re-ranking} on top of BM25 for cross-document
+        semantic matching, behind the same provenance interface.
+  \item \textbf{LaTeX$\rightarrow$PDF compilation} service for one-click
+        PDF downloads.
+  \item \textbf{Multi-turn chat} with persisted history in the primary UI.
+  \item \textbf{Pagination} and more resilient card parsing (accessibility
+        trees over CSS selectors).
+  \item \textbf{Evaluation:} a controlled study comparing BM25-only vs
+        hybrid retrieval on tailoring relevance, and blind ATS-parse
+        success rates of generated vs hand-written resumes.
+\end{itemize}
+
+% ============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+JobScope demonstrates that a job-hunting agent can be both \emph{capable}
+and \emph{trustworthy} by relocating decisions from prompts into
+architecture: deterministic graph edges for fallback, shared code modules
+for filtering, reorder-only generation for resumes, and explainable scoring
+for feedback. The result is a system that runs on a laptop, degrades
+gracefully against adversarial sources, and --- most importantly ---
+produces resumes that contain nothing the candidate did not write. We hope
+the design patterns (parallel-collect/code-select, fetch-once/query-locally,
+structure-not-invention, honest-CAPTCHA) transfer to adjacent domains where
+local LLMs meet untrusted, heterogeneous data sources.
+
+% ============================================================================
+\begin{thebibliography}{9}
+
+\bibitem{robertson2009}
+S.~Robertson and H.~Zaragoza,
+\newblock ``The probabilistic relevance framework: BM25 and beyond,''
+\newblock \emph{Foundations and Trends in Information Retrieval}, vol.~3, no.~4, pp.~333--389, 2009.
+
+\bibitem{yao2023}
+S.~Yao, J.~Zhao, D.~Yu, N.~Du, I.~Shafran, K.~Narasimhan, and Y.~Cao,
+\newblock ``ReAct: Synergizing reasoning and acting in language models,''
+\newblock in \emph{Proc. ICLR}, 2023.
+
+\bibitem{lewis2020}
+P.~Lewis, E.~Perez, A.~Piktus, F.~Petroni, V.~Karpukhin, N.~Goyal,
+H.~K\"{u}ttler, M.~Lewis, W.~tau Yih, T.~Rockt\"{a}schel, S.~Riedel, and
+D.~Kiela,
+\newblock ``Retrieval-augmented generation for knowledge-intensive NLP tasks,''
+\newblock in \emph{Proc. NeurIPS}, 2020.
+
+\bibitem{langgraph}
+LangChain,
+\newblock ``LangGraph: Graph-based agent orchestration,''
+\newblock \url{https://github.com/langchain-ai/langgraph}, 2026.
+
+\bibitem{scrapling}
+A.~D. Cinturella,
+\newblock ``Scrapling: A Python library for adaptive web scraping,''
+\newblock \url{https://github.com/D4Vinci/Scrapling}, 2026.
+
+\bibitem{mcp}
+Anthropic,
+\newblock ``Model Context Protocol specification,''
+\newblock \url{https://modelcontextprotocol.io}, 2025.
+
+\bibitem{ollama}
+Ollama,
+\newblock ``Run large language models locally,''
+\newblock \url{https://ollama.ai}, 2026.
+
+\bibitem{bm25orig}
+K.~M. Jones, S.~Walker, and S.~E. Robertson,
+\newblock ``A probabilistic model of information retrieval: Development and
+comparative experiments --- parts 1 and 2,''
+\newblock \emph{Information Processing \& Management}, vol.~36, no.~6,
+pp.~779--808, 2000.
+
+\end{thebibliography}
+
+\vfill
+\begin{center}
+{\small\color{gray} End of research document.\quad JobScope --- generated \today}
+\end{center}
+
+\end{document}
