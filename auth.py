@@ -79,7 +79,8 @@ CREATE TABLE IF NOT EXISTS users (
     -- the address: an account created before these columns existed keeps
     -- working untouched (see _migrate).
     nickname      TEXT,
-    avatar        TEXT
+    avatar        TEXT,
+    role          TEXT    NOT NULL DEFAULT 'candidate'  -- 'candidate' or 'recruiter'
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -144,6 +145,236 @@ CREATE TABLE IF NOT EXISTS rag_documents (
 );
 CREATE INDEX IF NOT EXISTS idx_rag_docs_user ON rag_documents(user_id);
 
+-- Recruitment / candidate tracking (legacy)
+CREATE TABLE IF NOT EXISTS candidates (
+    id                TEXT    NOT NULL,
+    user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name              TEXT    NOT NULL,
+    current_location  TEXT,
+    expected_ctc      TEXT,
+    current_ctc       TEXT,
+    email             TEXT,
+    phone             TEXT,
+    availability      TEXT,
+    status            TEXT    NOT NULL DEFAULT 'working', -- 'working' or 'recruiter_entry'
+    notes             TEXT,
+    created_at        TEXT    NOT NULL,
+    updated_at        TEXT    NOT NULL,
+    PRIMARY KEY (user_id, id)
+);
+CREATE INDEX IF NOT EXISTS idx_candidates_user ON candidates(user_id);
+
+-- Recruiter CRM Schema
+CREATE TABLE IF NOT EXISTS companies (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    website     TEXT,
+    logo_url    TEXT,
+    industry    TEXT,
+    description TEXT,
+    location    TEXT,
+    created_at  TEXT    NOT NULL,
+    created_by  INTEGER REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS recruiter_profiles (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    company_id   INTEGER REFERENCES companies(id),
+    title        TEXT,
+    phone        TEXT,
+    created_at   TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS candidate_profiles (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id           INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    full_name         TEXT,
+    professional_title TEXT,
+    location          TEXT,
+    phone             TEXT,
+    profile_photo     TEXT,
+    professional_summary TEXT,
+    skills            TEXT,  -- JSON array
+    experience        TEXT,  -- JSON array
+    education         TEXT,  -- JSON array
+    certifications    TEXT,  -- JSON array
+    projects          TEXT,  -- JSON array
+    portfolio_links   TEXT,  -- JSON array
+    availability      TEXT,
+    profile_completeness INTEGER DEFAULT 0,
+    updated_at        TEXT
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id        INTEGER REFERENCES companies(id),
+    recruiter_id      INTEGER REFERENCES users(id),
+    title             TEXT    NOT NULL,
+    department        TEXT,
+    description       TEXT    NOT NULL,
+    required_skills   TEXT,  -- JSON array
+    preferred_skills  TEXT,  -- JSON array
+    min_experience    INTEGER,
+    max_experience    INTEGER,
+    education_req     TEXT,
+    employment_type   TEXT,  -- full-time, part-time, contract, internship
+    work_mode         TEXT,  -- remote, hybrid, onsite
+    location          TEXT,
+    salary_min        INTEGER,
+    salary_max        INTEGER,
+    currency          TEXT DEFAULT 'INR',
+    openings          INTEGER DEFAULT 1,
+    application_deadline TEXT,
+    status            TEXT    NOT NULL DEFAULT 'draft', -- draft, published, paused, closed
+    created_at        TEXT    NOT NULL,
+    updated_at        TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+
+CREATE TABLE IF NOT EXISTS applications (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id            INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    candidate_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    candidate_profile_id INTEGER REFERENCES candidate_profiles(id),
+    resume_id         TEXT,
+    status            TEXT    NOT NULL DEFAULT 'applied', -- applied, ai_screening, recruiter_review, shortlisted, interview_scheduled, interview_completed, technical_round, hr_round, offer_released, offer_accepted, hired, rejected, withdrawn, on_hold, offer_declined
+    cover_letter      TEXT,
+    applied_at        TEXT    NOT NULL,
+    updated_at        TEXT    NOT NULL,
+    UNIQUE(job_id, candidate_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(job_id);
+CREATE INDEX IF NOT EXISTS idx_applications_candidate ON applications(candidate_user_id);
+
+CREATE TABLE IF NOT EXISTS talent_pools (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id  INTEGER REFERENCES companies(id),
+    recruiter_id INTEGER REFERENCES users(id),
+    name        TEXT    NOT NULL,
+    description TEXT,
+    created_at  TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS talent_pool_members (
+    pool_id     INTEGER NOT NULL REFERENCES talent_pools(id) ON DELETE CASCADE,
+    candidate_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    added_at    TEXT    NOT NULL,
+    added_by    INTEGER REFERENCES users(id),
+    PRIMARY KEY (pool_id, candidate_user_id)
+);
+
+CREATE TABLE IF NOT EXISTS interviews (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id    INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    job_id            INTEGER REFERENCES jobs(id),
+    candidate_user_id INTEGER REFERENCES users(id),
+    recruiter_id      INTEGER REFERENCES users(id),
+    interview_type    TEXT    NOT NULL, -- phone_screening, technical_interview, hr_interview, managerial_interview, final_interview
+    scheduled_at      TEXT    NOT NULL,
+    duration_minutes  INTEGER DEFAULT 60,
+    meeting_link      TEXT,
+    location          TEXT,
+    instructions      TEXT,
+    status            TEXT    NOT NULL DEFAULT 'scheduled', -- scheduled, rescheduled, completed, cancelled, no_show
+    created_at        TEXT    NOT NULL,
+    updated_at        TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS interview_feedback (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    interview_id      INTEGER NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+    interviewer_id    INTEGER REFERENCES users(id),
+    rating            INTEGER,
+    technical_score   INTEGER,
+    communication_score INTEGER,
+    overall_score     INTEGER,
+    strengths         TEXT,
+    improvements     TEXT,
+    comments          TEXT,
+    recommendation    TEXT, -- hire, maybe, no
+    created_at        TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS offers (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id    INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    job_id            INTEGER REFERENCES jobs(id),
+    candidate_user_id INTEGER REFERENCES users(id),
+    offered_by        INTEGER REFERENCES users(id),
+    salary            INTEGER,
+    currency          TEXT DEFAULT 'INR',
+    offer_letter      TEXT,
+    benefits          TEXT,
+    start_date        TEXT,
+    expiry_date       TEXT,
+    status            TEXT    NOT NULL DEFAULT 'draft', -- draft, released, accepted, declined, withdrawn
+    created_at        TEXT    NOT NULL,
+    updated_at        TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS recruiter_notes (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    recruiter_id      INTEGER NOT NULL REFERENCES users(id),
+    candidate_user_id INTEGER NOT NULL REFERENCES users(id),
+    application_id    INTEGER REFERENCES applications(id),
+    note              TEXT    NOT NULL,
+    is_private        INTEGER NOT NULL DEFAULT 1,
+    created_at        TEXT    NOT NULL,
+    updated_at        TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS communications (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    recruiter_id      INTEGER REFERENCES users(id),
+    candidate_user_id INTEGER REFERENCES users(id),
+    application_id    INTEGER REFERENCES applications(id),
+    type              TEXT    NOT NULL, -- email, message, call
+    subject           TEXT,
+    message           TEXT    NOT NULL,
+    direction         TEXT    NOT NULL, -- outbound, inbound
+    created_at        TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS activities (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id           INTEGER REFERENCES users(id),
+    company_id        INTEGER REFERENCES companies(id),
+    type              TEXT    NOT NULL,
+    description       TEXT    NOT NULL,
+    entity_type       TEXT,
+    entity_id         INTEGER,
+    metadata          TEXT, -- JSON
+    created_at        TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    recruiter_id      INTEGER NOT NULL REFERENCES users(id),
+    company_id        INTEGER REFERENCES companies(id),
+    title             TEXT    NOT NULL,
+    description       TEXT,
+    due_date          TEXT,
+    status            TEXT    NOT NULL DEFAULT 'pending', -- pending, in_progress, completed, cancelled
+    priority          TEXT    DEFAULT 'medium', -- low, medium, high
+    related_to_type   TEXT,
+    related_to_id     INTEGER,
+    created_at        TEXT    NOT NULL,
+    updated_at        TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id           INTEGER NOT NULL REFERENCES users(id),
+    type              TEXT    NOT NULL,
+    title             TEXT    NOT NULL,
+    message           TEXT    NOT NULL,
+    link              TEXT,
+    is_read           INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT    NOT NULL
+);
+
 -- Full posting text, keyed by URL, fetched in the background so the first render
 -- does not wait on a browser.
 --
@@ -189,10 +420,31 @@ def _migrate(conn: sqlite3.Connection) -> None:
     """
     for table, column, decl in (("users", "nickname", "TEXT"),
                                 ("users", "avatar", "TEXT"),
+                                ("users", "role", "TEXT NOT NULL DEFAULT 'candidate'"),
                                 ("sessions", "last_seen", "REAL NOT NULL DEFAULT 0")):
         have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in have:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    # Ensure candidates table exists
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS candidates (
+            id                TEXT    NOT NULL,
+            user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name              TEXT    NOT NULL,
+            current_location  TEXT,
+            expected_ctc      TEXT,
+            current_ctc       TEXT,
+            email             TEXT,
+            phone             TEXT,
+            availability      TEXT,
+            status            TEXT    NOT NULL DEFAULT 'working',
+            notes             TEXT,
+            created_at        TEXT    NOT NULL,
+            updated_at        TEXT    NOT NULL,
+            PRIMARY KEY (user_id, id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_candidates_user ON candidates(user_id)")
 
 
 def init_db() -> None:
@@ -291,13 +543,14 @@ def _looks_like_email(email: str) -> bool:
     return " " not in domain
 
 
-def create_user(email: str, password: str, owner: bool = False) -> dict:
+def create_user(email: str, password: str, owner: bool = False, role: str = "candidate") -> dict:
     """Create an account and give it one empty default profile.
 
     Raises ValueError on a duplicate address or a bad password. The first
     account created becomes the owner, which is how the pre-existing CV
     sessions get claimed.
     """
+    role = role if role in ("candidate", "recruiter", "super_admin") else "candidate"
     email = normalize_email(email)
     if not _looks_like_email(email):
         raise ValueError("that does not look like an email address")
@@ -306,9 +559,9 @@ def create_user(email: str, password: str, owner: bool = False) -> dict:
     with connect() as conn:
         try:
             cur = conn.execute(
-                "INSERT INTO users (email, password_hash, created_at, is_owner) "
-                "VALUES (?, ?, ?, ?)",
-                (email, pwd_hash, now, 1 if owner else 0))
+                "INSERT INTO users (email, password_hash, created_at, is_owner, role) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (email, pwd_hash, now, 1 if owner else 0, role))
         except sqlite3.IntegrityError:
             raise ValueError("an account with that email already exists")
         uid = cur.lastrowid
@@ -339,6 +592,187 @@ def get_user_by_email(email: str) -> dict | None:
         row = conn.execute("SELECT * FROM users WHERE email = ? COLLATE NOCASE",
                            (normalize_email(email),)).fetchone()
     return dict(row) if row else None
+
+
+def delete_user(uid: int) -> bool:
+    """Delete an account and the rows that point at it.
+
+    Most tables cascade from users(), but the recruitment tables reference a
+    user without ON DELETE CASCADE. With foreign_keys=ON, deleting the users row
+    alone fails on the first such row, so the owned rows are removed first and
+    leaves come before their parents (notes/communications before the
+    applications they mention, applications before jobs).
+    """
+    own_apps = ("SELECT id FROM applications WHERE candidate_user_id = ? "
+                "OR job_id IN (SELECT id FROM jobs WHERE recruiter_id = ?)")
+    with connect() as conn:
+        conn.execute("DELETE FROM interview_feedback WHERE interviewer_id = ?", (uid,))
+        conn.execute("DELETE FROM interviews WHERE candidate_user_id = ? OR recruiter_id = ?",
+                     (uid, uid))
+        conn.execute("DELETE FROM offers WHERE candidate_user_id = ? OR offered_by = ?",
+                     (uid, uid))
+        conn.execute(f"DELETE FROM recruiter_notes WHERE recruiter_id = ? "
+                     f"OR candidate_user_id = ? OR application_id IN ({own_apps})",
+                     (uid, uid, uid, uid))
+        conn.execute(f"DELETE FROM communications WHERE recruiter_id = ? "
+                     f"OR candidate_user_id = ? OR application_id IN ({own_apps})",
+                     (uid, uid, uid, uid))
+        conn.execute(f"DELETE FROM applications WHERE id IN ({own_apps})", (uid, uid))
+        conn.execute("DELETE FROM talent_pool_members WHERE candidate_user_id = ? "
+                     "OR added_by = ?", (uid, uid))
+        conn.execute("DELETE FROM talent_pools WHERE recruiter_id = ?", (uid,))
+        conn.execute("DELETE FROM tasks WHERE recruiter_id = ?", (uid,))
+        conn.execute("DELETE FROM notifications WHERE user_id = ?", (uid,))
+        conn.execute("DELETE FROM activities WHERE user_id = ?", (uid,))
+        conn.execute("DELETE FROM jobs WHERE recruiter_id = ?", (uid,))
+        # companies.created_by is nullable and a company outlives its creator
+        conn.execute("UPDATE companies SET created_by = NULL WHERE created_by = ?", (uid,))
+        cur = conn.execute("DELETE FROM users WHERE id = ?", (uid,))
+        return cur.rowcount > 0
+
+
+# --------------------------------------------------------------------------
+# candidates (recruitment)
+# --------------------------------------------------------------------------
+
+
+def list_candidates(user_id: int, status: str | None = None) -> list[dict]:
+    with connect() as conn:
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM candidates WHERE user_id = ? AND status = ? ORDER BY created_at DESC",
+                (user_id, status)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM candidates WHERE user_id = ? ORDER BY created_at DESC",
+                (user_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def upsert_candidate(user_id: int, cand: dict) -> dict:
+    cand_id = cand.get("id") or secrets.token_urlsafe(12)
+    now = _now()
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO candidates (id, user_id, name, current_location, expected_ctc, current_ctc, email, phone, availability, status, notes, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(user_id, id) DO UPDATE SET
+                 name=excluded.name, current_location=excluded.current_location, expected_ctc=excluded.expected_ctc, current_ctc=excluded.current_ctc,
+                 email=excluded.email, phone=excluded.phone, availability=excluded.availability, status=excluded.status, notes=excluded.notes, updated_at=excluded.updated_at""",
+            (cand_id, user_id, cand.get("name") or "", cand.get("current_location") or "", cand.get("expected_ctc") or "",
+             cand.get("current_ctc") or "", cand.get("email") or "", cand.get("phone") or "", cand.get("availability") or "",
+             cand.get("status") or "working", cand.get("notes") or "", now, now))
+        row = conn.execute("SELECT * FROM candidates WHERE user_id = ? AND id = ?", (user_id, cand_id)).fetchone()
+    return dict(row) if row else {"id": cand_id}
+
+
+def delete_candidate(user_id: int, cand_id: str) -> bool:
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM candidates WHERE user_id = ? AND id = ?", (user_id, cand_id))
+        return cur.rowcount > 0
+
+
+# Recruiter CRM helpers
+def create_company(name: str, created_by: int = None, **kwargs) -> dict:
+    now = _now()
+    with connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO companies (name, website, logo_url, industry, description, location, created_at, created_by) VALUES (?,?,?,?,?,?,?,?)",
+            (name, kwargs.get('website'), kwargs.get('logo_url'), kwargs.get('industry'), kwargs.get('description'), kwargs.get('location'), now, created_by))
+        cid = cur.lastrowid
+        row = conn.execute("SELECT * FROM companies WHERE id = ?", (cid,)).fetchone()
+    return dict(row) if row else {"id": cid}
+
+
+def get_company(cid: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM companies WHERE id = ?", (cid,)).fetchone()
+    return dict(row) if row else None
+
+
+def create_recruiter_profile(user_id: int, company_id: int = None, **kwargs) -> dict:
+    now = _now()
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO recruiter_profiles (user_id, company_id, title, phone, created_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET company_id=excluded.company_id, title=excluded.title, phone=excluded.phone""",
+            (user_id, company_id, kwargs.get('title'), kwargs.get('phone'), now))
+        row = conn.execute("SELECT * FROM recruiter_profiles WHERE user_id = ?", (user_id,)).fetchone()
+    return dict(row) if row else {}
+
+
+def get_recruiter_profile(user_id: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM recruiter_profiles WHERE user_id = ?", (user_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def create_job(company_id: int, recruiter_id: int, data: dict) -> dict:
+    now = _now()
+    with connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO jobs (company_id, recruiter_id, title, department, description, required_skills, preferred_skills,
+               min_experience, max_experience, education_req, employment_type, work_mode, location, salary_min, salary_max,
+               currency, openings, application_deadline, status, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?, ?)""",
+            (company_id, recruiter_id, data.get('title'), data.get('department'), data.get('description'),
+             json.dumps(data.get('required_skills') or []), json.dumps(data.get('preferred_skills') or []),
+             data.get('min_experience'), data.get('max_experience'), data.get('education_req'),
+             data.get('employment_type'), data.get('work_mode'), data.get('location'),
+             data.get('salary_min'), data.get('salary_max'), data.get('currency','INR'),
+             data.get('openings',1), data.get('application_deadline'), data.get('status','draft'), now, now))
+        jid = cur.lastrowid
+        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (jid,)).fetchone()
+    return dict(row) if row else {"id": jid}
+
+
+def list_jobs(company_id: int = None, status: str = None) -> list[dict]:
+    with connect() as conn:
+        if company_id and status:
+            rows = conn.execute("SELECT * FROM jobs WHERE company_id = ? AND status = ? ORDER BY created_at DESC", (company_id, status)).fetchall()
+        elif company_id:
+            rows = conn.execute("SELECT * FROM jobs WHERE company_id = ? ORDER BY created_at DESC", (company_id,)).fetchall()
+        elif status:
+            rows = conn.execute("SELECT * FROM jobs WHERE status = ? ORDER BY created_at DESC", (status,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def apply_to_job(job_id: int, candidate_user_id: int, resume_id: str = None, cover_letter: str = None) -> dict:
+    now = _now()
+    with connect() as conn:
+        try:
+            cur = conn.execute(
+                "INSERT INTO applications (job_id, candidate_user_id, resume_id, cover_letter, status, applied_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                (job_id, candidate_user_id, resume_id, cover_letter, 'applied', now, now))
+            aid = cur.lastrowid
+        except Exception:
+            row = conn.execute("SELECT * FROM applications WHERE job_id = ? AND candidate_user_id = ?", (job_id, candidate_user_id)).fetchone()
+            return dict(row) if row else {}
+        row = conn.execute("SELECT * FROM applications WHERE id = ?", (aid,)).fetchone()
+    return dict(row) if row else {"id": aid}
+
+
+def list_applications(job_id: int = None, candidate_user_id: int = None) -> list[dict]:
+    with connect() as conn:
+        if job_id and candidate_user_id:
+            rows = conn.execute("SELECT * FROM applications WHERE job_id = ? AND candidate_user_id = ?", (job_id, candidate_user_id)).fetchall()
+        elif job_id:
+            rows = conn.execute("SELECT * FROM applications WHERE job_id = ? ORDER BY applied_at DESC", (job_id,)).fetchall()
+        elif candidate_user_id:
+            rows = conn.execute("SELECT * FROM applications WHERE candidate_user_id = ? ORDER BY applied_at DESC", (candidate_user_id,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM applications ORDER BY applied_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_application_status(application_id: int, status: str) -> bool:
+    now = _now()
+    with connect() as conn:
+        cur = conn.execute("UPDATE applications SET status = ?, updated_at = ? WHERE id = ?", (status, now, application_id))
+        return cur.rowcount > 0
 
 
 def owner_user() -> dict | None:
@@ -465,7 +899,7 @@ def session_row(token: str) -> dict | None:
         return None
     with connect() as conn:
         row = conn.execute(
-            "SELECT s.*, u.email, u.nickname, u.avatar, u.verified_at, u.is_owner "
+            "SELECT s.*, u.email, u.nickname, u.avatar, u.verified_at, u.is_owner, u.role "
             "FROM sessions s JOIN users u ON u.id = s.user_id "
             "WHERE s.token_hash = ?",
             (_token_hash(token),)).fetchone()
@@ -701,4 +1135,72 @@ def delete_profile(uid: int, profile_id: str) -> bool:
     with connect() as conn:
         cur = conn.execute("DELETE FROM profiles WHERE user_id = ? AND id = ? "
                            "AND is_default = 0", (uid, profile_id))
+    return cur.rowcount > 0
+
+
+# --------------------------------------------------------------------------
+# candidates (recruitment tracking)
+# --------------------------------------------------------------------------
+
+
+def list_candidates(uid: int, status: str | None = None) -> list[dict]:
+    with connect() as conn:
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM candidates WHERE user_id = ? AND status = ? "
+                "ORDER BY created_at DESC",
+                (uid, status)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM candidates WHERE user_id = ? "
+                "ORDER BY created_at DESC",
+                (uid,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_candidate(uid: int, candidate_id: str) -> dict | None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM candidates WHERE user_id = ? AND id = ?",
+            (uid, candidate_id)).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_candidate(uid: int, candidate_id: str | None = None,
+                     name: str = "", current_location: str = "",
+                     expected_ctc: str = "", current_ctc: str = "",
+                     email: str = "", phone: str = "",
+                     availability: str = "", status: str = "working",
+                     notes: str = "") -> str:
+    cid = candidate_id or secrets.token_hex(6)
+    now = _now()
+    if candidate_id:
+        existing = get_candidate(uid, candidate_id)
+        created_at = existing["created_at"] if existing else now
+    else:
+        created_at = now
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO candidates (id, user_id, name, current_location, "
+            "expected_ctc, current_ctc, email, phone, availability, status, "
+            "notes, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(user_id, id) DO UPDATE SET "
+            "name=excluded.name, current_location=excluded.current_location, "
+            "expected_ctc=excluded.expected_ctc, current_ctc=excluded.current_ctc, "
+            "email=excluded.email, phone=excluded.phone, "
+            "availability=excluded.availability, status=excluded.status, "
+            "notes=excluded.notes, updated_at=excluded.updated_at",
+            (cid, uid, name.strip(), current_location.strip() or None,
+             expected_ctc.strip() or None, current_ctc.strip() or None,
+             email.strip() or None, phone.strip() or None,
+             availability.strip() or None, status or "working",
+             notes.strip() or None, created_at, now))
+    return cid
+
+
+def delete_candidate(uid: int, candidate_id: str) -> bool:
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM candidates WHERE user_id = ? AND id = ?",
+                           (uid, candidate_id))
     return cur.rowcount > 0

@@ -1,0 +1,218 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Recruiter Sign In</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one centered card; tabs switch Sign in / Create account, secondary views replace the card body. */
+:root {
+  --bg: #f1f4f6; --surface: #ffffff; --fg: #13202b; --muted: #566877; --line: #d6dee5;
+  --accent: #0b7a78; --accent-fg: #ffffff; --accent-soft: #dff1f0;
+  --good: #1d7a45; --warn: #9a5b00; --warn-soft: #fbeccf; --bad: #b3261e;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d151b; --surface: #16222b; --fg: #e7eef3; --muted: #93a5b3; --line: #263743;
+    --accent: #4cc2bd; --accent-fg: #07201f; --accent-soft: #14393a;
+    --good: #6fd39a; --warn: #f0b95a; --warn-soft: #3b2c10; --bad: #ff8a80;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d151b; --surface: #16222b; --fg: #e7eef3; --muted: #93a5b3; --line: #263743;
+  --accent: #4cc2bd; --accent-fg: #07201f; --accent-soft: #14393a;
+  --good: #6fd39a; --warn: #f0b95a; --warn-soft: #3b2c10; --bad: #ff8a80;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font: 15px/1.5 var(--font-body);
+  padding-block: 40px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.card { max-width: 420px; margin: 0 auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 24px; display: grid; gap: 16px; }
+.brand { font: 700 1.3rem var(--font-display); margin: 0; letter-spacing: -0.01em; }
+.proto { margin: 0; font-size: 0.8rem; background: var(--warn-soft); color: var(--warn); border-radius: 6px; padding: 8px 10px; }
+.tabs { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--line); }
+.tabs button { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 4px; color: var(--muted); font-weight: 600; margin-bottom: -1px; }
+.tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+h1 { font: 600 1.2rem var(--font-display); margin: 0; }
+p.hint { margin: 0; color: var(--muted); font-size: 0.9rem; }
+form { display: grid; gap: 14px; }
+label { display: grid; gap: 4px; font-size: 0.82rem; font-weight: 500; color: var(--muted); min-width: 0; }
+input, button { font: inherit; color: inherit; }
+input:not([type="checkbox"]) { width: 100%; min-width: 0; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; font-size: 0.95rem; }
+input[aria-invalid="true"] { border-color: var(--bad); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pw { position: relative; display: grid; }
+.pw input { padding-right: 64px !important; }
+.pw .show { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: 0; color: var(--accent); font-size: 0.8rem; font-weight: 600; padding: 6px 8px; cursor: pointer; }
+.err { color: var(--bad); font-size: 0.8rem; min-height: 0; }
+.err:empty { display: none; }
+button.primary { background: var(--accent); color: var(--accent-fg); border: 1px solid var(--accent); border-radius: 6px; padding: 10px 14px; font-weight: 600; cursor: pointer; }
+button.ghost { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 9px 14px; font-weight: 500; cursor: pointer; }
+button.ghost:hover { border-color: var(--accent); }
+button.link { background: none; border: 0; padding: 0; color: var(--accent); font-size: 0.85rem; cursor: pointer; text-decoration: underline; justify-self: start; }
+.row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.meter { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: var(--bad); transition: width 0.15s; }
+.meter-note { font-size: 0.78rem; color: var(--muted); }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 0.85rem; color: var(--fg); font-weight: 400; }
+.check input { margin-top: 3px; }
+.divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 0.8rem; }
+.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.social { display: grid; gap: 8px; }
+#note { margin: 0; font-size: 0.85rem; color: var(--good); }
+#note.bad { color: var(--bad); }
+#otp-code { letter-spacing: 0.4em; text-align: center; font-size: 1.3rem; font-variant-numeric: tabular-nums; }
+</style>
+
+<main class="card">
+  <p class="brand">Recruiter Registry</p>
+  <p class="proto">Prototype: forms are checked in your browser. Nothing is sent, stored or verified, and no email or code is really delivered.</p>
+
+  <div class="tabs" id="tabs" role="tablist">
+    <button type="button" role="tab" id="tab-in" aria-selected="true">Sign in</button>
+    <button type="button" role="tab" id="tab-up" aria-selected="false">Create account</button>
+  </div>
+
+  <form id="in" novalidate>
+    <label>Work email<input id="in-email" type="email" autocomplete="username" inputmode="email"><span class="err" id="e-in-email"></span></label>
+    <label>Password
+      <span class="pw"><input id="in-pw" type="password" autocomplete="current-password"><button type="button" class="show" aria-label="Show password">Show</button></span>
+      <span class="err" id="e-in-pw"></span>
+    </label>
+    <div class="row"><button type="button" class="link" id="toForgot">Forgot password?</button></div>
+    <button class="primary" type="submit">Sign in</button>
+  </form>
+
+  <form id="up" novalidate hidden>
+    <label>Full name<input id="up-name" autocomplete="name"><span class="err" id="e-up-name"></span></label>
+    <label>Work email<input id="up-email" type="email" autocomplete="email" inputmode="email"><span class="err" id="e-up-email"></span></label>
+    <label>Password
+      <span class="pw"><input id="up-pw" type="password" autocomplete="new-password"><button type="button" class="show" aria-label="Show password">Show</button></span>
+      <span class="meter" aria-hidden="true"><i id="meter"></i></span>
+      <span class="meter-note" id="meterNote">At least 10 characters with upper and lower case, a number and a symbol.</span>
+      <span class="err" id="e-up-pw"></span>
+    </label>
+    <label>Confirm password
+      <span class="pw"><input id="up-pw2" type="password" autocomplete="new-password"><button type="button" class="show" aria-label="Show password">Show</button></span>
+      <span class="err" id="e-up-pw2"></span>
+    </label>
+    <label class="check"><input id="up-terms" type="checkbox"><span>I agree to the terms and privacy policy.</span></label>
+    <span class="err" id="e-up-terms"></span>
+    <button class="primary" type="submit">Create account</button>
+  </form>
+
+  <form id="forgot" novalidate hidden>
+    <h1>Reset your password</h1>
+    <p class="hint">Enter your work email and we would send a reset link.</p>
+    <label>Work email<input id="fg-email" type="email" autocomplete="email" inputmode="email"><span class="err" id="e-fg-email"></span></label>
+    <button class="primary" type="submit">Send reset link</button>
+    <button type="button" class="link" data-go="in">Back to sign in</button>
+  </form>
+
+  <form id="otp" novalidate hidden>
+    <h1>Two-step verification</h1>
+    <p class="hint" id="otpHint">Enter the 6-digit code.</p>
+    <label>Verification code<input id="otp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="······"><span class="err" id="e-otp-code"></span></label>
+    <button class="primary" type="submit">Verify</button>
+    <button type="button" class="link" data-go="in">Cancel</button>
+  </form>
+
+  <section id="done" hidden>
+    <h1>You are signed in</h1>
+    <p class="hint" id="doneHint"></p>
+    <p></p>
+    <button class="ghost" type="button" data-go="in">Sign out</button>
+  </section>
+
+  <div id="alt">
+    <div class="divider">or continue with</div>
+    <div class="social" style="margin-top:12px">
+      <button class="ghost" type="button" data-provider="Google">Google</button>
+      <button class="ghost" type="button" data-provider="GitHub">GitHub</button>
+      <button class="ghost" type="button" data-provider="LinkedIn">LinkedIn</button>
+    </div>
+  </div>
+  <p id="note" role="status" aria-live="polite"></p>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const VIEWS = ["in", "up", "forgot", "otp", "done"];
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+let who = "";
+
+function note(t, bad) { const n = $("note"); n.textContent = t || ""; n.className = bad ? "bad" : ""; }
+function err(id, t) { $(id).setAttribute("aria-invalid", t ? "true" : "false"); $("e-" + id).textContent = t || ""; return !t; }
+function show(v) {
+  VIEWS.forEach((x) => ($(x).hidden = x !== v));
+  const tabbed = v === "in" || v === "up";
+  $("tabs").hidden = !tabbed; $("alt").hidden = !tabbed;
+  $("tab-in").setAttribute("aria-selected", v === "in");
+  $("tab-up").setAttribute("aria-selected", v === "up");
+  document.querySelectorAll(".err").forEach((e) => (e.textContent = ""));
+  note("");
+  const first = $(v).querySelector("input:not([type=checkbox])");
+  if (first) first.focus();
+}
+const okEmail = (id) => { const v = $(id).value.trim(); return err(id, !v ? "Enter your email." : !EMAIL.test(v) ? "Enter a valid email like name@company.com." : ""); };
+const pwScore = (v) => [v.length >= 10, /[a-z]/.test(v) && /[A-Z]/.test(v), /\d/.test(v), /[^A-Za-z0-9]/.test(v)].filter(Boolean).length;
+
+document.querySelectorAll(".pw .show").forEach((b) => b.addEventListener("click", () => {
+  const i = b.previousElementSibling, hide = i.type === "text";
+  i.type = hide ? "password" : "text"; b.textContent = hide ? "Show" : "Hide";
+  b.setAttribute("aria-label", hide ? "Show password" : "Hide password");
+}));
+$("up-pw").addEventListener("input", (e) => {
+  const s = pwScore(e.target.value), m = $("meter");
+  m.style.width = (e.target.value ? Math.max(s, 1) * 25 : 0) + "%";
+  m.style.background = s >= 4 ? "var(--good)" : s >= 3 ? "var(--warn)" : "var(--bad)";
+  $("meterNote").textContent = e.target.value ? ["", "Weak", "Weak", "Fair", "Strong"][s] || "Weak" : "At least 10 characters with upper and lower case, a number and a symbol.";
+});
+$("otp-code").addEventListener("input", (e) => (e.target.value = e.target.value.replace(/\D/g, "")));
+$("tab-in").onclick = () => show("in");
+$("tab-up").onclick = () => show("up");
+$("toForgot").onclick = () => show("forgot");
+document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => show(b.dataset.go)));
+document.querySelectorAll("[data-provider]").forEach((b) => b.addEventListener("click", () =>
+  note(b.dataset.provider + " sign-in needs a server to complete OAuth. It is not connected in this prototype.", true)));
+
+function toOtp(email, why) {
+  who = email; show("otp");
+  $("otpHint").textContent = why + " " + email + ". In this prototype any 6 digits pass.";
+}
+$("in").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const a = okEmail("in-email"), b = err("in-pw", $("in-pw").value ? "" : "Enter your password.");
+  if (a && b) toOtp($("in-email").value.trim(), "A code would be sent to");
+});
+$("up").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const pw = $("up-pw").value;
+  const r = [
+    err("up-name", $("up-name").value.trim() ? "" : "Enter your name."),
+    okEmail("up-email"),
+    err("up-pw", pwScore(pw) === 4 ? "" : "Use 10+ characters with upper and lower case, a number and a symbol."),
+    err("up-pw2", $("up-pw2").value === pw && pw ? "" : "Passwords do not match."),
+    ($("e-up-terms").textContent = $("up-terms").checked ? "" : "Accept the terms to continue.") === "",
+  ];
+  if (r.every(Boolean)) toOtp($("up-email").value.trim(), "Confirm your email with the code sent to");
+});
+$("forgot").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (okEmail("fg-email")) note("If an account exists for " + $("fg-email").value.trim() + ", a reset link would be sent. Nothing was sent in this prototype.");
+});
+$("otp").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (err("otp-code", /^\d{6}$/.test($("otp-code").value) ? "" : "Enter all 6 digits.")) {
+    show("done"); $("doneHint").textContent = "Signed in as " + who + " (prototype session).";
+  }
+});
+show("in");
+</script>
+
+</body></html>

@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JobScope</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <link rel="apple-touch-icon" href="/static/favicon.svg">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%234f46e5'/><text x='18' y='70' font-size='56' fill='white' font-family='sans-serif' font-weight='bold'>J</text></svg>">
@@ -1068,6 +1068,208 @@ main.chat::-webkit-scrollbar, .rbody::-webkit-scrollbar, .slist::-webkit-scrollb
 .dbody::-webkit-scrollbar, .menu::-webkit-scrollbar, .roledd-list::-webkit-scrollbar,
 .toolcard pre::-webkit-scrollbar, .ocrbox pre::-webkit-scrollbar,
 .gate::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+/* ===== redesign layer ===== */
+:root{
+  --bg:#f3f2fc; --surface:#ffffff; --surface-2:#ecebf8; --text:#14123a; --muted:#5b5889; --border:#d8d6ee;
+  --accent:#4f46e5; --accent-2:#4f46e5; --accent-soft:#e4e1ff;
+  --ok:#0f8a5f; --warn:#b7791f; --danger:#c92a2a; --signal:#8f7fff;
+  --shadow:none; --radius:12px;
+  --font-display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+}
+[data-theme="dark"]{
+  --bg:#0b0a1f; --surface:#14122e; --surface-2:#0f0d26; --text:#eceafc; --muted:#9a97c4; --border:#2a2756;
+  --accent:#8f7fff; --accent-2:#8f7fff; --accent-soft:#231f4f;
+  --ok:#3ccf91; --warn:#e5b04d; --danger:#ff7b7b; --shadow:none;
+}
+body{font-family:"Figtree","Segoe UI",system-ui,sans-serif}
+/* calm the background: no drifting blobs */
+body::before,body::after{display:none}
+:focus-visible{outline:3px solid var(--signal);outline-offset:2px}
+
+/* brand: reticle mark instead of a gradient square */
+.brand,.gatetop .brand{font-family:var(--font-display);font-weight:700;letter-spacing:-.01em}
+.brand .dot{width:20px;height:20px;border-radius:50%;border:2px solid currentColor;position:relative;
+  background:radial-gradient(circle,var(--signal) 0 3px,transparent 3.5px);box-shadow:none;animation:none}
+.brand .dot::before,.brand .dot::after{content:"";position:absolute;background:currentColor}
+.brand .dot::before{left:50%;top:-5px;bottom:-5px;width:2px;transform:translateX(-50%)}
+.brand .dot::after{top:50%;left:-5px;right:-5px;height:2px;transform:translateY(-50%)}
+
+/* flat, solid controls (no gradients, no tilt on hover) */
+.iconbtn{border-radius:7px;font-weight:500}
+.iconbtn:hover{transform:none;box-shadow:none;background:var(--accent-soft)}
+.btnglow,.sendbtn,.msg.user .bubble,#gSubmit,#gResetSubmit,.btn.primary{background:var(--accent);box-shadow:none;color:#fff}
+[data-theme="dark"] .btnglow,[data-theme="dark"] .sendbtn,[data-theme="dark"] .msg.user .bubble,
+[data-theme="dark"] #gSubmit,[data-theme="dark"] #gResetSubmit,[data-theme="dark"] .btn.primary{color:#0b0a1f}
+.btnglow::after,.sendbtn::after,#gSubmit::after,#gResetSubmit::after{display:none}
+.btnglow:hover,.sendbtn:not(:disabled):hover,#gSubmit:hover:not(:disabled),#gResetSubmit:hover:not(:disabled){transform:none;box-shadow:none;filter:brightness(1.08)}
+.btnglow.ghost{background:var(--surface-2);color:var(--text)}
+.brand .dot,.chip,.status{box-shadow:none}
+
+/* top bar */
+header{padding:14px 2px 12px;border-bottom:1px solid var(--border)}
+.status{border-radius:7px}
+
+/* pipeline: a flat strip, the one place the reticle colour (signal) shows up */
+.circuit{border-radius:var(--radius);box-shadow:none;background:var(--surface)}
+.node .pill{border-radius:50%;box-shadow:none}
+.node .pill:hover,.node:focus-within .pill{transform:none;box-shadow:none;border-color:var(--accent)}
+.node.live .pill{border-color:var(--signal);background:color-mix(in srgb,var(--signal) 22%,transparent);color:var(--text);transform:none;box-shadow:none}
+.node.live .pill::after{border-color:var(--signal);border-radius:50%}
+.node.live .lbl{color:var(--text)}
+.pline.on{stroke:var(--signal)}
+
+/* chat */
+.msg.assistant .bubble{box-shadow:none;border-radius:12px 12px 12px 3px}
+.msg.user .bubble{border-radius:12px 12px 3px 12px}
+.msg.assistant .av{background:var(--accent-soft);color:var(--accent)}
+.msg.user .av{background:var(--text);color:var(--bg)}
+.toolcard{border-radius:10px}
+.composer{box-shadow:none;border-radius:12px}
+.composer:focus-within{border-color:var(--accent)}
+.starter{border-style:solid;border-radius:7px}
+.starter:hover{transform:none;box-shadow:none;background:var(--accent-soft)}
+
+/* job cards: flat, sharper, the job title leads */
+.card{box-shadow:none;border-radius:14px;border:1px solid var(--border)}
+.card.show:hover{transform:none;box-shadow:none;border-color:var(--accent)}
+.card h3{font-family:var(--font-display);font-size:19px;letter-spacing:-.01em}
+.card .tag{border-radius:6px}
+.card .tag.sal{background:color-mix(in srgb,var(--ok) 14%,transparent)}
+.dots i.on{background:var(--signal)}
+
+/* drawers, sidebar, modals */
+.drawer,.sidebar{box-shadow:none}
+.drawer .dhead h2,.shead h2,.rmodal .rhead h2{font-family:var(--font-display);font-size:18px}
+.rmodal .wrap{border-radius:16px;box-shadow:none}
+.srow.on{box-shadow:inset 3px 0 0 var(--signal)}
+
+/* sign-in gate: quiet backdrop, flat card, signal-yellow ring on the mark */
+.gate{background:#14123a}
+.gate::before{background:radial-gradient(520px at 20% 15%,rgba(56,214,245,.16),transparent 62%),radial-gradient(480px at 85% 85%,rgba(143,127,255,.10),transparent 62%);animation:none}
+.gate::after{opacity:.25}
+.gatecard{background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none;border-radius:18px;box-shadow:none;border:1px solid var(--border)}
+.gatecard::before{display:none}
+.gatemark .core{background:var(--signal);color:#14123a;box-shadow:none}
+.gatemark .ring{background:conic-gradient(from 0deg,transparent 0 30%,var(--signal) 55%,transparent 80%)}
+.gatefeats,.gateticker span{color:#a5a2cc}
+.gateform input:focus{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
+.portal-toggle-slider{background:var(--accent)!important}
+.portal-toggle-btn.active{color:#fff!important}
+[data-theme="dark"] .portal-toggle-btn.active{color:#0b0a1f!important}
+
+@media (prefers-reduced-motion:reduce){.gate::before,.gate::after{animation:none}}
+
+header{padding-inline:14px;gap:8px}
+/* NAV-START nav dropdown, sign-up logo picker, pipeline lines */
+header{position:relative;z-index:70}
+.gate{overflow-y:auto;align-items:flex-start}.gatestage{margin:auto}
+.identwrap{position:relative;display:inline-flex}
+.ident{padding-right:12px}
+.identcaret{font-size:11px;color:var(--muted);transition:transform .2s}
+.identwrap:has(.identmenu[style*="block"]) .identcaret{transform:rotate(180deg)}
+.identmenu{width:min(470px,92vw);padding:12px;border-radius:14px;top:calc(100% + 10px);box-shadow:0 24px 60px -20px rgba(0,0,0,.7),0 0 0 1px color-mix(in srgb,var(--accent) 25%,var(--border))}
+.identmenu .hd{border-radius:10px;background:var(--accent-soft);border-bottom:0;padding:12px;margin-bottom:10px}
+.imgrid{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px}
+.imh{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:6px 9px 4px;font-weight:700}
+.imcol{display:flex;flex-direction:column;gap:1px;min-width:0}
+.identmenu button.row{padding:8px 9px}
+#themeBtn::before{content:"Theme: "}
+@media(max-width:560px){.imgrid{grid-template-columns:1fr}.ident .who{display:none}.identmenu{position:fixed;left:8px;right:8px;width:auto;top:64px;max-height:calc(100dvh - 76px);overflow-y:auto}}
+.av img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block}
+.gprofile{display:flex;flex-direction:column;gap:10px}
+.gplabel{font-size:12.5px;color:var(--muted)}
+.gpgrid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+.gpsw{aspect-ratio:1;border-radius:50%;border:2px solid transparent;color:#fff;font:700 12px/1 inherit;text-transform:uppercase;cursor:pointer;padding:0;transition:transform .15s,border-color .15s,box-shadow .15s}
+.gpsw:hover{transform:scale(1.1)}
+.gpsw.picked{border-color:var(--text);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 40%,transparent)}
+.gprow{display:flex;align-items:center;gap:12px;margin-top:6px}
+.gpup{border:1px dashed var(--border);background:var(--surface-2);color:var(--text);border-radius:9px;padding:8px 12px;font-size:13px;cursor:pointer}
+.gpup:hover{border-color:var(--accent);color:var(--accent)}
+.gpprev{width:40px;height:40px;border-radius:50%;overflow:hidden;border:2px solid var(--accent);flex:none}
+.gpprev img{width:100%;height:100%;object-fit:cover;display:block}
+.circuit svg{inset:14px 0 auto 0;height:40px}
+.pline{vector-effect:non-scaling-stroke;stroke-width:1.5}
+.pline.on{stroke-width:2;stroke-dasharray:7 6;animation:fxDash 1s linear infinite}
+@keyframes fxDash{to{stroke-dashoffset:-13}}
+@media(max-width:760px){.circuit svg{height:34px}}
+@media(max-width:420px){.circuit svg{height:30px}}
+@media(prefers-reduced-motion:reduce){.pline.on{animation:none}}
+/* NAV-END */
+/* FX-START futuristic layer: decorative only, no ids/links touched */
+@keyframes fxRise{from{opacity:0;transform:translateY(18px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes fxPing{0%{box-shadow:0 0 0 0 rgba(143,127,255,.55)}80%,100%{box-shadow:0 0 0 12px rgba(143,127,255,0)}}
+@keyframes fxSweep{to{transform:rotate(360deg)}}
+@keyframes fxScan{0%{transform:translateY(-4vh);opacity:0}8%{opacity:1}92%{opacity:1}100%{transform:translateY(104vh);opacity:0}}
+@keyframes fxGrid{to{background-position:0 56px,56px 0}}
+@keyframes fxShine{to{background-position:220% 0}}
+@keyframes fxFloat{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(3vw,-4vh,0)}}
+@keyframes fxGlowPulse{0%,100%{box-shadow:0 0 0 1px rgba(143,127,255,.0),0 8px 28px -10px rgba(143,127,255,.45)}50%{box-shadow:0 0 0 1px rgba(143,127,255,.35),0 10px 38px -8px rgba(143,127,255,.75)}}
+
+/* layers */
+#fx-bg{position:fixed;inset:0;width:100%;height:100%;z-index:-3;pointer-events:none;opacity:.9}
+.fx-layer{position:fixed;pointer-events:none;z-index:-2}
+#fx-grid{inset:0;background-image:linear-gradient(rgba(143,127,255,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(143,127,255,.07) 1px,transparent 1px);background-size:56px 56px;
+  -webkit-mask-image:radial-gradient(ellipse 80% 70% at 50% 40%,#000 20%,transparent 80%);mask-image:radial-gradient(ellipse 80% 70% at 50% 40%,#000 20%,transparent 80%);animation:fxGrid 14s linear infinite}
+#fx-orb1,#fx-orb2{width:46vmax;height:46vmax;border-radius:50%;filter:blur(90px);opacity:.5}
+#fx-orb1{left:-14vmax;top:-18vmax;background:radial-gradient(circle,rgba(143,127,255,.30),transparent 65%);animation:fxFloat 24s ease-in-out infinite}
+#fx-orb2{right:-16vmax;bottom:-20vmax;background:radial-gradient(circle,rgba(56,214,245,.22),transparent 65%);animation:fxFloat 30s ease-in-out infinite reverse}
+#fx-radar{right:-14vmax;bottom:-14vmax;width:46vmax;height:46vmax;border-radius:50%;opacity:.55;
+  background:repeating-radial-gradient(circle,transparent 0 calc(11% - 1px),rgba(143,127,255,.16) calc(11% - 1px) 11%)}
+#fx-radar::after{content:"";position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 0deg,rgba(143,127,255,.0) 0 82%,rgba(143,127,255,.38) 100%);animation:fxSweep 7s linear infinite}
+#fx-scan{left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,transparent,rgba(143,127,255,.7),transparent);box-shadow:0 0 18px 2px rgba(143,127,255,.35);animation:fxScan 9s ease-in-out infinite;z-index:-1}
+#fx-spot{inset:0;z-index:-1;background:radial-gradient(520px circle at var(--mx,50%) var(--my,30%),rgba(143,127,255,.10),transparent 60%)}
+
+/* glass surfaces */
+:root{--glass:color-mix(in srgb,var(--surface,#14122e) 66%,transparent)}
+.portal,.modal-card,.stats-grid,.section,.card,.modal,.circuit,.composer,.msg.assistant .bubble,.toolcard,.status,.starter,.gatecard,.account-btn,.header,.page-intro{
+  background:var(--glass)!important;-webkit-backdrop-filter:blur(14px) saturate(140%);backdrop-filter:blur(14px) saturate(140%)}
+.sidebar{background:color-mix(in srgb,var(--side,var(--surface)) 74%,transparent)!important;-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+.modal-card,.modal{background:color-mix(in srgb,var(--surface,#14122e) 90%,transparent)!important}
+.login-container,.main,.content{background:transparent}
+
+/* glow borders + hover */
+.portal,.stats-grid,.section,.card,.circuit,.composer,.toolcard,.gatecard{border-color:color-mix(in srgb,var(--signal,#8f7fff) 18%,var(--border,var(--line,#2a2756)))!important;transition:border-color .3s,box-shadow .3s,transform .3s}
+.portal:hover,.section:hover,.card:hover,.circuit:hover{border-color:color-mix(in srgb,var(--signal,#8f7fff) 55%,transparent)!important;box-shadow:0 0 0 1px rgba(143,127,255,.12),0 18px 50px -22px rgba(143,127,255,.45)}
+.portal:hover,.card.show:hover{transform:translateY(-3px)}
+
+/* entrance */
+.portal,.stats-grid,.section,.page-intro,.circuit,.composer,.gatecard,.card,.hero>*{animation:fxRise .7s cubic-bezier(.22,.68,.35,1) both}
+.portal:nth-child(2){animation-delay:.12s}.section:nth-of-type(2){animation-delay:.1s}.section:nth-of-type(3){animation-delay:.2s}
+.hero>*:nth-child(2){animation-delay:.08s}.hero>*:nth-child(3){animation-delay:.16s}.hero>*:nth-child(4){animation-delay:.24s}
+
+/* buttons */
+.btn-candidate,.btn-recruiter,.btn-primary,.btn.primary,.btnglow,.sendbtn,#gSubmit,#gResetSubmit{position:relative;overflow:hidden;animation:fxGlowPulse 3.2s ease-in-out infinite;transition:transform .2s,filter .2s}
+.btn-candidate::after,.btn-recruiter::after,.btn-primary::after,.btn.primary::after,.btnglow::after,.sendbtn::after,#gSubmit::after,#gResetSubmit::after{content:""!important;display:block!important;position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(115deg,transparent,rgba(255,255,255,.55),transparent);transform:skewX(-20deg);transition:left .6s ease}
+.btn-candidate:hover::after,.btn-recruiter:hover::after,.btn-primary:hover::after,.btn.primary:hover::after,.btnglow:hover::after,.sendbtn:hover::after,#gSubmit:hover::after,#gResetSubmit:hover::after{left:130%}
+.btn-candidate:hover,.btn-recruiter:hover,.btn-primary:hover,.btn.primary:hover,.btnglow:hover,.sendbtn:hover,#gSubmit:hover{transform:translateY(-2px)!important}
+.btn-secondary:hover,.iconbtn:hover,.starter:hover,.account-btn:hover{border-color:var(--signal,#8f7fff)!important;box-shadow:0 0 18px -4px rgba(143,127,255,.55)!important}
+input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(143,127,255,.22),0 0 24px -6px rgba(143,127,255,.6)!important}
+
+/* brand: J tile instead of crosshair */
+.mark,.brand .dot{width:28px!important;height:28px!important;border-radius:9px!important;border:0!important;position:relative!important;display:inline-grid!important;place-items:center;flex:none;
+  background:linear-gradient(135deg,#8f7fff,#38d6f5)!important;color:#0b0a1f;animation:fxPing 2.6s ease-out infinite!important}
+.mark::before,.brand .dot::before{display:none!important}
+.mark::after,.brand .dot::after{content:"J"!important;position:static!important;width:auto!important;height:auto!important;transform:none!important;background:none!important;color:#0b0a1f;font:800 16px/1 var(--font-display,system-ui)!important}
+
+/* table rows + nav */
+tbody tr{transition:background .2s,box-shadow .2s}
+tbody tr:hover td{background:color-mix(in srgb,var(--signal,#8f7fff) 7%,transparent)!important}
+.nav-item{transition:background .2s,transform .2s,box-shadow .2s}.nav-item:hover{transform:translateX(4px)}
+.nav-item.active{box-shadow:inset 3px 0 0 var(--signal,#8f7fff),0 0 22px -8px rgba(143,127,255,.6)}
+.stat-value,.stat-num,.stat b{text-shadow:0 0 22px rgba(143,127,255,.35)}
+
+/* light theme: calmer */
+[data-theme="light"] #fx-bg{opacity:.45}[data-theme="light"] #fx-grid{background-image:linear-gradient(rgba(79,70,229,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(79,70,229,.08) 1px,transparent 1px)}
+[data-theme="light"] #fx-scan,[data-theme="light"] #fx-radar{opacity:.25}
+[data-theme="light"] .portal,[data-theme="light"] .section,[data-theme="light"] .card,[data-theme="light"] .stats-grid{background:color-mix(in srgb,#fff 78%,transparent)!important}
+
+@media(max-width:720px){#fx-radar{width:80vmax;height:80vmax;opacity:.3}#fx-orb1,#fx-orb2{opacity:.35}}
+@media(prefers-reduced-motion:reduce){#fx-grid,#fx-orb1,#fx-orb2,#fx-scan,#fx-radar::after,.mark,.brand .dot,.btn-candidate,.btn-recruiter,.btn-primary,.btn.primary,.btnglow,.sendbtn,#gSubmit,.portal,.stats-grid,.section,.page-intro,.circuit,.composer,.gatecard,.card,.hero>*{animation:none!important}#fx-scan{display:none}}
+.gate{background:rgba(11,10,31,.5)!important}
+html.gated .app,html.gated header{opacity:0!important}
+[data-theme="light"] .gate{background:rgba(243,242,252,.55)!important}
+/* FX-END */
 </style>
 </head>
 <body>
@@ -1090,18 +1292,31 @@ main.chat::-webkit-scrollbar, .rbody::-webkit-scrollbar, .slist::-webkit-scrollb
     <b id="idleClock">25:00</b>
     <button class="plus" id="idleExtend" title="Add 5 minutes">+5</button>
   </span>
+  <button class="iconbtn" id="settingsBtn" title="Role, skills, model">Customise</button>
+  <button class="iconbtn" id="gmailBtn" title="Fetch job-alert emails from Gmail and show them">Gmail</button>
+  <div class="identwrap">
   <button class="ident" id="identBtn" style="display:none" title="Account">
-    <span class="av" id="identAv">–</span><span class="who" id="identWho">–</span>
+    <span class="av" id="identAv">–</span><span class="who" id="identWho">–</span><span class="identcaret" aria-hidden="true">▾</span>
   </button>
-  <div id="identMenu" class="identmenu" style="display:none"></div>
+  <div id="identMenu" class="identmenu" style="display:none">
+    <div id="identHead"></div>
+    <div class="imgrid">
+      <div class="imcol"><div class="imh">Workspace</div>
+        <button class="row" id="recruitmentBtn" title="Recruitment - manage candidates">Recruitment</button>
+        <button class="row" id="sidebarBtn" title="Saved sessions / profiles">Sessions</button>
+        <button class="row" id="logsBtn" title="Run logs">History</button>
+      </div>
+      <div class="imcol"><div class="imh">Your account</div>
+        <button class="row" id="imNick">✎ Change nickname</button>
+        <button class="row" id="imAvatar">◐ Change logo</button>
+        <button class="row" id="themeBtn" title="Toggle theme">Dark</button>
+        <button class="row danger" id="resetAllBtn" title="Delete every session, resume, skill and filter, and start completely empty">Reset</button>
+        <button class="row danger" id="signOutBtn" title="Sign out" style="display:none">Sign out</button>
+      </div>
+    </div>
+  </div>
+  </div>
   <span class="acct" id="acct" title="Signed in"></span>
-  <button class="iconbtn" id="signOutBtn" title="Sign out" style="display:none">Sign out</button>
-  <button class="iconbtn" id="themeBtn" title="Toggle theme">Dark</button>
-<button class="iconbtn" id="sidebarBtn" title="Saved sessions / profiles">Sessions</button>
-<button class="iconbtn" id="logsBtn" title="Run logs">History</button>
-<button class="iconbtn" id="settingsBtn" title="Role, skills, model">Settings</button>
-<button class="iconbtn" id="gmailBtn" title="Fetch job-alert emails from Gmail and show them">Gmail</button>
-<button class="iconbtn dangerbtn" id="resetAllBtn" title="Delete every session, resume, skill and filter, and start completely empty">Reset</button>
 </header>
 
 <aside class="sidebar" id="sidebar">
@@ -1231,12 +1446,10 @@ main.chat::-webkit-scrollbar, .rbody::-webkit-scrollbar, .slist::-webkit-scrollb
 
     <label>Language model (Ollama)</label>
     <input type="text" id="cfgModel" placeholder="llama3.1">
-    <label>Options</label>
-    <div style="display:flex;gap:10px">
-      <input type="number" id="cfgDays" placeholder="60" title="Search window (days)">
-      <input type="number" id="cfgMax" placeholder="10" title="Max results">
-    </div>
-    <div class="sub" style="margin-top:4px">days back · max results — restarting applies both.</div>
+    <label>Days back</label>
+    <input type="number" id="cfgDays" min="1" max="365" placeholder="60">
+    <label>Max results</label>
+    <input type="number" id="cfgMax" min="1" max="100" placeholder="10">
   </div>
   <div class="dfoot">
     <button class="btn primary" id="saveCfg">Save &amp; restart agent</button>
@@ -1249,6 +1462,43 @@ main.chat::-webkit-scrollbar, .rbody::-webkit-scrollbar, .slist::-webkit-scrollb
   <div class="dhead"><h2>Run logs</h2><button class="iconbtn" id="refreshLogs" title="Refresh">↻</button><button class="iconbtn" data-close>✕</button></div>
   <div class="dbody" id="logsBody"><div class="empty">No runs yet.</div></div>
   <div class="dfoot"><div class="sub">Errors are also saved to <code>logs/runs-*.jsonl</code> and <code>logs/errors.jsonl</code> on disk.</div></div>
+</aside>
+
+<!-- Recruitment drawer -->
+<aside class="drawer" id="recruitmentDrawer">
+  <div class="dhead"><h2>Recruitment</h2><button class="iconbtn" data-close>✕</button></div>
+  <div class="dbody">
+    <div class="section-title">Tabs</div>
+    <div class="rtabs" style="padding:0 0 10px 0">
+      <button class="rtab on" id="recTabWorking">Candidates we are working on</button>
+      <button class="rtab" id="recTabRecruiter">Recruiter - add candidate</button>
+    </div>
+
+    <div id="recWorkingView">
+      <div class="section-title">Candidates</div>
+      <div id="recList" class="slist" style="max-height:420px"></div>
+      <div class="sub">Candidates tracked by you.</div>
+    </div>
+
+    <div id="recRecruiterView" style="display:none">
+      <div class="section-title">Add candidate details</div>
+      <input type="hidden" id="recId" value="">
+      <label>Name<input type="text" id="recName" placeholder="Full name"></label>
+      <label>Current location<input type="text" id="recCurrentLocation" placeholder="City, State/Country"></label>
+      <label>Current CTC<input type="text" id="recCurrentCtc" placeholder="e.g. 12 LPA"></label>
+      <label>Expected CTC<input type="text" id="recExpectedCtc" placeholder="e.g. 15 LPA"></label>
+      <label>Email<input type="email" id="recEmail" placeholder="candidate@example.com"></label>
+      <label>Phone number<input type="tel" id="recPhone" placeholder="+91 ..."></label>
+      <label>Availability<input type="text" id="recAvailability" placeholder="Immediate / 2 weeks / 1 month"></label>
+      <label>Status<select id="recStatus"><option value="working">Candidates we are working on</option><option value="recruiter_entry">Recruiter entry</option></select></label>
+      <label>Notes<textarea id="recNotes" rows="3" placeholder="Notes..."></textarea></label>
+      <div class="addrow">
+        <button class="btn primary" id="recSaveBtn">Save candidate</button>
+        <button class="btn ghost" id="recClearBtn">Clear</button>
+      </div>
+      <div class="sub" id="recMsg"></div>
+    </div>
+  </div>
 </aside>
 
 <!-- LaTeX resume modal -->
@@ -1316,11 +1566,39 @@ main.chat::-webkit-scrollbar, .rbody::-webkit-scrollbar, .slist::-webkit-scrollb
       </div>
     </div>
 
+    <style>
+      .portal-toggle { position: relative; display: flex; background: var(--bg, #f3f4f6); border: 1px solid var(--border, #e5e7eb); border-radius: 10px; padding: 3px; overflow: hidden; }
+      .portal-toggle-slider { position: absolute; top: 3px; left: 3px; width: calc(50% - 3px); height: calc(100% - 6px); background: var(--surface, #fff); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); transition: transform 0.25s ease; }
+      .portal-toggle.recruiter .portal-toggle-slider { transform: translateX(100%); }
+      .portal-toggle-btn { flex: 1; position: relative; z-index: 1; border: none; background: transparent; padding: 8px 12px; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--muted, #6b7280); font-family: inherit; transition: color 0.2s; }
+      .portal-toggle-btn.active { color: var(--text, #111827); }
+      [data-theme="dark"] .portal-toggle { background: rgba(255,255,255,0.05); }
+      [data-theme="dark"] .portal-toggle-slider { background: var(--surface, #111827); }
+    </style>
     <!-- sign in / create account -->
     <form class="gateform" id="gateSign">
       <label>Email<input type="email" id="gEmail" autocomplete="username" required placeholder="you@example.com"></label>
       <label>Password<input type="password" id="gPass" autocomplete="current-password" required placeholder="••••••••"></label>
       <label id="gPass2Wrap" hidden>Confirm password<input type="password" id="gPass2" autocomplete="new-password" placeholder="••••••••"></label>
+      <div class="gprofile" id="gProfileWrap" hidden>
+        <label>Nickname (optional)<input type="text" id="gNick" maxlength="40" placeholder="What should we call you?" autocomplete="nickname"></label>
+        <div class="gplabel">Choose your logo</div>
+        <div class="gpgrid" id="gAvGrid"></div>
+        <div class="gprow">
+          <button type="button" class="gpup" id="gAvUpload">Upload your own</button>
+          <input type="file" id="gAvFile" accept="image/*" hidden>
+          <span class="gpprev" id="gAvPrev" aria-hidden="true" hidden></span>
+        </div>
+      </div>
+      <div style="margin: 10px 0;">
+        <div style="margin-bottom:8px; font-size:13px; color:var(--muted);">Select portal</div>
+        <div class="portal-toggle" id="portalToggle">
+          <div class="portal-toggle-slider" id="portalToggleSlider"></div>
+          <button type="button" class="portal-toggle-btn active" data-role="candidate">Candidate</button>
+          <button type="button" class="portal-toggle-btn" data-role="recruiter">Recruiter</button>
+        </div>
+        <input type="hidden" id="gRoleHidden" name="gRole" value="candidate">
+      </div>
       <div class="gerr" id="gErr" hidden></div>
       <button class="btn primary wide" id="gSubmit" type="submit">Sign in</button>
     </form>
@@ -1369,7 +1647,7 @@ const $ = id => document.getElementById(id);
 const chat = $("chat"), input = $("input");
 
 const state = { settings: {}, busy: false, lastMsg: null,
-                theme: localStorage.getItem("js-theme") || "light",
+                theme: localStorage.getItem("js-theme") || "dark",
                 deck: [], deckIdx: 0, skills: [], sessions: [],
                 resetAt: null };
 document.documentElement.dataset.theme = state.theme;
@@ -2292,6 +2570,115 @@ $("sessNewBtn").onclick = newSession;
 $("resetAllBtn").onclick = resetEverything;
 loadSessions();
 $("logsBtn").onclick = () => { openDrawer("logsDrawer"); loadLogs(); };
+$("recruitmentBtn").onclick = () => { openDrawer("recruitmentDrawer"); loadRecruitment(); switchRecTab("working"); };
+
+let currentRecStatus = "working";
+
+function switchRecTab(which) {
+  if (which === "working") {
+    currentRecStatus = "working";
+    $("recTabWorking").classList.add("on");
+    $("recTabRecruiter").classList.remove("on");
+    $("recWorkingView").style.display = "";
+    $("recRecruiterView").style.display = "none";
+    loadRecruitment();
+  } else {
+    currentRecStatus = "recruiter_entry";
+    $("recTabWorking").classList.remove("on");
+    $("recTabRecruiter").classList.add("on");
+    $("recWorkingView").style.display = "none";
+    $("recRecruiterView").style.display = "";
+  }
+}
+$("recTabWorking").onclick = () => switchRecTab("working");
+$("recTabRecruiter").onclick = () => switchRecTab("recruiter_entry");
+
+function clearRecForm() {
+  $("recId").value = "";
+  $("recName").value = "";
+  $("recCurrentLocation").value = "";
+  $("recCurrentCtc").value = "";
+  $("recExpectedCtc").value = "";
+  $("recEmail").value = "";
+  $("recPhone").value = "";
+  $("recAvailability").value = "";
+  $("recStatus").value = "working";
+  $("recNotes").value = "";
+  $("recMsg").textContent = "";
+}
+$("recClearBtn").onclick = clearRecForm;
+
+$("recSaveBtn").onclick = async () => {
+  const body = {
+    id: $("recId").value || undefined,
+    name: $("recName").value,
+    current_location: $("recCurrentLocation").value,
+    current_ctc: $("recCurrentCtc").value,
+    expected_ctc: $("recExpectedCtc").value,
+    email: $("recEmail").value,
+    phone: $("recPhone").value,
+    availability: $("recAvailability").value,
+    status: $("recStatus").value || currentRecStatus,
+    notes: $("recNotes").value,
+  };
+  try {
+    const r = await (await api("/api/candidates", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) })).json();
+    if (r.ok) {
+      $("recMsg").textContent = "Saved.";
+      await loadRecruitment();
+      if ($("recStatus").value === "working") {
+        switchRecTab("working");
+      }
+    } else {
+      $("recMsg").textContent = "Failed to save.";
+    }
+  } catch (e) {
+    $("recMsg").textContent = "Error saving candidate.";
+  }
+};
+
+async function loadRecruitment() {
+  try {
+    const status = currentRecStatus === "recruiter_entry" ? "recruiter_entry" : "working";
+    const r = await (await api(`/api/candidates?status=${encodeURIComponent(status)}`, { cache: "no-store" })).json();
+    const box = $("recList");
+    box.innerHTML = "";
+    if (!r.ok || !(r.candidates||[]).length) {
+      box.innerHTML = '<div class="sub">No candidates.</div>';
+      return;
+    }
+    (r.candidates||[]).forEach(c => {
+      const row = document.createElement("div");
+      row.className = "srow";
+      row.innerHTML = `<div class="stext"><div class="sname">${esc(c.name||"Unnamed")}</div><div class="smeta">${esc([c.current_location, c.email, c.phone].filter(Boolean).join(" · "))}</div></div>`;
+      const btn = document.createElement("button");
+      btn.className = "sdel";
+      btn.textContent = "✎";
+      btn.title = "Edit";
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        $("recId").value = c.id || "";
+        $("recName").value = c.name || "";
+        $("recCurrentLocation").value = c.current_location || "";
+        $("recCurrentCtc").value = c.current_ctc || "";
+        $("recExpectedCtc").value = c.expected_ctc || "";
+        $("recEmail").value = c.email || "";
+        $("recPhone").value = c.phone || "";
+        $("recAvailability").value = c.availability || "";
+        $("recStatus").value = c.status || "working";
+        $("recNotes").value = c.notes || "";
+        $("recMsg").textContent = "";
+        switchRecTab(c.status === "recruiter_entry" ? "recruiter_entry" : "working");
+        openDrawer("recruitmentDrawer");
+      };
+      row.appendChild(btn);
+      box.appendChild(row);
+    });
+  } catch (e) {
+    const box = $("recList");
+    if (box) box.innerHTML = '<div class="sub">Failed to load candidates.</div>';
+  }
+}
 
 async function loadPublicBoards() {
   /* The sign-in gate's board ticker. Unauthenticated by design - see
@@ -3052,6 +3439,8 @@ function gateShow(mode, opts = {}) {
 
   const signup = mode === "signup";
   $("gPass2Wrap").hidden = !signup;
+  $("gProfileWrap").hidden = !signup;
+  if (signup) paintSignupLogo();
   $("gSubmit").textContent = signup ? "Create account" : "Sign in";
   $("gPass").autocomplete = signup ? "new-password" : "current-password";
   $("gateSub").textContent = signup ? "Create your account" : "Sign in to your account";
@@ -3164,16 +3553,50 @@ function signedIn(st) {
   // place that takes the gate down. Doing it per-call site is how login ended
   // up leaving the gate up until the next refresh.
   gateHide();
+  const role = st.role || window.__USER_ROLE || "candidate";
+  window.__USER_ROLE = role;
+  if (role === "recruiter" || role === "super_admin") {
+    window.location.href = "/recruiter";
+    return;
+  }
   $("acct").textContent = st.email || "";
   $("acct").title = st.email || "";
   $("acct").style.display = "none";   // superseded by the identity pill
   $("signOutBtn").style.display = "";
   renderIdentity(st);
+  applyPendingProfile(st);
   startIdleCountdown(st);
   askNicknameOnce(st);
+  applyRoleUI(role);
   loadConfig();
   loadSessions();
   loadDocs();
+}
+
+function applyRoleUI(role) {
+  role = role || "candidate";
+  // Show/hide elements based on role - keep separate interfaces
+  const isRecruiter = role === "recruiter";
+  // Hide/show job search UI elements for recruiters vs candidates
+  const circuit = document.querySelector(".circuit");
+  if (circuit) circuit.style.display = isRecruiter ? "none" : "";
+  const skillsbar = document.querySelector(".skillsbar");
+  if (skillsbar) skillsbar.style.display = isRecruiter ? "none" : "";
+  const chat = $("chat");
+  if (chat) chat.style.display = isRecruiter ? "none" : "";
+  const starters = $("starters");
+  if (starters) starters.style.display = isRecruiter ? "none" : "";
+  const composer = document.querySelector(".composer");
+  if (composer) composer.style.display = isRecruiter ? "none" : "";
+  const hint = document.querySelector(".hint");
+  if (hint) hint.style.display = isRecruiter ? "none" : "";
+  const banner = $("banner");
+  if (banner) banner.style.display = isRecruiter ? "none" : "";
+  // Show recruitment prominently for recruiters
+  if (isRecruiter) {
+    const recBtn = $("recruitmentBtn");
+    if (recBtn) { recBtn.style.display = ""; recBtn.click(); }
+  }
 }
 
 /* ---------- identity: avatar, nickname, dropdown ---------- */
@@ -3202,6 +3625,8 @@ function _initials(name) {
 }
 
 function _avatarHtml(id, name, cls) {
+  var img = getUserImg(IDENTITY.email);
+  if (img) return '<span class="av ' + (cls || "") + '"><img alt="" src="' + img + '"></span>';
   var g = AVATAR_GRAD[id] || AVATAR_GRAD.aurora;
   return '<span class="av ' + (cls || "") + '" style="background:linear-gradient(135deg,' +
     g[0] + "," + g[1] + ')">' + esc(_initials(name)) + "</span>";
@@ -3233,13 +3658,10 @@ async function saveIdentity(patch, note) {
 
 function identMenuOpen() {
   var m = $("identMenu");
-  m.innerHTML =
+  $("identHead").innerHTML =
     '<div class="hd">' + _avatarHtml(IDENTITY.avatar, IDENTITY.display_name, "lg") +
       '<div class="who"><div class="nm">' + esc(IDENTITY.display_name) + "</div>" +
-      '<div class="em">' + esc(IDENTITY.email) + "</div></div></div>" +
-    '<button class="row" id="imNick">✎ Change nickname</button>' +
-    '<button class="row" id="imAvatar">◐ Change logo</button>' +
-    '<button class="row danger" id="imOut">⏻ Sign out</button>';
+      '<div class="em">' + esc(IDENTITY.email) + "</div></div></div>";
   m.style.display = "block";
 
   $("imNick").onclick = async () => {
@@ -3256,10 +3678,85 @@ function identMenuOpen() {
     m.style.display = "none";
     await openAvatarPicker();
   };
-  $("imOut").onclick = () => { m.style.display = "none"; signOutNow("Signed out."); };
 }
+/* Picking an action closes the dropdown; the theme row stays open so the change is visible. */
+$("identMenu").addEventListener("click", function (e) {
+  var b = e.target.closest("button.row");
+  if (b && b.id !== "themeBtn") identMenuClose();
+});
 
 function identMenuClose() { $("identMenu").style.display = "none"; }
+
+/* ---------- profile logo: choose one or upload your own ----------
+   An uploaded picture is cropped square, shrunk to 128px and kept in this
+   browser only (the server only knows the preset gradients). */
+var SIGNUP = { avatar: "aurora", img: "" };
+function userImgKey(email) { return "js-avimg:" + String(email || "").toLowerCase(); }
+function getUserImg(email) { try { return email ? (localStorage.getItem(userImgKey(email)) || "") : ""; } catch (e) { return ""; } }
+function setUserImg(email, data) {
+  try { if (data) localStorage.setItem(userImgKey(email), data); else localStorage.removeItem(userImgKey(email)); } catch (e) {}
+}
+function readLogoFile(file) {
+  return new Promise(function (ok, bad) {
+    if (!file || !/^image\//.test(file.type)) return bad(new Error("Choose an image file."));
+    if (file.size > 5 * 1024 * 1024) return bad(new Error("Image must be under 5 MB."));
+    var fr = new FileReader();
+    fr.onerror = function () { bad(new Error("Could not read that file.")); };
+    fr.onload = function () {
+      var im = new Image();
+      im.onerror = function () { bad(new Error("That image could not be opened.")); };
+      im.onload = function () {
+        var s = Math.min(im.width, im.height), c = document.createElement("canvas");
+        c.width = c.height = 128;
+        c.getContext("2d").drawImage(im, (im.width - s) / 2, (im.height - s) / 2, s, s, 0, 0, 128, 128);
+        ok(c.toDataURL("image/jpeg", 0.85));
+      };
+      im.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+function paintSignupLogo() {
+  var name = ($("gEmail").value || "").split("@")[0] || "you";
+  $("gAvGrid").innerHTML = Object.keys(AVATAR_GRAD).map(function (id) {
+    return '<button type="button" class="gpsw' + (!SIGNUP.img && id === SIGNUP.avatar ? " picked" : "") +
+      '" data-gav="' + id + '" title="' + id + '" style="background:linear-gradient(135deg,' +
+      AVATAR_GRAD[id].join(",") + ')">' + esc(_initials(name)) + "</button>";
+  }).join("");
+  $("gAvPrev").innerHTML = SIGNUP.img ? '<img alt="" src="' + SIGNUP.img + '">' : "";
+  $("gAvPrev").hidden = !SIGNUP.img;
+  $("gAvUpload").textContent = SIGNUP.img ? "Replace upload" : "Upload your own";
+}
+$("gAvGrid").addEventListener("click", function (e) {
+  var b = e.target.closest("[data-gav]"); if (!b) return;
+  SIGNUP.avatar = b.dataset.gav; SIGNUP.img = ""; paintSignupLogo();
+});
+$("gAvUpload").onclick = function () { $("gAvFile").click(); };
+$("gAvFile").onchange = async function () {
+  var f = this.files && this.files[0]; this.value = "";
+  if (!f) return;
+  try { SIGNUP.img = await readLogoFile(f); paintSignupLogo(); gErr(""); }
+  catch (err) { gErr(err.message); }
+};
+$("gEmail").addEventListener("input", function () { if (GATE.mode === "signup") paintSignupLogo(); });
+function savePendingProfile(email) {
+  try {
+    localStorage.setItem("js-pending-profile", JSON.stringify({
+      email: String(email || "").toLowerCase(), avatar: SIGNUP.avatar, img: SIGNUP.img,
+      nick: ($("gNick").value || "").trim() }));
+  } catch (e) {}
+}
+/* The account may only exist after the address is confirmed, so the choice made
+   on the sign-up form is applied the first time that account is signed in. */
+async function applyPendingProfile(st) {
+  var p; try { p = JSON.parse(localStorage.getItem("js-pending-profile") || "null"); } catch (e) { p = null; }
+  if (!p || !st.email || p.email !== String(st.email).toLowerCase()) return;
+  try { localStorage.removeItem("js-pending-profile"); } catch (e) {}
+  var patch = {};
+  if (p.img) { setUserImg(st.email, p.img); renderIdentity(st); } else if (p.avatar) patch.avatar = p.avatar;
+  if (p.nick) patch.nickname = p.nick;
+  if (Object.keys(patch).length) await saveIdentity(patch);
+}
 
 /* Avatar picker in a lightweight overlay. Built from the server's list so the
    two cannot disagree about which ids are valid. */
@@ -3289,6 +3786,8 @@ function openAvatarPicker() {
         '<div class="rhead"><h2>Choose your logo</h2>' +
           '<button class="iconbtn" id="avClose">Close</button></div>' +
         '<div class="rbody"><div class="avgrid">' + grid + "</div>" +
+          '<div class="gprow"><button class="iconbtn" id="avUpload" type="button">Upload your own</button>' +
+          '<input type="file" id="avFile" accept="image/*" hidden></div>' +
           '<p style="font-size:12px;color:var(--muted);margin:2px 0 0">' +
           "Your initials sit on the colour you pick.</p></div></div>";
     document.body.appendChild(wrap);
@@ -3297,9 +3796,16 @@ function openAvatarPicker() {
     function onKey(e) { if (e.key === "Escape") close(); }
     document.addEventListener("keydown", onKey);
     $("avClose").onclick = close;
+    $("avUpload").onclick = () => $("avFile").click();
+    $("avFile").onchange = async function () {
+      var f = this.files && this.files[0]; if (!f) return;
+      try { setUserImg(IDENTITY.email, await readLogoFile(f)); renderIdentity({}); toast("Logo updated"); close(); }
+      catch (err) { toast(err.message); }
+    };
     wrap.onclick = e => { if (e.target === wrap) close(); };
     wrap.querySelectorAll("[data-av]").forEach(b => {
       b.onclick = async () => {
+        setUserImg(IDENTITY.email, "");
         await saveIdentity({ avatar: b.dataset.av }, "Logo updated");
         close();
       };
@@ -3456,6 +3962,7 @@ $("gateSign").onsubmit = async e => {
   if (GATE.busy) return;
   const email = $("gEmail").value.trim();
   const pass = $("gPass").value;
+  const role = ($("gRoleHidden") && $("gRoleHidden").value) || "candidate";
   gErr("");
   if (GATE.mode === "signup" && pass !== $("gPass2").value) {
     gErr("The two passwords do not match."); return;
@@ -3463,11 +3970,16 @@ $("gateSign").onsubmit = async e => {
   GATE.busy = true; $("gSubmit").disabled = true;
   try {
     const path = GATE.mode === "signup" ? "/api/auth/register" : "/api/auth/login";
+    const body = { email, password: pass };
+    if (GATE.mode === "signup") body.role = role;
+    // Also send role on login in case backend wants to validate/track; backend accepts it
+    if (GATE.mode === "login") body.role = role;
     const r = await (await api(path, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: pass }) })).json();
+      body: JSON.stringify(body) })).json();
     if (r.ok === false) { gErr(r.error || "Could not sign you in."); return; }
     if (GATE.mode === "signup") {
+      savePendingProfile(r.email || email);
       if (r.needs_verification) {
         // The address has to be confirmed first. A session already exists, so
         // "send it again" works; the app itself stays closed until then.
@@ -3501,6 +4013,21 @@ $("gForgot").onclick = e => {
   $("gResetEmail").value = $("gEmail").value.trim();
   gateShow("forgot");
 };
+
+// Portal toggle (animated switch for candidate/recruiter)
+(function initPortalToggle() {
+  const toggle = document.getElementById('portalToggle');
+  const hidden = document.getElementById('gRoleHidden');
+  if (!toggle || !hidden) return;
+  toggle.querySelectorAll('.portal-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const role = btn.dataset.role;
+      hidden.value = role;
+      toggle.querySelectorAll('.portal-toggle-btn').forEach(b => b.classList.toggle('active', b === btn));
+      toggle.classList.toggle('recruiter', role === 'recruiter');
+    });
+  });
+})();
 
 $("gResend").onclick = async () => {
   gErr2("");
@@ -3585,5 +4112,93 @@ loadPublicBoards();
 bootAuth();
 wireScrollHint();
 </script>
+<script>/* FX-START decorative background; aria-hidden, pointer-events none */
+(function(){
+  if(window.__fx)return;window.__fx=1;
+  var b=document.body,mk=function(id,cls){var d=document.createElement('div');d.id=id;d.className='fx-layer'+(cls?' '+cls:'');d.setAttribute('aria-hidden','true');b.insertBefore(d,b.firstChild);return d};
+  ['fx-spot','fx-scan','fx-radar','fx-orb2','fx-orb1','fx-grid'].forEach(function(i){mk(i)});
+  var c=document.createElement('canvas');c.id='fx-bg';c.setAttribute('aria-hidden','true');b.insertBefore(c,b.firstChild);
+  var x=c.getContext('2d'),W,H,P=[],m={x:-999,y:-999},dpr=Math.min(window.devicePixelRatio||1,1.5),
+      still=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function col(){return document.documentElement.getAttribute('data-theme')==='light'?'79,70,229':'143,127,255'}
+  function size(){W=c.width=innerWidth*dpr;H=c.height=innerHeight*dpr;c.style.width=innerWidth+'px';c.style.height=innerHeight+'px';
+    var n=Math.min(90,Math.round(innerWidth*innerHeight/16000));P=[];
+    for(var i=0;i<n;i++)P.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.35*dpr,vy:(Math.random()-.5)*.35*dpr,r:(Math.random()*1.4+.6)*dpr})}
+  function draw(){
+    x.clearRect(0,0,W,H);var k=col(),L=150*dpr,mx=m.x*dpr,my=m.y*dpr,i,j,p,q,d;
+    for(i=0;i<P.length;i++){p=P[i];
+      if(!still){p.x+=p.vx;p.y+=p.vy;if(p.x<0||p.x>W)p.vx*=-1;if(p.y<0||p.y>H)p.vy*=-1}
+      for(j=i+1;j<P.length;j++){q=P[j];d=Math.hypot(p.x-q.x,p.y-q.y);
+        if(d<L){x.strokeStyle='rgba('+k+','+(0.22*(1-d/L)).toFixed(3)+')';x.lineWidth=dpr*.8;x.beginPath();x.moveTo(p.x,p.y);x.lineTo(q.x,q.y);x.stroke()}}
+      d=Math.hypot(p.x-mx,p.y-my);
+      if(d<200*dpr){x.strokeStyle='rgba('+k+','+(0.5*(1-d/(200*dpr))).toFixed(3)+')';x.beginPath();x.moveTo(p.x,p.y);x.lineTo(mx,my);x.stroke()}
+      x.fillStyle='rgba('+k+',.75)';x.beginPath();x.arc(p.x,p.y,p.r,0,6.283);x.fill()}
+    if(!still&&!document.hidden)requestAnimationFrame(draw)}
+  size();draw();addEventListener('resize',size);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden&&!still)requestAnimationFrame(draw)});
+  var s=document.getElementById('fx-spot');
+  addEventListener('pointermove',function(e){m.x=e.clientX;m.y=e.clientY;s.style.setProperty('--mx',e.clientX+'px');s.style.setProperty('--my',e.clientY+'px')},{passive:true});
+})();
+/* FX-END */
+</script>
+<script>/* FX-START decorative background; aria-hidden, pointer-events none */
+(function(){
+  if(window.__fx)return;window.__fx=1;
+  var b=document.body,mk=function(id,cls){var d=document.createElement('div');d.id=id;d.className='fx-layer'+(cls?' '+cls:'');d.setAttribute('aria-hidden','true');b.insertBefore(d,b.firstChild);return d};
+  ['fx-spot','fx-scan','fx-radar','fx-orb2','fx-orb1','fx-grid'].forEach(function(i){mk(i)});
+  var c=document.createElement('canvas');c.id='fx-bg';c.setAttribute('aria-hidden','true');b.insertBefore(c,b.firstChild);
+  var x=c.getContext('2d'),W,H,P=[],m={x:-999,y:-999},dpr=Math.min(window.devicePixelRatio||1,1.5),
+      still=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function col(){return document.documentElement.getAttribute('data-theme')==='light'?'79,70,229':'143,127,255'}
+  function size(){W=c.width=innerWidth*dpr;H=c.height=innerHeight*dpr;c.style.width=innerWidth+'px';c.style.height=innerHeight+'px';
+    var n=Math.min(90,Math.round(innerWidth*innerHeight/16000));P=[];
+    for(var i=0;i<n;i++)P.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.35*dpr,vy:(Math.random()-.5)*.35*dpr,r:(Math.random()*1.4+.6)*dpr})}
+  function draw(){
+    x.clearRect(0,0,W,H);var k=col(),L=150*dpr,mx=m.x*dpr,my=m.y*dpr,i,j,p,q,d;
+    for(i=0;i<P.length;i++){p=P[i];
+      if(!still){p.x+=p.vx;p.y+=p.vy;if(p.x<0||p.x>W)p.vx*=-1;if(p.y<0||p.y>H)p.vy*=-1}
+      for(j=i+1;j<P.length;j++){q=P[j];d=Math.hypot(p.x-q.x,p.y-q.y);
+        if(d<L){x.strokeStyle='rgba('+k+','+(0.22*(1-d/L)).toFixed(3)+')';x.lineWidth=dpr*.8;x.beginPath();x.moveTo(p.x,p.y);x.lineTo(q.x,q.y);x.stroke()}}
+      d=Math.hypot(p.x-mx,p.y-my);
+      if(d<200*dpr){x.strokeStyle='rgba('+k+','+(0.5*(1-d/(200*dpr))).toFixed(3)+')';x.beginPath();x.moveTo(p.x,p.y);x.lineTo(mx,my);x.stroke()}
+      x.fillStyle='rgba('+k+',.75)';x.beginPath();x.arc(p.x,p.y,p.r,0,6.283);x.fill()}
+    if(!still&&!document.hidden)requestAnimationFrame(draw)}
+  size();draw();addEventListener('resize',size);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden&&!still)requestAnimationFrame(draw)});
+  var s=document.getElementById('fx-spot');
+  addEventListener('pointermove',function(e){m.x=e.clientX;m.y=e.clientY;s.style.setProperty('--mx',e.clientX+'px');s.style.setProperty('--my',e.clientY+'px')},{passive:true});
+})();
+/* FX-END */
+</script>
+<script>/* FX-START decorative background; aria-hidden, pointer-events none */
+(function(){
+  if(window.__fx)return;window.__fx=1;
+  var b=document.body,mk=function(id,cls){var d=document.createElement('div');d.id=id;d.className='fx-layer'+(cls?' '+cls:'');d.setAttribute('aria-hidden','true');b.insertBefore(d,b.firstChild);return d};
+  ['fx-spot','fx-scan','fx-radar','fx-orb2','fx-orb1','fx-grid'].forEach(function(i){mk(i)});
+  var c=document.createElement('canvas');c.id='fx-bg';c.setAttribute('aria-hidden','true');b.insertBefore(c,b.firstChild);
+  var x=c.getContext('2d'),W,H,P=[],m={x:-999,y:-999},dpr=Math.min(window.devicePixelRatio||1,1.5),
+      still=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function col(){return document.documentElement.getAttribute('data-theme')==='light'?'79,70,229':'143,127,255'}
+  function size(){W=c.width=innerWidth*dpr;H=c.height=innerHeight*dpr;c.style.width=innerWidth+'px';c.style.height=innerHeight+'px';
+    var n=Math.min(90,Math.round(innerWidth*innerHeight/16000));P=[];
+    for(var i=0;i<n;i++)P.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.35*dpr,vy:(Math.random()-.5)*.35*dpr,r:(Math.random()*1.4+.6)*dpr})}
+  function draw(){
+    x.clearRect(0,0,W,H);var k=col(),L=150*dpr,mx=m.x*dpr,my=m.y*dpr,i,j,p,q,d;
+    for(i=0;i<P.length;i++){p=P[i];
+      if(!still){p.x+=p.vx;p.y+=p.vy;if(p.x<0||p.x>W)p.vx*=-1;if(p.y<0||p.y>H)p.vy*=-1}
+      for(j=i+1;j<P.length;j++){q=P[j];d=Math.hypot(p.x-q.x,p.y-q.y);
+        if(d<L){x.strokeStyle='rgba('+k+','+(0.22*(1-d/L)).toFixed(3)+')';x.lineWidth=dpr*.8;x.beginPath();x.moveTo(p.x,p.y);x.lineTo(q.x,q.y);x.stroke()}}
+      d=Math.hypot(p.x-mx,p.y-my);
+      if(d<200*dpr){x.strokeStyle='rgba('+k+','+(0.5*(1-d/(200*dpr))).toFixed(3)+')';x.beginPath();x.moveTo(p.x,p.y);x.lineTo(mx,my);x.stroke()}
+      x.fillStyle='rgba('+k+',.75)';x.beginPath();x.arc(p.x,p.y,p.r,0,6.283);x.fill()}
+    if(!still&&!document.hidden)requestAnimationFrame(draw)}
+  size();draw();addEventListener('resize',size);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden&&!still)requestAnimationFrame(draw)});
+  var s=document.getElementById('fx-spot');
+  addEventListener('pointermove',function(e){m.x=e.clientX;m.y=e.clientY;s.style.setProperty('--mx',e.clientX+'px');s.style.setProperty('--my',e.clientY+'px')},{passive:true});
+})();
+/* FX-END */
+</script>
+<script></script>
 </body>
 </html>

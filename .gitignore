@@ -2,6 +2,11 @@
 .env
 .env.local
 
+# Browser profile (can contain saved cookies/logins)
+.browser_profile/
+.browser_profile
+
+
 # Python
 __pycache__/
 *.pyc
@@ -18,6 +23,10 @@ Scrapling-main/
 
 # JS tooling, only used to syntax-check the inline script in static/index.html
 node_modules/
+
+# Misc local artifacts
+indeed.zip
+crawl4ai-main/
 
 # Unrelated third-party checkout kept in the workspace for reference. Not used
 # by the app - cv_ocr.py runs RapidOCR/ONNX, not this. It is ~90MB, mostly a
@@ -68,3 +77,8 @@ gmail_oauth_token.json*
 
 client_secret*.json
 client_secret*.json.bak
+backup_files
+*.mp4
+*.mov
+*.mkv
+*.mp4

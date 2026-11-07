@@ -1,0 +1,285 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Recruiter Registry</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: sticky entry form on the left, filterable record list on the right; stacks on phones. */
+:root {
+  --bg: #f1f4f6;
+  --surface: #ffffff;
+  --fg: #13202b;
+  --muted: #566877;
+  --line: #d6dee5;
+  --accent: #0b7a78;
+  --accent-fg: #ffffff;
+  --accent-soft: #dff1f0;
+  --good: #1d7a45; --good-soft: #def3e6;
+  --warn: #9a5b00; --warn-soft: #fbeccf;
+  --bad: #b3261e; --bad-soft: #fbe1df;
+  --idle: #566877; --idle-soft: #e6ebef;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d151b; --surface: #16222b; --fg: #e7eef3; --muted: #93a5b3; --line: #263743;
+    --accent: #4cc2bd; --accent-fg: #07201f; --accent-soft: #14393a;
+    --good: #6fd39a; --good-soft: #153626;
+    --warn: #f0b95a; --warn-soft: #3b2c10;
+    --bad: #ff8a80; --bad-soft: #3d1b19;
+    --idle: #93a5b3; --idle-soft: #213039;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d151b; --surface: #16222b; --fg: #e7eef3; --muted: #93a5b3; --line: #263743;
+  --accent: #4cc2bd; --accent-fg: #07201f; --accent-soft: #14393a;
+  --good: #6fd39a; --good-soft: #153626;
+  --warn: #f0b95a; --warn-soft: #3b2c10;
+  --bad: #ff8a80; --bad-soft: #3d1b19;
+  --idle: #93a5b3; --idle-soft: #213039;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font: 15px/1.5 var(--font-body);
+  padding-block: 28px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 24px; }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 8px 24px; }
+h1 { font: 700 clamp(1.7rem, 4vw, 2.3rem)/1.1 var(--font-display); margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+.lede { margin: 6px 0 0; color: var(--muted); max-width: 52ch; }
+#count { font: 600 0.85rem var(--font-body); color: var(--accent); background: var(--accent-soft); padding: 4px 12px; border-radius: 999px; white-space: nowrap; }
+.grid { display: grid; grid-template-columns: minmax(0, 360px) minmax(0, 1fr); gap: 24px; align-items: start; }
+@media (max-width: 860px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+form.panel { position: sticky; top: 16px; }
+@media (max-width: 860px) { form.panel { position: static; } }
+h2 { font: 600 1.1rem var(--font-display); margin: 0 0 14px; }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.fields .full { grid-column: 1 / -1; }
+@media (max-width: 440px) { .fields { grid-template-columns: minmax(0, 1fr); } }
+label { display: grid; gap: 4px; font-size: 0.8rem; font-weight: 500; color: var(--muted); min-width: 0; }
+input, select, textarea, button { font: inherit; color: inherit; }
+input, select, textarea {
+  width: 100%; min-width: 0; background: var(--bg); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 0.95rem;
+}
+textarea { resize: vertical; min-height: 72px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.req::after { content: " *"; color: var(--bad); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; align-items: center; }
+button { cursor: pointer; border-radius: 6px; padding: 8px 14px; border: 1px solid var(--line); background: var(--surface); font-weight: 500; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button.danger { color: var(--bad); }
+button.danger.solid { background: var(--bad); color: var(--surface); border-color: var(--bad); }
+button:disabled { opacity: 0.6; cursor: default; }
+button.sm { padding: 4px 10px; font-size: 0.85rem; }
+#msg { font-size: 0.85rem; min-height: 1.2em; margin: 10px 0 0; color: var(--good); }
+#msg.err { color: var(--bad); }
+.tools { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 8px; margin-bottom: 14px; }
+@media (max-width: 440px) { .tools { grid-template-columns: minmax(0, 1fr); } }
+#list { display: grid; gap: 10px; }
+.rec { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
+  display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.4fr) auto; gap: 8px 16px; align-items: start; }
+@media (max-width: 640px) { .rec { grid-template-columns: minmax(0, 1fr); } }
+.rec .name { font: 600 1rem var(--font-display); margin: 0; overflow-wrap: anywhere; }
+.rec .sub, .rec .meta { color: var(--muted); font-size: 0.85rem; margin: 2px 0 0; overflow-wrap: anywhere; }
+.rec .contact { font-size: 0.9rem; margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.rec .notes { grid-column: 1 / -1; margin: 0; font-size: 0.85rem; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; overflow-wrap: anywhere; }
+.side { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.pill { font-size: 0.75rem; font-weight: 600; padding: 2px 10px; border-radius: 999px; white-space: nowrap; letter-spacing: 0.02em; }
+.s-Active { background: var(--good-soft); color: var(--good); }
+.s-In-talks { background: var(--accent-soft); color: var(--accent); }
+.s-On-hold { background: var(--warn-soft); color: var(--warn); }
+.s-Closed { background: var(--idle-soft); color: var(--idle); }
+.empty { border: 1px dashed var(--line); border-radius: 10px; padding: 28px 20px; text-align: center; color: var(--muted); margin: 0; }
+.empty strong { display: block; color: var(--fg); font: 600 1rem var(--font-display); margin-bottom: 4px; }
+#storeNote { font-size: 0.8rem; color: var(--muted); margin: 0; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Recruiter Registry</h1>
+      <p class="lede">Fill in your basic details once. You can update or remove an entry any time.</p>
+    </div>
+    <span id="count">0 recruiters</span>
+  </header>
+
+  <div class="grid">
+    <form id="form" class="panel" autocomplete="off">
+      <h2 id="formTitle">Add a recruiter</h2>
+      <div class="fields">
+        <label class="full"><span class="req">Full name</span><input id="f-name" required maxlength="80"></label>
+        <label class="full"><span class="req">Work email</span><input id="f-email" type="email" required maxlength="120"></label>
+        <label><span>Phone</span><input id="f-phone" type="tel" pattern="[0-9+\-\s()]{7,20}" title="7 to 20 digits; + - ( ) and spaces allowed" maxlength="20"></label>
+        <label><span>Location</span><input id="f-location" maxlength="60"></label>
+        <label><span class="req">Company</span><input id="f-company" required maxlength="80"></label>
+        <label><span>Your title</span><input id="f-title" maxlength="60"></label>
+        <label><span class="req">Role you are hiring for</span><input id="f-role" required maxlength="80"></label>
+        <label><span>Hiring status</span>
+          <select id="f-status"><option>Active</option><option>In talks</option><option>On hold</option><option>Closed</option></select>
+        </label>
+        <label class="full"><span>Notes</span><textarea id="f-notes" maxlength="500"></textarea></label>
+      </div>
+      <div class="actions">
+        <button class="primary" id="saveBtn" type="submit">Add recruiter</button>
+        <button id="cancelBtn" type="button" hidden>Cancel edit</button>
+      </div>
+      <p id="msg" role="status" aria-live="polite"></p>
+      <p id="storeNote"></p>
+    </form>
+
+    <section>
+      <div class="tools">
+        <input id="q" type="search" placeholder="Search name, company, role, city" aria-label="Search recruiters">
+        <select id="statusFilter" aria-label="Filter by status">
+          <option value="all">All statuses</option><option>Active</option><option>In talks</option><option>On hold</option><option>Closed</option>
+        </select>
+      </div>
+      <div id="list"></div>
+    </section>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const FIELDS = ["name", "email", "phone", "company", "title", "role", "location", "status", "notes"];
+const KEY = "recruiter-registry-v1";
+let rows = [], editing = null, pending = null, loading = true, store = null;
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
+function msg(text, isErr) { const m = $("msg"); m.textContent = text; m.className = isErr ? "err" : ""; }
+
+function card(r) {
+  const a = el("article", "rec");
+  const left = el("div");
+  left.append(el("h3", "name", r.name));
+  left.append(el("p", "sub", [r.title, r.company].filter(Boolean).join(" at ") || r.company));
+  const mid = el("div");
+  mid.append(el("p", "contact", r.email));
+  if (r.phone) mid.append(el("p", "contact", r.phone));
+  mid.append(el("p", "meta", ["Hiring: " + r.role, r.location].filter(Boolean).join(" · ")));
+  const side = el("div", "side");
+  side.append(el("span", "pill s-" + String(r.status).replace(/\s+/g, "-"), r.status));
+  const btns = el("div", "btns");
+  if (pending === r.id) {
+    const yes = el("button", "sm danger solid", "Confirm delete");
+    yes.onclick = async () => {
+      yes.disabled = true;
+      try { await store.remove(r.id); if (editing === r.id) resetForm(); msg("Entry deleted."); }
+      catch (e) { msg(failText(e, "delete"), true); }
+      pending = null; render();
+    };
+    const no = el("button", "sm", "Keep");
+    no.onclick = () => { pending = null; render(); };
+    btns.append(yes, no);
+  } else {
+    const ed = el("button", "sm", "Edit");
+    ed.onclick = () => startEdit(r);
+    const del = el("button", "sm danger", "Delete");
+    del.onclick = () => { pending = r.id; render(); };
+    btns.append(ed, del);
+  }
+  side.append(btns);
+  a.append(left, mid, side);
+  if (r.notes) a.append(el("p", "notes", r.notes));
+  return a;
+}
+
+function render() {
+  const q = $("q").value.trim().toLowerCase(), st = $("statusFilter").value;
+  const list = rows
+    .filter((r) => (st === "all" || r.status === st) && (!q || [r.name, r.company, r.email, r.role, r.location, r.title].join(" ").toLowerCase().includes(q)))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  $("count").textContent = rows.length + (rows.length === 1 ? " recruiter" : " recruiters");
+  const box = $("list");
+  box.replaceChildren();
+  if (loading) { box.append(el("p", "empty", "Loading records…")); return; }
+  if (!list.length) {
+    const p = el("p", "empty");
+    p.append(el("strong", null, rows.length ? "No matches" : "No recruiters yet"),
+      rows.length ? "Try a different search or status." : "Use the form to add the first entry.");
+    box.append(p);
+    return;
+  }
+  list.forEach((r) => box.append(card(r)));
+}
+
+function resetForm() {
+  $("form").reset();
+  editing = null;
+  $("formTitle").textContent = "Add a recruiter";
+  $("saveBtn").textContent = "Add recruiter";
+  $("cancelBtn").hidden = true;
+}
+function startEdit(r) {
+  editing = r.id;
+  FIELDS.forEach((k) => ($("f-" + k).value = r[k] || (k === "status" ? "Active" : "")));
+  $("formTitle").textContent = "Edit recruiter";
+  $("saveBtn").textContent = "Save changes";
+  $("cancelBtn").hidden = false;
+  msg("");
+  $("form").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  $("f-name").focus();
+}
+const failText = (e, verb) =>
+  e && e.code === "invalid_argument" ? "You have view-only access, so changes cannot be saved." : "Could not " + verb + ". Try again.";
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const rec = {};
+  FIELDS.forEach((k) => (rec[k] = $("f-" + k).value.trim()));
+  const old = rows.find((r) => r.id === editing);
+  rec.id = editing || newId();
+  rec.updatedAt = Date.now();
+  rec.createdAt = (old && old.createdAt) || rec.updatedAt;
+  $("saveBtn").disabled = true;
+  try { await store.save(rec); msg(editing ? "Changes saved." : "Recruiter added."); resetForm(); }
+  catch (err) { msg(failText(err, "save"), true); }
+  $("saveBtn").disabled = false;
+});
+$("cancelBtn").onclick = () => { resetForm(); msg(""); };
+$("q").oninput = render;
+$("statusFilter").onchange = render;
+
+async function init() {
+  render();
+  let db = null;
+  try { db = window.claude && window.claude.use ? await window.claude.use("db") : null; } catch (e) {}
+  if (db) {
+    const col = db.collection("recruiters");
+    store = { save: (r) => col.doc(r.id).set(r), remove: (id) => col.doc(id).delete() };
+    $("storeNote").textContent = "Entries are saved to this page and visible to everyone who can open it.";
+    const timer = setTimeout(() => { loading = false; render(); msg("Saved records could not be reached yet.", true); }, 10000);
+    col.onSnapshot((snap) => {
+      clearTimeout(timer);
+      rows = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
+      loading = false; render();
+    }, () => { clearTimeout(timer); loading = false; render(); msg("Saved records could not be loaded.", true); });
+  } else {
+    try { rows = JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) { rows = []; }
+    const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(rows)); } catch (e) {} };
+    store = {
+      save: async (r) => { rows = rows.filter((x) => x.id !== r.id).concat(r); persist(); render(); },
+      remove: async (id) => { rows = rows.filter((x) => x.id !== id); persist(); render(); },
+    };
+    $("storeNote").textContent = "Entries are saved in this browser only.";
+    loading = false; render();
+  }
+}
+init();
+</script>
+
+</body></html>

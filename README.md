@@ -1,6 +1,8 @@
 # JobScope — AI-Powered Job Hunting Assistant
 
-**JobScope** is a locally-run, full-stack job-hunting platform for technical candidates. A LangGraph agent searches **9 job boards in parallel**, falls back **deterministically** to Gmail job-alert emails when boards are bot-blocked, parses your CV, and generates **job-tailored, ATS-friendly LaTeX resumes** — all orchestrated through MCP (Model Context Protocol) tool servers and streamed to a real-time FastAPI dashboard. Everything runs on your own machine against a local Ollama LLM; no paid APIs.
+[Demo Video](files%20-%20Antigravity%20IDE%20-%20JobScope_Research.tex%202026-10-12%2018-44-37.mp4)
+
+**JobScope** is a locally-run, full-stack job-hunting platform that searches job boards in parallel, falls back to Gmail alerts when blocked, and tailors ATS-friendly LaTeX resumes via a LangGraph agent with MCP tools and a real-time dashboard. Everything runs on your machine with Ollama.
 
 ---
 
@@ -128,7 +130,7 @@
 ### Installation
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/yourusername/jobscope.git  # replace with your repo URL
 cd jobscope
 
 python -m venv .venv
@@ -243,7 +245,7 @@ jobscope/
 │                                     #   + browser escalation (StealthyFetcher/patchright)
 ├── mcp_server_indeed_scraper.py      # MCP tool: search_job_boards (9 boards, deadline, seen-memory)
 ├── mcp_server_gmail.py               # MCP tools: sync_gmail_cache, search_job_emails (Gmail API/OAuth)
-├── mcp_server_gmail_oauth_fixed.py   # LEGACY superseded Gmail server (currently has a SyntaxError — do not import)
+# mcp_server_gmail_oauth_fixed.py   # LEGACY superseded Gmail server (currently has a SyntaxError — do not import)
 ├── mcp_server_github.py              # MCP tools: list_github_repos, get_repo_readme
 │
 ├── gmail_login.py                    # one-shot Gmail OAuth consent → gmail_oauth_token.json

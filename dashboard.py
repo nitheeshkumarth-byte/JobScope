@@ -1532,11 +1532,13 @@ def _DECK_TOOL_NAMES(tool_name: str) -> bool:
 class RegisterRequest(BaseModel):
     email: str = ""
     password: str = ""
+    role: str = "candidate"
 
 
 class LoginRequest(BaseModel):
     email: str = ""
     password: str = ""
+    role: str = ""
 
 
 class ForgotRequest(BaseModel):
@@ -1582,8 +1584,7 @@ def _check_password(password: str) -> str | None:
     return None
 
 
-@app.get("/api/auth/state")
-async def auth_state(request: Request):
+async def _auth_state_payload(request: Request) -> dict:
     """What the sign-in screen needs: is anyone set up, is this browser signed
     in, and can the server actually send mail.
 
@@ -1606,7 +1607,14 @@ async def auth_state(request: Request):
         "seconds_left": auth.seconds_left(token) if user else 0,
         "idle_minutes": auth.SESSION_IDLE_MINUTES,
         "extend_minutes": auth.SESSION_EXTEND_MINUTES,
+        "role": (user or {}).get("role", "candidate"),
+        "is_owner": bool((user or {}).get("is_owner")),
     }
+
+
+@app.get("/api/auth/state")
+async def auth_state(request: Request):
+    return await _auth_state_payload(request)
 
 
 @app.post("/api/auth/register")
@@ -1622,9 +1630,10 @@ async def register(req: RegisterRequest, request: Request):
     weak = _check_password(req.password)
     if weak:
         return JSONResponse({"ok": False, "error": weak}, status_code=400)
+    role = req.role if req.role in ("candidate", "recruiter") else "candidate"
     first = auth.count_users() == 0
     try:
-        user = auth.create_user(req.email, req.password, owner=first)
+        user = auth.create_user(req.email, req.password, owner=first, role=role)
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
@@ -1716,6 +1725,40 @@ async def verify(token: str = ""):
     return {"ok": True, "email": user["email"], "message": "Email confirmed."}
 
 
+@app.post("/api/auth/register")
+async def register(req: RegisterRequest, request: Request):
+    weak = _check_password(req.password)
+    if weak:
+        return JSONResponse({"ok": False, "error": weak}, status_code=400)
+    role = req.role if req.role in ("candidate", "recruiter") else "candidate"
+    first = auth.count_users() == 0
+    try:
+        user = auth.create_user(req.email, req.password, owner=first, role=role)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    token, expires = auth.create_session(user["id"])
+    auth.set_session_profile(token, "default")
+    if not user.get("verified_at"):
+        link = None
+        try:
+            t = auth.issue_token(user["id"], "verify", 24)
+            link = f"{_base_url(request)}/?verify={t}"
+            res = mailer.send_verification(user["email"], link)
+            if res.dev_link:
+                link = res.dev_link
+        except Exception:
+            pass
+        response = JSONResponse({"ok": True, "needs_verification": True,
+                                 "email": user["email"], "dev_link": link or ""},
+                                status_code=200)
+        _set_session_cookie(response, token, expires, request)
+        return response
+    response = JSONResponse({"ok": True, "email": user["email"],
+                             "verified": True, "role": user.get("role", "candidate")})
+    _set_session_cookie(response, token, expires, request)
+    return response
+
+
 @app.post("/api/auth/login")
 async def login(req: LoginRequest, request: Request):
     """Sign in and set the session cookie.
@@ -1742,7 +1785,8 @@ async def login(req: LoginRequest, request: Request):
                              "needs_nickname": not (user.get("nickname") or "").strip(),
                              "seconds_left": auth.SESSION_IDLE_SECONDS,
                              "idle_minutes": auth.SESSION_IDLE_MINUTES,
-                             "extend_minutes": auth.SESSION_EXTEND_MINUTES})
+                             "extend_minutes": auth.SESSION_EXTEND_MINUTES,
+                             "role": user.get("role", "candidate")})
     _set_session_cookie(response, token, expires, request)
     return response
 
@@ -1759,34 +1803,36 @@ async def logout(request: Request):
 
 @app.get("/api/auth/session")
 async def session_state(request: Request):
-    """Who is signed in, and how much idle time they have left.
-
-    Deliberately reads the row without going through build_ctx or session_user.
-    Both of those TOUCH last_seen, which is correct for a request that uses the
-    app and wrong for the countdown: this endpoint is polled every 30 seconds, so
-    enforcing the timeout through it would refresh the deadline on every tick and
-    the session would never expire - kept alive by the very widget meant to report
-    it going stale. Here the row is read, the clock is reported, and nothing is
-    refreshed; only /api/auth/extend and an ordinary app request move it.
-
-    Also reports whether the account has picked a nickname yet, so the UI can ask
-    for one on a first login instead of silently showing an email address.
-    """
+    """Who is signed in, and how much idle time they have left."""
     token = request.cookies.get(auth.SESSION_COOKIE) or ""
     left = auth.seconds_left(token)
     user = auth.session_row(token) if left else None
+    smtp = mailer.configured()
+    needs_bootstrap = auth.count_users() == 0
+    if needs_bootstrap:
+        return {"ok": False, "authenticated": False, "needs_bootstrap": True, "signed_in": False,
+                "smtp_configured": smtp}
     if not user:
-        return {"ok": False, "signed_in": False, "seconds_left": 0,
+        return {"ok": False, "authenticated": False, "signed_in": False, "seconds_left": 0,
                 "idle_minutes": auth.SESSION_IDLE_MINUTES,
-                "extend_minutes": auth.SESSION_EXTEND_MINUTES}
-    return {"ok": True, "signed_in": True, "seconds_left": left,
+                "extend_minutes": auth.SESSION_EXTEND_MINUTES,
+                "needs_bootstrap": False, "smtp_configured": smtp}
+    if not user.get("verified_at"):
+        return {"ok": True, "authenticated": True, "verified": False, "email": user.get("email", ""),
+                "msg": "Please verify your email to continue.",
+                "needs_bootstrap": False, "smtp_configured": smtp,
+                "role": user.get("role", "candidate"), "is_owner": bool(user.get("is_owner"))}
+    return {"ok": True, "authenticated": True, "verified": True, "signed_in": True, "seconds_left": left,
             "idle_minutes": auth.SESSION_IDLE_MINUTES,
             "extend_minutes": auth.SESSION_EXTEND_MINUTES,
             "email": user.get("email", ""),
             "nickname": (user.get("nickname") or "").strip(),
             "display_name": auth.display_name(user),
             "avatar": user.get("avatar") or auth.DEFAULT_AVATAR,
-            "needs_nickname": not (user.get("nickname") or "").strip()}
+            "needs_nickname": not (user.get("nickname") or "").strip(),
+            "role": user.get("role", "candidate"),
+            "is_owner": bool(user.get("is_owner")),
+            "needs_bootstrap": False, "smtp_configured": smtp}
 
 
 @app.post("/api/auth/extend")
@@ -1881,10 +1927,448 @@ async def reset(req: ResetRequest):
     return {"ok": True, "message": "Password updated. Sign in with it now."}
 
 
+class CandidateRequest(BaseModel):
+    id: str | None = None
+    name: str = ""
+    current_location: str = ""
+    expected_ctc: str = ""
+    current_ctc: str = ""
+    email: str = ""
+    phone: str = ""
+    availability: str = ""
+    status: str = "working"
+    notes: str = ""
+
+
+@app.get("/api/candidates")
+async def get_candidates(request: Request, status: str | None = None, ctx: Ctx = Depends(build_ctx)):
+    try:
+        cands = auth.list_candidates(ctx.uid, status)
+        return {"ok": True, "candidates": cands}
+    except Exception as e:
+        return {"ok": False, "candidates": [], "error": str(e)}
+
+
+@app.post("/api/candidates")
+async def post_candidate(req: CandidateRequest, ctx: Ctx = Depends(build_ctx)):
+    try:
+        cand = auth.upsert_candidate(ctx.uid, req.model_dump())
+        return {"ok": True, "candidate": cand}
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.delete("/api/candidates/{cand_id}")
+async def delete_candidate(cand_id: str, ctx: Ctx = Depends(build_ctx)):
+    try:
+        ok = auth.delete_candidate(ctx.uid, cand_id)
+        return {"ok": bool(ok)}
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+# Recruiter CRM API Routes
+class CompanyRequest(BaseModel):
+    name: str = ""
+    website: str = ""
+    industry: str = ""
+    description: str = ""
+    location: str = ""
+    logo_url: str = ""
+
+
+class JobRequest(BaseModel):
+    title: str = ""
+    company_id: int | None = None
+    department: str = ""
+    description: str = ""
+    required_skills: list = []
+    preferred_skills: list = []
+    min_experience: int | None = None
+    max_experience: int | None = None
+    education_req: str = ""
+    employment_type: str = ""
+    work_mode: str = ""
+    location: str = ""
+    salary_min: int | None = None
+    salary_max: int | None = None
+    currency: str = "INR"
+    openings: int = 1
+    application_deadline: str = ""
+    status: str = "draft"
+
+
+class ApplicationStatusRequest(BaseModel):
+    status: str = ""
+    note: str = ""
+
+
+def _require_role(ctx: Ctx, roles: list[str]):
+    user_role = ctx.user.get("role", "candidate")
+    if user_role not in roles and user_role != "super_admin":
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    return True
+
+
+@app.post("/api/recruiter/company")
+async def create_company(req: CompanyRequest, ctx: Ctx = Depends(build_ctx)):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    company = auth.create_company(req.name, created_by=ctx.uid, website=req.website, 
+                                 industry=req.industry, description=req.description,
+                                 location=req.location, logo_url=req.logo_url)
+    # Create/update recruiter profile
+    auth.create_recruiter_profile(ctx.uid, company_id=company.get("id"))
+    return {"ok": True, "company": company}
+
+
+@app.get("/api/recruiter/company")
+async def get_recruiter_company(ctx: Ctx = Depends(build_ctx)):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    profile = auth.get_recruiter_profile(ctx.uid)
+    if profile and profile.get("company_id"):
+        company = auth.get_company(profile["company_id"])
+        return {"ok": True, "company": company, "profile": profile}
+    return {"ok": True, "company": None, "profile": profile}
+
+
+@app.post("/api/recruiter/jobs")
+async def create_job(req: JobRequest, ctx: Ctx = Depends(build_ctx)):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    profile = auth.get_recruiter_profile(ctx.uid)
+    company_id = req.company_id or (profile.get("company_id") if profile else None)
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Company required")
+    job = auth.create_job(company_id, ctx.uid, req.model_dump())
+    return {"ok": True, "job": job}
+
+
+@app.get("/api/recruiter/jobs")
+async def list_recruiter_jobs(ctx: Ctx = Depends(build_ctx), status: str | None = None):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    profile = auth.get_recruiter_profile(ctx.uid)
+    company_id = profile.get("company_id") if profile else None
+    jobs = auth.list_jobs(company_id=company_id, status=status)
+    return {"ok": True, "jobs": jobs}
+
+
+@app.get("/api/jobs")
+async def list_public_jobs(status: str = "published"):
+    jobs = auth.list_jobs(status=status)
+    return {"ok": True, "jobs": jobs}
+
+
+@app.post("/api/jobs/{job_id}/apply")
+async def apply_job(job_id: int, request: Request, ctx: Ctx = Depends(build_ctx)):
+    if ctx.user.get("role") != "candidate" and ctx.user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Only candidates can apply")
+    body = await request.json()
+    app = auth.apply_to_job(job_id, ctx.uid, resume_id=body.get("resume_id"), cover_letter=body.get("cover_letter"))
+    return {"ok": True, "application": app}
+
+
+@app.get("/api/recruiter/applications")
+async def list_recruiter_applications(ctx: Ctx = Depends(build_ctx), job_id: int | None = None):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    if job_id:
+        apps = auth.list_applications(job_id=job_id)
+    else:
+        profile = auth.get_recruiter_profile(ctx.uid)
+        company_id = profile.get("company_id") if profile else None
+        # Get all jobs for company then applications
+        jobs = auth.list_jobs(company_id=company_id)
+        all_apps = []
+        for j in jobs:
+            all_apps.extend(auth.list_applications(job_id=j['id']))
+        apps = all_apps
+    return {"ok": True, "applications": apps}
+
+
+@app.post("/api/recruiter/applications/{app_id}/status")
+async def update_app_status(app_id: int, req: ApplicationStatusRequest, ctx: Ctx = Depends(build_ctx)):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    ok = auth.update_application_status(app_id, req.status)
+    return {"ok": bool(ok)}
+
+
+@app.get("/api/recruiter/dashboard/stats")
+async def recruiter_dashboard_stats(ctx: Ctx = Depends(build_ctx)):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    profile = auth.get_recruiter_profile(ctx.uid)
+    company_id = profile.get("company_id") if profile else None
+    jobs = auth.list_jobs(company_id=company_id)
+    all_apps = []
+    for j in jobs:
+        all_apps.extend(auth.list_applications(job_id=j['id']))
+    stats = {
+        "total_jobs": len(jobs),
+        "active_jobs": len([j for j in jobs if j.get('status') == 'published']),
+        "total_applications": len(all_apps),
+        "new_applications": len([a for a in all_apps if a.get('status') == 'applied']),
+        "shortlisted": len([a for a in all_apps if a.get('status') == 'shortlisted']),
+        "interview_scheduled": len([a for a in all_apps if a.get('status') == 'interview_scheduled']),
+        "offers_released": len([a for a in all_apps if a.get('status') == 'offer_released']),
+        "hired": len([a for a in all_apps if a.get('status') == 'hired']),
+    }
+    return {"ok": True, "stats": stats, "recent_applications": all_apps[:10], "jobs": jobs}
+
+
+class RecruiterProfileRequest(BaseModel):
+    full_name: str = ""
+    title: str = ""
+    phone: str = ""
+
+
+@app.get("/api/recruiter/profile")
+async def get_recruiter_profile_api(ctx: Ctx = Depends(build_ctx)):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    profile = auth.get_recruiter_profile(ctx.uid)
+    return {"ok": True, "profile": profile or {}}
+
+
+@app.post("/api/recruiter/profile")
+async def save_recruiter_profile_api(req: RecruiterProfileRequest, ctx: Ctx = Depends(build_ctx)):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    profile = auth.create_recruiter_profile(ctx.uid, title=req.title, phone=req.phone)
+    # Also store name if possible - extend if needed
+    return {"ok": True, "profile": profile}
+
+
+# Config endpoints for model selection
+@app.get("/api/config")
+async def get_config(ctx: Ctx = Depends(build_ctx)):
+    # Return config from session/state if available
+    cfg = getattr(ctx, 'config', {}) or {}
+    return {"ok": True, **cfg}
+
+
+@app.post("/api/config")
+async def save_config(req: Request, ctx: Ctx = Depends(build_ctx)):
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    # Try to save to a simple store if possible
+    try:
+        if not hasattr(app.state, 'recruiter_config'):
+            app.state.recruiter_config = {}
+        app.state.recruiter_config[ctx.uid] = body
+    except Exception:
+        pass
+    return {"ok": True}
+
+
+@app.get("/api/config/models")
+async def get_models():
+    # Try to get available models from Ollama if possible
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            r = await client.get("http://localhost:11434/api/tags")
+            if r.status_code == 200:
+                data = r.json()
+                models = []
+                for m in data.get('models', []):
+                    name = m.get('name') or m.get('model')
+                    models.append({"id": name, "name": name})
+                if models:
+                    return {"ok": True, "models": models}
+    except Exception:
+        pass
+    # Fallback to common models
+    return {"ok": True, "models": [
+        {"id": "llama3.1", "name": "llama3.1"},
+        {"id": "llama3.2", "name": "llama3.2"},
+        {"id": "mistral", "name": "Mistral"},
+        {"id": "gemma2", "name": "Gemma 2"},
+        {"id": "qwen2.5", "name": "Qwen 2.5"},
+    ]}
+
+
+# Super Admin User Management
+async def _require_admin(request: Request):
+    # Allow fixed admin login via cookie
+    if _is_admin_authenticated(request):
+        return {"is_fixed_admin": True}
+    # Or allow super_admin user session
+    token = request.cookies.get(auth.SESSION_COOKIE) or ""
+    user = auth.session_user(token)
+    if user and (user.get("role") == "super_admin" or user.get("is_owner")):
+        return {"is_fixed_admin": False, "user": user}
+    raise HTTPException(status_code=403, detail="Super admin access required")
+
+
+@app.get("/api/admin/users")
+async def admin_list_users(request: Request):
+    await _require_admin(request)
+    with auth.connect() as conn:
+        rows = conn.execute(
+            "SELECT id, email, role, is_owner, verified_at, created_at, nickname "
+            "FROM users ORDER BY id").fetchall()
+    return {"ok": True, "users": [dict(r) for r in rows]}
+
+
+class UserCreateRequest(BaseModel):
+    email: str = ""
+    password: str = ""
+    role: str = "candidate"
+
+
+@app.post("/api/admin/users")
+async def admin_create_user(req: UserCreateRequest, request: Request):
+    await _require_admin(request)
+    weak = _check_password(req.password)
+    if weak:
+        return JSONResponse({"ok": False, "error": weak}, status_code=400)
+    role = req.role if req.role in ("candidate", "recruiter", "super_admin") else "candidate"
+    try:
+        user = auth.create_user(req.email, req.password, role=role)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    # An account created by an admin is vouched for; it skips the email loop.
+    auth.mark_verified(user["id"])
+    return {"ok": True}
+
+
+class UserUpdateRequest(BaseModel):
+    email: str | None = None
+    password: str | None = None
+    role: str | None = None
+    is_owner: int | None = None
+
+
+@app.post("/api/admin/users/{user_id}/update")
+async def admin_update_user(user_id: int, req: UserUpdateRequest, request: Request):
+    await _require_admin(request)
+    import sqlite3
+    updates, params = [], []
+    if req.email is not None:
+        email = auth.normalize_email(req.email)
+        if not auth._looks_like_email(email):
+            return JSONResponse(
+                {"ok": False, "error": "That does not look like an email address"},
+                status_code=400)
+        updates.append("email = ?")
+        params.append(email)
+    if req.password:
+        weak = _check_password(req.password)
+        if weak:
+            return JSONResponse({"ok": False, "error": weak}, status_code=400)
+        updates.append("password_hash = ?")
+        params.append(auth.hash_password(req.password))
+    if req.role is not None:
+        if req.role not in ("candidate", "recruiter", "super_admin"):
+            return JSONResponse({"ok": False, "error": "Unknown role"}, status_code=400)
+        updates.append("role = ?")
+        params.append(req.role)
+    if req.is_owner is not None:
+        updates.append("is_owner = ?")
+        params.append(int(bool(req.is_owner)))
+    if not updates:
+        return JSONResponse({"ok": False, "error": "No changes to save"}, status_code=400)
+    params.append(user_id)
+    try:
+        with auth.connect() as conn:
+            cur = conn.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", params)
+            if req.password:
+                # A new password invalidates every existing cookie.
+                conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    except sqlite3.IntegrityError:
+        return JSONResponse({"ok": False, "error": "That email is already in use"},
+                            status_code=400)
+    if not cur.rowcount:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"ok": True}
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(user_id: int, request: Request):
+    admin = await _require_admin(request)
+    # Prevent deleting self if using user session
+    if not admin.get("is_fixed_admin") and admin.get("user") and admin["user"]["id"] == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    if not auth.delete_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"ok": True}
+
+
+# Admin auth (separate from user auth)
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "password"
+
+
+def _is_admin_authenticated(request: Request) -> bool:
+    token = request.cookies.get("js_admin_session") or ""
+    if not token:
+        return False
+    try:
+        import hmac, hashlib
+        expected = hashlib.sha256(f"{ADMIN_USERNAME}:{ADMIN_PASSWORD}:jobscope-admin".encode()).hexdigest()
+        return hmac.compare_digest(token, expected)
+    except Exception:
+        return False
+
+
+@app.get("/recruiter")
+@app.get("/recruiter/")
+async def recruiter_portal():
+    """Serve the recruiter CRM dashboard."""
+    recruiter_html = os.path.join(STATIC_DIR, "recruiter.html")
+    if os.path.exists(recruiter_html):
+        return FileResponse(recruiter_html)
+    # Fallback to main page if recruiter.html doesn't exist
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
+@app.get("/candidate")
+@app.get("/candidate/")
+async def candidate_portal():
+    """Serve the candidate portal."""
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
+@app.get("/admin")
+@app.get("/admin/")
+async def admin_portal():
+    """Serve the super admin portal."""
+    admin_html = os.path.join(STATIC_DIR, "admin.html")
+    if os.path.exists(admin_html):
+        return FileResponse(admin_html)
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
 @app.get("/")
 async def index():
-    """Serve the single-page JobScope UI."""
+    """Serve the main JobScope UI (restored home page)."""
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
+class AdminLoginRequest(BaseModel):
+    username: str = ""
+    password: str = ""
+
+
+@app.post("/api/admin/login")
+async def admin_login(req: AdminLoginRequest, request: Request):
+    if req.username != ADMIN_USERNAME or req.password != ADMIN_PASSWORD:
+        return JSONResponse({"ok": False, "error": "Invalid credentials"}, status_code=401)
+    import hashlib
+    token = hashlib.sha256(f"{ADMIN_USERNAME}:{ADMIN_PASSWORD}:jobscope-admin".encode()).hexdigest()
+    response = JSONResponse({"ok": True})
+    response.set_cookie("js_admin_session", token, httponly=True, samesite="lax",
+                        secure=request.url.scheme == "https", path="/")
+    return response
+
+
+@app.post("/api/admin/logout")
+async def admin_logout():
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("js_admin_session", path="/")
+    return response
+
+
+@app.get("/api/admin/session")
+async def admin_session(request: Request):
+    return {"ok": True, "authenticated": _is_admin_authenticated(request)}
 
 
 _BOARD_NAMES_CACHE: dict[str, list[str]] = {}
@@ -2042,6 +2526,36 @@ async def gmail_listings(days_back: int = 0, query: str = "", limit: int = 0,
     return {"sources": by_sender, "total": len(jobs), "jobs": jobs,
             "days_back": days,
             "cached_total": gmail_index.count_listings()}
+
+
+@app.get("/api/candidates")
+async def get_candidates(ctx: Ctx = Depends(build_ctx), status: str | None = None):
+    return {"ok": True, "candidates": auth.list_candidates(ctx.uid, status)}
+
+
+@app.post("/api/candidates")
+async def save_candidate(req: Request, ctx: Ctx = Depends(build_ctx)):
+    body = await req.json()
+    cid = auth.upsert_candidate(
+        ctx.uid,
+        candidate_id=body.get("id") or None,
+        name=body.get("name") or "",
+        current_location=body.get("current_location") or "",
+        expected_ctc=body.get("expected_ctc") or "",
+        current_ctc=body.get("current_ctc") or "",
+        email=body.get("email") or "",
+        phone=body.get("phone") or "",
+        availability=body.get("availability") or "",
+        status=body.get("status") or "working",
+        notes=body.get("notes") or "",
+    )
+    return {"ok": True, "id": cid}
+
+
+@app.delete("/api/candidates/{candidate_id}")
+async def remove_candidate(candidate_id: str, ctx: Ctx = Depends(build_ctx)):
+    ok = auth.delete_candidate(ctx.uid, candidate_id)
+    return {"ok": bool(ok)}
 
 
 @app.get("/api/config")

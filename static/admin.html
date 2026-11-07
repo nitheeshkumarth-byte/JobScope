@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JobScope - Super Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>try{var t=localStorage.getItem('jobscope-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+  <style>
+    :root{--paper:#f3f2fc;--surface:#fff;--surface-2:#ecebf8;--line:#d8d6ee;--ink:#14123a;--muted:#5b5889;--signal:#8f7fff;--danger:#4f46e5;--danger-ink:#fff;--bad:#c92a2a;--ok:#0f8a5f;
+      --font-display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;--font-body:"Figtree","Segoe UI",system-ui,sans-serif}
+    :root[data-theme="dark"]{--paper:#0b0a1f;--surface:#14122e;--surface-2:#0f0d26;--line:#2a2756;--ink:#eceafc;--muted:#9a97c4;--danger:#8f7fff;--danger-ink:#0b0a1f;--bad:#ff7b7b;--ok:#3ccf91}
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:var(--font-body);background:var(--paper);color:var(--ink);min-height:100vh;line-height:1.5;-webkit-font-smoothing:antialiased}
+    :focus-visible{outline:3px solid var(--signal);outline-offset:2px}
+    .mark{width:22px;height:22px;border-radius:50%;border:2px solid currentColor;position:relative;flex:none;background:radial-gradient(circle,var(--danger) 0 3.5px,transparent 4px)}
+    .mark::before,.mark::after{content:"";position:absolute;background:currentColor}
+    .mark::before{left:50%;top:-6px;bottom:-6px;width:2px;transform:translateX(-50%)}
+    .mark::after{top:50%;left:-6px;right:-6px;height:2px;transform:translateY(-50%)}
+    .brand{display:flex;align-items:center;gap:12px;font-family:var(--font-display);font-weight:700;font-size:20px}
+    .login-container{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:#14123a}
+    .card{background:var(--surface);border-radius:20px;padding:36px;width:100%;max-width:400px;border-top:6px solid var(--danger)}
+    .card .brand{font-size:24px;margin-bottom:6px}
+    .subtitle{color:var(--muted);margin-bottom:24px}
+    .form-group{margin-bottom:14px}
+    label{display:block;font-size:13.5px;font-weight:600;margin-bottom:6px}
+    input,select{width:100%;padding:10px 12px;border-radius:6px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink);font-family:inherit;font-size:15px}
+    input:focus,select:focus{outline:none;border-color:var(--danger);box-shadow:0 0 0 3px color-mix(in srgb,var(--danger) 25%,transparent)}
+    .btn{padding:10px 16px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
+    .btn:hover:not(:disabled){filter:brightness(.96)}
+    .btn:disabled{opacity:.6;cursor:default}
+    .btn-primary{background:var(--danger);color:var(--danger-ink);border-color:var(--danger)}
+    .btn-wide{width:100%;padding:12px}
+    .btn-sm{padding:6px 12px}
+    .btn-danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,var(--line))}
+    .btn-primary.btn-del{background:var(--bad);border-color:var(--bad);color:#fff}
+    .error{color:var(--bad);font-size:13.5px;margin:6px 0;min-height:20px}
+    .back-link{color:var(--muted);font-size:14px;text-decoration:none}
+    .back-link:hover{color:var(--ink);text-decoration:underline}
+    .header{background:#14123a;color:#eceafc;padding:14px 28px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .header .tag{font-family:var(--font-body);font-weight:600;font-size:12.5px;background:var(--danger);color:var(--danger-ink);padding:2px 9px;border-radius:999px}
+    .header .btn{background:transparent;color:#eceafc;border-color:#2a2757}
+    .header .btn:hover{background:#221f4a}
+    .content{padding:32px 28px;max-width:1200px;margin:0 auto}
+    h1{font-family:var(--font-display);font-size:30px;letter-spacing:-.02em;line-height:1.1}
+    .lead{color:var(--muted);margin:6px 0 20px}
+    .section{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+    .toolbar{padding:14px 20px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+    .toolbar input{max-width:320px}
+    .count{color:var(--muted);font-size:14px}
+    .table-wrap{overflow-x:auto}
+    table{width:100%;border-collapse:collapse;min-width:680px}
+    th{text-align:left;padding:11px 20px;background:var(--surface-2);font-size:13px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line)}
+    td{padding:12px 20px;border-bottom:1px solid var(--line);font-size:14.5px}
+    tbody tr:last-child td{border-bottom:none}
+    tbody tr:hover td{background:var(--surface-2)}
+    .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:13px;font-weight:600;background:var(--surface-2);border:1px solid var(--line)}
+    .pill.super_admin{background:color-mix(in srgb,var(--danger) 14%,transparent);color:var(--danger);border-color:transparent}
+    .pill.recruiter{background:#dce6ff;color:#1c3aa8;border-color:transparent}
+    .actions{display:flex;gap:8px}
+    .empty{padding:40px;text-align:center;color:var(--muted)}
+    .overlay{position:fixed;inset:0;background:rgba(8,17,31,.6);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
+    .modal{background:var(--surface);border-radius:16px;padding:26px;width:100%;max-width:420px;border:1px solid var(--line)}
+    .modal h2{font-family:var(--font-display);font-size:22px;margin-bottom:16px}
+    .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+    .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 18px;border-radius:8px;font-size:14px;z-index:60}
+    .toast.err{background:var(--bad);color:#fff}
+    @media (max-width:640px){.header{padding:12px 16px}.content{padding:20px 14px}.card{padding:26px}}
+  /* FX-START futuristic layer: decorative only, no ids/links touched */
+@keyframes fxRise{from{opacity:0;transform:translateY(18px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes fxPing{0%{box-shadow:0 0 0 0 rgba(143,127,255,.55)}80%,100%{box-shadow:0 0 0 12px rgba(143,127,255,0)}}
+@keyframes fxSweep{to{transform:rotate(360deg)}}
+@keyframes fxScan{0%{transform:translateY(-4vh);opacity:0}8%{opacity:1}92%{opacity:1}100%{transform:translateY(104vh);opacity:0}}
+@keyframes fxGrid{to{background-position:0 56px,56px 0}}
+@keyframes fxShine{to{background-position:220% 0}}
+@keyframes fxFloat{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(3vw,-4vh,0)}}
+@keyframes fxGlowPulse{0%,100%{box-shadow:0 0 0 1px rgba(143,127,255,.0),0 8px 28px -10px rgba(143,127,255,.45)}50%{box-shadow:0 0 0 1px rgba(143,127,255,.35),0 10px 38px -8px rgba(143,127,255,.75)}}
+
+/* layers */
+#fx-bg{position:fixed;inset:0;width:100%;height:100%;z-index:-3;pointer-events:none;opacity:.9}
+.fx-layer{position:fixed;pointer-events:none;z-index:-2}
+#fx-grid{inset:0;background-image:linear-gradient(rgba(143,127,255,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(143,127,255,.07) 1px,transparent 1px);background-size:56px 56px;
+  -webkit-mask-image:radial-gradient(ellipse 80% 70% at 50% 40%,#000 20%,transparent 80%);mask-image:radial-gradient(ellipse 80% 70% at 50% 40%,#000 20%,transparent 80%);animation:fxGrid 14s linear infinite}
+#fx-orb1,#fx-orb2{width:46vmax;height:46vmax;border-radius:50%;filter:blur(90px);opacity:.5}
+#fx-orb1{left:-14vmax;top:-18vmax;background:radial-gradient(circle,rgba(143,127,255,.30),transparent 65%);animation:fxFloat 24s ease-in-out infinite}
+#fx-orb2{right:-16vmax;bottom:-20vmax;background:radial-gradient(circle,rgba(56,214,245,.22),transparent 65%);animation:fxFloat 30s ease-in-out infinite reverse}
+#fx-radar{right:-14vmax;bottom:-14vmax;width:46vmax;height:46vmax;border-radius:50%;opacity:.55;
+  background:repeating-radial-gradient(circle,transparent 0 calc(11% - 1px),rgba(143,127,255,.16) calc(11% - 1px) 11%)}
+#fx-radar::after{content:"";position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 0deg,rgba(143,127,255,.0) 0 82%,rgba(143,127,255,.38) 100%);animation:fxSweep 7s linear infinite}
+#fx-scan{left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,transparent,rgba(143,127,255,.7),transparent);box-shadow:0 0 18px 2px rgba(143,127,255,.35);animation:fxScan 9s ease-in-out infinite;z-index:-1}
+#fx-spot{inset:0;z-index:-1;background:radial-gradient(520px circle at var(--mx,50%) var(--my,30%),rgba(143,127,255,.10),transparent 60%)}
+
+/* glass surfaces */
+:root{--glass:color-mix(in srgb,var(--surface,#14122e) 66%,transparent)}
+.portal,.modal-card,.stats-grid,.section,.card,.modal,.circuit,.composer,.msg.assistant .bubble,.toolcard,.status,.starter,.gatecard,.account-btn,.header,.page-intro{
+  background:var(--glass)!important;-webkit-backdrop-filter:blur(14px) saturate(140%);backdrop-filter:blur(14px) saturate(140%)}
+.sidebar{background:color-mix(in srgb,var(--side,var(--surface)) 74%,transparent)!important;-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+.modal-card,.modal{background:color-mix(in srgb,var(--surface,#14122e) 90%,transparent)!important}
+.login-container,.main,.content{background:transparent}
+
+/* glow borders + hover */
+.portal,.stats-grid,.section,.card,.circuit,.composer,.toolcard,.gatecard{border-color:color-mix(in srgb,var(--signal,#8f7fff) 18%,var(--border,var(--line,#2a2756)))!important;transition:border-color .3s,box-shadow .3s,transform .3s}
+.portal:hover,.section:hover,.card:hover,.circuit:hover{border-color:color-mix(in srgb,var(--signal,#8f7fff) 55%,transparent)!important;box-shadow:0 0 0 1px rgba(143,127,255,.12),0 18px 50px -22px rgba(143,127,255,.45)}
+.portal:hover,.card.show:hover{transform:translateY(-3px)}
+
+/* entrance */
+.portal,.stats-grid,.section,.page-intro,.circuit,.composer,.gatecard,.card,.hero>*{animation:fxRise .7s cubic-bezier(.22,.68,.35,1) both}
+.portal:nth-child(2){animation-delay:.12s}.section:nth-of-type(2){animation-delay:.1s}.section:nth-of-type(3){animation-delay:.2s}
+.hero>*:nth-child(2){animation-delay:.08s}.hero>*:nth-child(3){animation-delay:.16s}.hero>*:nth-child(4){animation-delay:.24s}
+
+/* buttons */
+.btn-candidate,.btn-recruiter,.btn-primary,.btn.primary,.btnglow,.sendbtn,#gSubmit,#gResetSubmit{position:relative;overflow:hidden;animation:fxGlowPulse 3.2s ease-in-out infinite;transition:transform .2s,filter .2s}
+.btn-candidate::after,.btn-recruiter::after,.btn-primary::after,.btn.primary::after,.btnglow::after,.sendbtn::after,#gSubmit::after,#gResetSubmit::after{content:""!important;display:block!important;position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(115deg,transparent,rgba(255,255,255,.55),transparent);transform:skewX(-20deg);transition:left .6s ease}
+.btn-candidate:hover::after,.btn-recruiter:hover::after,.btn-primary:hover::after,.btn.primary:hover::after,.btnglow:hover::after,.sendbtn:hover::after,#gSubmit:hover::after,#gResetSubmit:hover::after{left:130%}
+.btn-candidate:hover,.btn-recruiter:hover,.btn-primary:hover,.btn.primary:hover,.btnglow:hover,.sendbtn:hover,#gSubmit:hover{transform:translateY(-2px)!important}
+.btn-secondary:hover,.iconbtn:hover,.starter:hover,.account-btn:hover{border-color:var(--signal,#8f7fff)!important;box-shadow:0 0 18px -4px rgba(143,127,255,.55)!important}
+input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(143,127,255,.22),0 0 24px -6px rgba(143,127,255,.6)!important}
+
+/* brand: J tile instead of crosshair */
+.mark,.brand .dot{width:28px!important;height:28px!important;border-radius:9px!important;border:0!important;position:relative!important;display:inline-grid!important;place-items:center;flex:none;
+  background:linear-gradient(135deg,#8f7fff,#38d6f5)!important;color:#0b0a1f;animation:fxPing 2.6s ease-out infinite!important}
+.mark::before,.brand .dot::before{display:none!important}
+.mark::after,.brand .dot::after{content:"J"!important;position:static!important;width:auto!important;height:auto!important;transform:none!important;background:none!important;color:#0b0a1f;font:800 16px/1 var(--font-display,system-ui)!important}
+
+/* table rows + nav */
+tbody tr{transition:background .2s,box-shadow .2s}
+tbody tr:hover td{background:color-mix(in srgb,var(--signal,#8f7fff) 7%,transparent)!important}
+.nav-item{transition:background .2s,transform .2s,box-shadow .2s}.nav-item:hover{transform:translateX(4px)}
+.nav-item.active{box-shadow:inset 3px 0 0 var(--signal,#8f7fff),0 0 22px -8px rgba(143,127,255,.6)}
+.stat-value,.stat-num,.stat b{text-shadow:0 0 22px rgba(143,127,255,.35)}
+
+/* light theme: calmer */
+[data-theme="light"] #fx-bg{opacity:.45}[data-theme="light"] #fx-grid{background-image:linear-gradient(rgba(79,70,229,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(79,70,229,.08) 1px,transparent 1px)}
+[data-theme="light"] #fx-scan,[data-theme="light"] #fx-radar{opacity:.25}
+[data-theme="light"] .portal,[data-theme="light"] .section,[data-theme="light"] .card,[data-theme="light"] .stats-grid{background:color-mix(in srgb,#fff 78%,transparent)!important}
+
+@media(max-width:720px){#fx-radar{width:80vmax;height:80vmax;opacity:.3}#fx-orb1,#fx-orb2{opacity:.35}}
+@media(prefers-reduced-motion:reduce){#fx-grid,#fx-orb1,#fx-orb2,#fx-scan,#fx-radar::after,.mark,.brand .dot,.btn-candidate,.btn-recruiter,.btn-primary,.btn.primary,.btnglow,.sendbtn,#gSubmit,.portal,.stats-grid,.section,.page-intro,.circuit,.composer,.gatecard,.card,.hero>*{animation:none!important}#fx-scan{display:none}}
+.gate{background:rgba(11,10,31,.5)!important}
+html.gated .app,html.gated header{opacity:0!important}
+[data-theme="light"] .gate{background:rgba(243,242,252,.55)!important}
+/* FX-END */
+</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/htm@3.1.1/dist/htm.js" crossorigin></script>
+  <script>
+    const { useState, useEffect, useMemo } = React;
+    const html = htm.bind(React.createElement);
+    const ROLES = ['candidate', 'recruiter', 'super_admin'];
+
+    // One fetch wrapper: JSON in/out, and errors carry the server's message + status.
+    async function api(path, opts = {}) {
+      const r = await fetch(path, { credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, ...opts });
+      let data = null;
+      try { data = await r.json(); } catch (e) {}
+      if (!r.ok || (data && data.ok === false)) {
+        const err = new Error((data && (data.detail || data.error)) || 'Request failed (' + r.status + ')');
+        err.status = r.status;
+        throw err;
+      }
+      return data;
+    }
+
+    function toggleTheme() {
+      const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem('jobscope-theme', next); } catch (e) {}
+    }
+
+    window.toggleTheme = toggleTheme;
+    function Login({ onDone }) {
+      const [username, setU] = useState('');
+      const [password, setP] = useState('');
+      const [error, setError] = useState('');
+      const [busy, setBusy] = useState(false);
+      async function submit(e) {
+        e.preventDefault(); setError(''); setBusy(true);
+        try { await api('/api/admin/login', { method: 'POST', body: JSON.stringify({ username: username.trim(), password }) }); onDone(); }
+        catch (err) { setError(err.message || 'Could not reach server'); }
+        finally { setBusy(false); }
+      }
+      return html`<div className="login-container" id="login-view"><div className="card">
+        <div className="brand"><span className="mark" aria-hidden="true"></span><span>JobScope</span></div>
+        <div className="subtitle">Super Admin Portal</div>
+        <form id="admin-login-form" onSubmit=${submit}>
+          <div className="form-group"><label htmlFor="username">Username</label>
+            <input id="username" required autoComplete="username" placeholder="admin" value=${username} onChange=${e => setU(e.target.value)} /></div>
+          <div className="form-group"><label htmlFor="password">Password</label>
+            <input id="password" type="password" required autoComplete="current-password" placeholder="••••••••" value=${password} onChange=${e => setP(e.target.value)} /></div>
+          <div className="error" id="login-error" role="alert">${error}</div>
+          <button className="btn btn-primary btn-wide" disabled=${busy}>${busy ? 'Signing in…' : 'Sign in'}</button>
+        </form>
+        <div style=${{ marginTop: 18, textAlign: 'center' }}><a href="/" className="back-link">← Back to home</a></div>
+      </div></div>`;
+    }
+
+    function EditModal({ user, onClose, onSave }) {
+      const [email, setEmail] = useState(user.email || '');
+      const [role, setRole] = useState(user.role);
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState('');
+      async function submit(e) {
+        e.preventDefault();
+        const patch = {};
+        if (role !== user.role) patch.role = role;
+        if (email.trim() !== user.email) patch.email = email.trim();
+        if (!Object.keys(patch).length) { onClose(); return; }
+        setBusy(true); setError('');
+        try { await onSave(patch); } catch (err) { setError(err.message); setBusy(false); }
+      }
+      return html`<div className="overlay" onClick=${e => e.target === e.currentTarget && onClose()}>
+        <form className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-title" onSubmit=${submit}>
+          <h2 id="edit-title">Edit user #${user.id}</h2>
+          <div className="form-group"><label htmlFor="ed-email">Email</label>
+            <input id="ed-email" type="email" required value=${email} onChange=${e => setEmail(e.target.value)} /></div>
+          <div className="form-group"><label htmlFor="ed-role">Role</label>
+            <select id="ed-role" value=${role} onChange=${e => setRole(e.target.value)}>${ROLES.map(r => html`<option key=${r} value=${r}>${r}</option>`)}</select></div>
+          <div className="error" role="alert">${error}</div>
+          <div className="modal-actions">
+            <button type="button" className="btn" onClick=${onClose}>Cancel</button>
+            <button className="btn btn-primary" disabled=${busy}>${busy ? 'Saving…' : 'Save changes'}</button>
+          </div>
+        </form></div>`;
+    }
+
+    function DeleteModal({ user, onClose, onConfirm }) {
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState('');
+      async function go() {
+        setBusy(true); setError('');
+        try { await onConfirm(); } catch (err) { setError(err.message); setBusy(false); }
+      }
+      return html`<div className="overlay" onClick=${e => e.target === e.currentTarget && onClose()}>
+        <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="del-title">
+          <h2 id="del-title">Delete this user?</h2>
+          <p>${user.email} will lose access immediately. This cannot be undone.</p>
+          <div className="error" role="alert">${error}</div>
+          <div className="modal-actions">
+            <button className="btn" onClick=${onClose}>Cancel</button>
+            <button className="btn btn-primary btn-del" disabled=${busy} onClick=${go}>${busy ? 'Deleting…' : 'Delete user'}</button>
+          </div>
+        </div></div>`;
+    }
+
+    function Console({ onSignedOut }) {
+      const [users, setUsers] = useState(null);
+      const [error, setError] = useState('');
+      const [query, setQuery] = useState('');
+      const [editing, setEditing] = useState(null);
+      const [deleting, setDeleting] = useState(null);
+      const [toast, setToast] = useState(null);
+
+      const say = (msg, err) => { setToast({ msg, err }); setTimeout(() => setToast(null), 2800); };
+      // 401/403 means the admin session ended: back to the sign-in screen.
+      const guard = err => { if (err.status === 401 || err.status === 403) onSignedOut(); };
+
+      async function load() {
+        setError('');
+        try { setUsers((await api('/api/admin/users')).users || []); }
+        catch (err) { guard(err); setError(err.message); }
+      }
+      useEffect(() => { load(); }, []);
+
+      const shown = useMemo(() => {
+        const q = query.trim().toLowerCase();
+        return (users || []).filter(u => !q || (u.email || '').toLowerCase().includes(q) || u.role.includes(q));
+      }, [users, query]);
+
+      async function save(patch) {
+        try { await api('/api/admin/users/' + editing.id + '/update', { method: 'POST', body: JSON.stringify(patch) }); }
+        catch (err) { guard(err); throw err; }
+        setEditing(null); say('User updated'); load();
+      }
+      async function remove() {
+        try { await api('/api/admin/users/' + deleting.id, { method: 'DELETE' }); }
+        catch (err) { guard(err); throw err; }
+        setDeleting(null); say('User deleted'); load();
+      }
+      async function logout() {
+        try { await api('/api/admin/logout', { method: 'POST' }); } catch (e) {}
+        onSignedOut();
+      }
+
+      window.logout = logout; window.loadUsers = load;
+      return html`<div id="admin-app">
+        <header className="header">
+          <div className="brand"><span className="mark" aria-hidden="true"></span><span>JobScope</span><span className="tag">Super Admin</span></div>
+          <div style=${{ display: 'flex', gap: 10 }}>
+            <button className="btn" onClick=${toggleTheme}>Theme</button>
+            <button className="btn" onClick=${logout}>Sign Out</button>
+          </div>
+        </header>
+        <div className="content">
+          <h1>Users</h1>
+          <p className="lead">Change a person's email or role, or remove their account. Changes apply as soon as you save them.</p>
+          <div className="section">
+            <div className="toolbar">
+              <input type="search" aria-label="Search users" placeholder="Search by email or role" value=${query} onChange=${e => setQuery(e.target.value)} />
+              <span className="count">${users ? shown.length + ' of ' + users.length + ' users' : ''}</span>
+              <button className="btn btn-sm" onClick=${load}>Refresh</button>
+            </div>
+            ${error && html`<div className="error" style=${{ padding: '12px 20px' }} role="alert">${error}</div>`}
+            <div className="table-wrap"><table>
+              <thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Owner</th><th>Verified</th><th>Actions</th></tr></thead>
+              <tbody id="users-list">${shown.map(u => html`<tr key=${u.id}>
+                <td>${u.id}</td><td>${u.email}</td>
+                <td><span className=${'pill ' + u.role}>${u.role}</span></td>
+                <td>${u.is_owner ? 'Yes' : 'No'}</td><td>${u.verified_at ? 'Yes' : 'No'}</td>
+                <td><div className="actions">
+                  <button className="btn btn-sm" onClick=${() => setEditing(u)}>Edit</button>
+                  <button className="btn btn-sm btn-danger" onClick=${() => setDeleting(u)}>Delete</button>
+                </div></td></tr>`)}</tbody>
+            </table></div>
+            ${users === null && !error && html`<div className="empty">Loading users…</div>`}
+            ${users && !shown.length && html`<div className="empty">${query ? 'No users match your search.' : 'No users yet.'}</div>`}
+          </div>
+        </div>
+        ${editing && html`<${EditModal} user=${editing} onClose=${() => setEditing(null)} onSave=${save} />`}
+        ${deleting && html`<${DeleteModal} user=${deleting} onClose=${() => setDeleting(null)} onConfirm=${remove} />`}
+        ${toast && html`<div className=${'toast' + (toast.err ? ' err' : '')} role="status">${toast.msg}</div>`}
+      </div>`;
+    }
+
+    function App() {
+      const [authed, setAuthed] = useState(null);
+      useEffect(() => {
+        api('/api/admin/session').then(d => setAuthed(!!d.authenticated)).catch(() => setAuthed(false));
+      }, []);
+      if (authed === null) return null;
+      return authed ? html`<${Console} onSignedOut=${() => setAuthed(false)} />` : html`<${Login} onDone=${() => setAuthed(true)} />`;
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(html`<${App} />`);
+  </script>
+<script>/* FX-START decorative background; aria-hidden, pointer-events none */
+(function(){
+  if(window.__fx)return;window.__fx=1;
+  var b=document.body,mk=function(id,cls){var d=document.createElement('div');d.id=id;d.className='fx-layer'+(cls?' '+cls:'');d.setAttribute('aria-hidden','true');b.insertBefore(d,b.firstChild);return d};
+  ['fx-spot','fx-scan','fx-radar','fx-orb2','fx-orb1','fx-grid'].forEach(function(i){mk(i)});
+  var c=document.createElement('canvas');c.id='fx-bg';c.setAttribute('aria-hidden','true');b.insertBefore(c,b.firstChild);
+  var x=c.getContext('2d'),W,H,P=[],m={x:-999,y:-999},dpr=Math.min(window.devicePixelRatio||1,1.5),
+      still=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function col(){return document.documentElement.getAttribute('data-theme')==='light'?'79,70,229':'143,127,255'}
+  function size(){W=c.width=innerWidth*dpr;H=c.height=innerHeight*dpr;c.style.width=innerWidth+'px';c.style.height=innerHeight+'px';
+    var n=Math.min(90,Math.round(innerWidth*innerHeight/16000));P=[];
+    for(var i=0;i<n;i++)P.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.35*dpr,vy:(Math.random()-.5)*.35*dpr,r:(Math.random()*1.4+.6)*dpr})}
+  function draw(){
+    x.clearRect(0,0,W,H);var k=col(),L=150*dpr,mx=m.x*dpr,my=m.y*dpr,i,j,p,q,d;
+    for(i=0;i<P.length;i++){p=P[i];
+      if(!still){p.x+=p.vx;p.y+=p.vy;if(p.x<0||p.x>W)p.vx*=-1;if(p.y<0||p.y>H)p.vy*=-1}
+      for(j=i+1;j<P.length;j++){q=P[j];d=Math.hypot(p.x-q.x,p.y-q.y);
+        if(d<L){x.strokeStyle='rgba('+k+','+(0.22*(1-d/L)).toFixed(3)+')';x.lineWidth=dpr*.8;x.beginPath();x.moveTo(p.x,p.y);x.lineTo(q.x,q.y);x.stroke()}}
+      d=Math.hypot(p.x-mx,p.y-my);
+      if(d<200*dpr){x.strokeStyle='rgba('+k+','+(0.5*(1-d/(200*dpr))).toFixed(3)+')';x.beginPath();x.moveTo(p.x,p.y);x.lineTo(mx,my);x.stroke()}
+      x.fillStyle='rgba('+k+',.75)';x.beginPath();x.arc(p.x,p.y,p.r,0,6.283);x.fill()}
+    if(!still&&!document.hidden)requestAnimationFrame(draw)}
+  size();draw();addEventListener('resize',size);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden&&!still)requestAnimationFrame(draw)});
+  var s=document.getElementById('fx-spot');
+  addEventListener('pointermove',function(e){m.x=e.clientX;m.y=e.clientY;s.style.setProperty('--mx',e.clientX+'px');s.style.setProperty('--my',e.clientY+'px')},{passive:true});
+})();
+/* FX-END */
+</script>
+<script></script>
+</body>
+</html>

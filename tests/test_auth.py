@@ -405,6 +405,60 @@ def test_deleting_an_account_cascades_to_sessions_and_profiles(db):
     assert auth.session_user(token) is None
 
 
+def test_delete_user_clears_recruitment_rows_that_do_not_cascade(db):
+    """Foreign keys are ON, and most recruitment tables have no ON DELETE
+    CASCADE. Deleting a user with a job, application or task must clean those
+    first or the users delete fails with an IntegrityError."""
+    recruiter = auth.create_user("rec@example.com", "a-good-password", role="recruiter")
+    candidate = auth.create_user("cand@example.com", "a-good-password")
+    company = auth.create_company("Acme", created_by=recruiter["id"])
+    job = auth.create_job(company["id"], recruiter["id"],
+                          {"title": "Analyst", "description": "Data"})
+    app = auth.apply_to_job(job["id"], candidate["id"])
+    r, c, a = recruiter["id"], candidate["id"], app["id"]
+    pool = "INSERT INTO talent_pools (company_id, recruiter_id, name, created_at) VALUES (?,?,?,?)"
+    with auth.connect() as conn:
+        conn.execute("INSERT INTO interviews (application_id, job_id, candidate_user_id, "
+                     "recruiter_id, interview_type, scheduled_at, created_at, updated_at) "
+                     "VALUES (?,?,?,?,?,?,?,?)", (a, job["id"], c, r, "phone", "2026", "2026", "2026"))
+        iid = conn.execute("SELECT id FROM interviews").fetchone()[0]
+        conn.execute("INSERT INTO interview_feedback (interview_id, interviewer_id, created_at) "
+                     "VALUES (?,?,?)", (iid, r, "2026"))
+        conn.execute("INSERT INTO offers (application_id, job_id, candidate_user_id, offered_by, "
+                     "created_at, updated_at) VALUES (?,?,?,?,?,?)",
+                     (a, job["id"], c, r, "2026", "2026"))
+        conn.execute("INSERT INTO recruiter_notes (recruiter_id, candidate_user_id, application_id, "
+                     "note, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+                     (r, c, a, "note", "2026", "2026"))
+        conn.execute("INSERT INTO communications (recruiter_id, candidate_user_id, application_id, "
+                     "type, message, direction, created_at) VALUES (?,?,?,?,?,?,?)",
+                     (r, c, a, "email", "hi", "outbound", "2026"))
+        conn.execute(pool, (company["id"], r, "Pool", "2026"))
+        pid = conn.execute("SELECT id FROM talent_pools").fetchone()[0]
+        conn.execute("INSERT INTO talent_pool_members (pool_id, candidate_user_id, added_at, added_by) "
+                     "VALUES (?,?,?,?)", (pid, c, "2026", r))
+        conn.execute("INSERT INTO tasks (recruiter_id, title, created_at, updated_at) "
+                     "VALUES (?,?,?,?)", (r, "Task", "2026", "2026"))
+        conn.execute("INSERT INTO notifications (user_id, type, title, message, created_at) "
+                     "VALUES (?,?,?,?,?)", (c, "info", "Hi", "Hi", "2026"))
+        conn.execute("INSERT INTO activities (user_id, type, description, created_at) "
+                     "VALUES (?,?,?,?)", (c, "note", "did", "2026"))
+
+    assert auth.delete_user(r) is True
+    assert auth.delete_user(c) is True
+    assert auth.delete_user(r) is False
+
+    with auth.connect() as conn:
+        for table in ("jobs", "applications", "interviews", "interview_feedback",
+                      "offers", "recruiter_notes", "communications", "talent_pools",
+                      "talent_pool_members", "tasks", "notifications", "activities"):
+            assert conn.execute("SELECT COUNT(*) FROM " + table).fetchone()[0] == 0, table
+        row = conn.execute("SELECT created_by FROM companies WHERE id = ?",
+                           (company["id"],)).fetchone()
+        assert row is not None and row[0] is None
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+
+
 def test_the_default_db_path_is_a_gitignored_file_beside_the_source():
     """Password hashes and session cookies must never reach version control.
 

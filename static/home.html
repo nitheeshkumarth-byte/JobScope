@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JobScope - Welcome</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>try{var t=localStorage.getItem('jobscope-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+  <style>
+    :root{
+      --paper:#f3f2fc; --surface:#ffffff; --surface-2:#ecebf8; --line:#d8d6ee;
+      --ink:#14123a; --muted:#5b5889; --signal:#8f7fff; --teal:#4f46e5; --bad:#c92a2a;
+      --r-s:6px; --r-l:20px; --navy:#14123a; --navy-line:#2a2757; --on-navy:#eceafc; --on-navy-muted:#a5a2cc;
+      --font-display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+      --font-body:"Figtree","Segoe UI",system-ui,sans-serif;
+    }
+    :root[data-theme="dark"]{
+      --paper:#0b0a1f; --surface:#14122e; --surface-2:#0f0d26; --line:#2a2756;
+      --ink:#eceafc; --muted:#9a97c4; --teal:#8f7fff; --on-teal:#0b0a1f; --bad:#ff7b7b; --navy:#0f0d26;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:var(--font-body);background:var(--paper);color:var(--ink);min-height:100vh;line-height:1.5;-webkit-font-smoothing:antialiased}
+    :focus-visible{outline:3px solid var(--signal);outline-offset:2px}
+
+    .mark{width:22px;height:22px;border-radius:50%;border:2px solid currentColor;position:relative;flex:none;
+      background:radial-gradient(circle,var(--signal) 0 3px,transparent 3.5px)}
+    .mark::before,.mark::after{content:"";position:absolute;background:currentColor}
+    .mark::before{left:50%;top:-6px;bottom:-6px;width:2px;transform:translateX(-50%)}
+    .mark::after{top:50%;left:-6px;right:-6px;height:2px;transform:translateY(-50%)}
+
+    .page{max-width:1120px;margin:0 auto;padding:28px 24px 40px}
+    .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:56px}
+    .brand{display:inline-flex;align-items:center;gap:12px;font-family:var(--font-display);font-weight:700;font-size:22px;letter-spacing:-.01em}
+    .top a{color:var(--muted);font-size:14px;text-decoration:none}
+    .top a:hover{color:var(--ink);text-decoration:underline}
+
+    .hero{max-width:700px;margin-bottom:44px}
+    .hero h1{font-family:var(--font-display);font-weight:700;font-size:clamp(38px,6vw,64px);line-height:1.02;letter-spacing:-.03em}
+    .hero p{margin-top:18px;font-size:18px;color:var(--muted);max-width:52ch}
+
+    .portals{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:stretch}
+    .portal{border-radius:var(--r-l);padding:32px;display:flex;flex-direction:column;position:relative;overflow:hidden}
+    .portal.candidate{background:var(--surface);border:1px solid var(--line)}
+    .portal.recruiter{background:var(--navy);color:var(--on-navy);border:1px solid var(--navy-line)}
+    .portal.recruiter::after{content:"";position:absolute;right:-90px;top:-90px;width:260px;height:260px;border-radius:50%;
+      border:1px solid var(--navy-line);box-shadow:0 0 0 38px transparent,inset 0 0 0 38px transparent;pointer-events:none}
+    .portal-head{margin-bottom:22px}
+    .portal-title{font-family:var(--font-display);font-size:26px;font-weight:700;letter-spacing:-.02em}
+    .portal-sub{margin-top:4px;font-size:14.5px;color:var(--muted)}
+    .recruiter .portal-sub{color:var(--on-navy-muted)}
+    .form-group{margin-bottom:14px}
+    label{display:block;font-size:13.5px;font-weight:600;margin-bottom:6px}
+    input{width:100%;padding:11px 12px;border-radius:var(--r-s);border:1px solid var(--line);background:var(--surface-2);color:var(--ink);font-family:inherit;font-size:15px}
+    input:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px color-mix(in srgb,var(--teal) 25%,transparent)}
+    .recruiter input{background:#1a1840;border-color:var(--navy-line);color:var(--on-navy)}
+    .recruiter input:focus{border-color:var(--signal);box-shadow:0 0 0 3px rgba(143,127,255,.28)}
+    .btn{width:100%;padding:12px 16px;border-radius:var(--r-s);border:none;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:4px;transition:filter .15s,transform .15s}
+    .btn-candidate{background:var(--teal);color:var(--on-teal,#fff)}
+    .btn-recruiter{background:var(--signal);color:#14123a}
+    .btn:hover{filter:brightness(1.07)}
+    .btn:active{transform:translateY(1px)}
+    .error{color:var(--bad);font-size:13.5px;margin-top:6px;min-height:20px}
+    .recruiter .error{color:#ff9c9c}
+    .links{margin-top:auto;padding-top:16px;font-size:14px}
+    .links a{color:var(--teal);font-weight:600;text-decoration:none;cursor:pointer}
+    .recruiter .links a{color:var(--signal)}
+    .links a:hover{text-decoration:underline}
+    .portal form{display:block}
+
+    .footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:40px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:13.5px}
+    .footer a{color:var(--muted);text-decoration:none}
+    .footer a:hover{color:var(--ink);text-decoration:underline}
+
+    #register-modal{display:none;position:fixed;inset:0;background:rgba(8,17,31,.6);z-index:1000;align-items:center;justify-content:center;padding:16px}
+    .modal-card{background:var(--surface);color:var(--ink);border-radius:var(--r-l);padding:28px;width:100%;max-width:420px;border:1px solid var(--line)}
+    .modal-card h3{font-family:var(--font-display);font-size:24px;letter-spacing:-.02em;margin-bottom:18px}
+    .modal-actions{display:flex;gap:10px;margin-top:12px}
+    .btn-cancel{background:var(--surface-2);color:var(--ink);border:1px solid var(--line)}
+    #reg-info{margin-top:10px;font-size:13.5px;color:var(--muted)}
+    #reg-info a{color:var(--teal)}
+
+    @media (max-width:820px){.portals{grid-template-columns:1fr}.top{margin-bottom:36px}.portal{padding:24px}}
+    @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+  /* FX-START futuristic layer: decorative only, no ids/links touched */
+@keyframes fxRise{from{opacity:0;transform:translateY(18px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes fxPing{0%{box-shadow:0 0 0 0 rgba(143,127,255,.55)}80%,100%{box-shadow:0 0 0 12px rgba(143,127,255,0)}}
+@keyframes fxSweep{to{transform:rotate(360deg)}}
+@keyframes fxScan{0%{transform:translateY(-4vh);opacity:0}8%{opacity:1}92%{opacity:1}100%{transform:translateY(104vh);opacity:0}}
+@keyframes fxGrid{to{background-position:0 56px,56px 0}}
+@keyframes fxShine{to{background-position:220% 0}}
+@keyframes fxFloat{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(3vw,-4vh,0)}}
+@keyframes fxGlowPulse{0%,100%{box-shadow:0 0 0 1px rgba(143,127,255,.0),0 8px 28px -10px rgba(143,127,255,.45)}50%{box-shadow:0 0 0 1px rgba(143,127,255,.35),0 10px 38px -8px rgba(143,127,255,.75)}}
+
+/* layers */
+#fx-bg{position:fixed;inset:0;width:100%;height:100%;z-index:-3;pointer-events:none;opacity:.9}
+.fx-layer{position:fixed;pointer-events:none;z-index:-2}
+#fx-grid{inset:0;background-image:linear-gradient(rgba(143,127,255,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(143,127,255,.07) 1px,transparent 1px);background-size:56px 56px;
+  -webkit-mask-image:radial-gradient(ellipse 80% 70% at 50% 40%,#000 20%,transparent 80%);mask-image:radial-gradient(ellipse 80% 70% at 50% 40%,#000 20%,transparent 80%);animation:fxGrid 14s linear infinite}
+#fx-orb1,#fx-orb2{width:46vmax;height:46vmax;border-radius:50%;filter:blur(90px);opacity:.5}
+#fx-orb1{left:-14vmax;top:-18vmax;background:radial-gradient(circle,rgba(143,127,255,.30),transparent 65%);animation:fxFloat 24s ease-in-out infinite}
+#fx-orb2{right:-16vmax;bottom:-20vmax;background:radial-gradient(circle,rgba(56,214,245,.22),transparent 65%);animation:fxFloat 30s ease-in-out infinite reverse}
+#fx-radar{right:-14vmax;bottom:-14vmax;width:46vmax;height:46vmax;border-radius:50%;opacity:.55;
+  background:repeating-radial-gradient(circle,transparent 0 calc(11% - 1px),rgba(143,127,255,.16) calc(11% - 1px) 11%)}
+#fx-radar::after{content:"";position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 0deg,rgba(143,127,255,.0) 0 82%,rgba(143,127,255,.38) 100%);animation:fxSweep 7s linear infinite}
+#fx-scan{left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,transparent,rgba(143,127,255,.7),transparent);box-shadow:0 0 18px 2px rgba(143,127,255,.35);animation:fxScan 9s ease-in-out infinite;z-index:-1}
+#fx-spot{inset:0;z-index:-1;background:radial-gradient(520px circle at var(--mx,50%) var(--my,30%),rgba(143,127,255,.10),transparent 60%)}
+
+/* glass surfaces */
+:root{--glass:color-mix(in srgb,var(--surface,#14122e) 66%,transparent)}
+.portal,.modal-card,.stats-grid,.section,.card,.modal,.circuit,.composer,.msg.assistant .bubble,.toolcard,.status,.starter,.gatecard,.account-btn,.header,.page-intro{
+  background:var(--glass)!important;-webkit-backdrop-filter:blur(14px) saturate(140%);backdrop-filter:blur(14px) saturate(140%)}
+.sidebar{background:color-mix(in srgb,var(--side,var(--surface)) 74%,transparent)!important;-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+.modal-card,.modal{background:color-mix(in srgb,var(--surface,#14122e) 90%,transparent)!important}
+.login-container,.main,.content{background:transparent}
+
+/* glow borders + hover */
+.portal,.stats-grid,.section,.card,.circuit,.composer,.toolcard,.gatecard{border-color:color-mix(in srgb,var(--signal,#8f7fff) 18%,var(--border,var(--line,#2a2756)))!important;transition:border-color .3s,box-shadow .3s,transform .3s}
+.portal:hover,.section:hover,.card:hover,.circuit:hover{border-color:color-mix(in srgb,var(--signal,#8f7fff) 55%,transparent)!important;box-shadow:0 0 0 1px rgba(143,127,255,.12),0 18px 50px -22px rgba(143,127,255,.45)}
+.portal:hover,.card.show:hover{transform:translateY(-3px)}
+
+/* entrance */
+.portal,.stats-grid,.section,.page-intro,.circuit,.composer,.gatecard,.card,.hero>*{animation:fxRise .7s cubic-bezier(.22,.68,.35,1) both}
+.portal:nth-child(2){animation-delay:.12s}.section:nth-of-type(2){animation-delay:.1s}.section:nth-of-type(3){animation-delay:.2s}
+.hero>*:nth-child(2){animation-delay:.08s}.hero>*:nth-child(3){animation-delay:.16s}.hero>*:nth-child(4){animation-delay:.24s}
+
+/* buttons */
+.btn-candidate,.btn-recruiter,.btn-primary,.btn.primary,.btnglow,.sendbtn,#gSubmit,#gResetSubmit{position:relative;overflow:hidden;animation:fxGlowPulse 3.2s ease-in-out infinite;transition:transform .2s,filter .2s}
+.btn-candidate::after,.btn-recruiter::after,.btn-primary::after,.btn.primary::after,.btnglow::after,.sendbtn::after,#gSubmit::after,#gResetSubmit::after{content:""!important;display:block!important;position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(115deg,transparent,rgba(255,255,255,.55),transparent);transform:skewX(-20deg);transition:left .6s ease}
+.btn-candidate:hover::after,.btn-recruiter:hover::after,.btn-primary:hover::after,.btn.primary:hover::after,.btnglow:hover::after,.sendbtn:hover::after,#gSubmit:hover::after,#gResetSubmit:hover::after{left:130%}
+.btn-candidate:hover,.btn-recruiter:hover,.btn-primary:hover,.btn.primary:hover,.btnglow:hover,.sendbtn:hover,#gSubmit:hover{transform:translateY(-2px)!important}
+.btn-secondary:hover,.iconbtn:hover,.starter:hover,.account-btn:hover{border-color:var(--signal,#8f7fff)!important;box-shadow:0 0 18px -4px rgba(143,127,255,.55)!important}
+input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(143,127,255,.22),0 0 24px -6px rgba(143,127,255,.6)!important}
+
+/* brand: J tile instead of crosshair */
+.mark,.brand .dot{width:28px!important;height:28px!important;border-radius:9px!important;border:0!important;position:relative!important;display:inline-grid!important;place-items:center;flex:none;
+  background:linear-gradient(135deg,#8f7fff,#38d6f5)!important;color:#0b0a1f;animation:fxPing 2.6s ease-out infinite!important}
+.mark::before,.brand .dot::before{display:none!important}
+.mark::after,.brand .dot::after{content:"J"!important;position:static!important;width:auto!important;height:auto!important;transform:none!important;background:none!important;color:#0b0a1f;font:800 16px/1 var(--font-display,system-ui)!important}
+
+/* table rows + nav */
+tbody tr{transition:background .2s,box-shadow .2s}
+tbody tr:hover td{background:color-mix(in srgb,var(--signal,#8f7fff) 7%,transparent)!important}
+.nav-item{transition:background .2s,transform .2s,box-shadow .2s}.nav-item:hover{transform:translateX(4px)}
+.nav-item.active{box-shadow:inset 3px 0 0 var(--signal,#8f7fff),0 0 22px -8px rgba(143,127,255,.6)}
+.stat-value,.stat-num,.stat b{text-shadow:0 0 22px rgba(143,127,255,.35)}
+
+/* light theme: calmer */
+[data-theme="light"] #fx-bg{opacity:.45}[data-theme="light"] #fx-grid{background-image:linear-gradient(rgba(79,70,229,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(79,70,229,.08) 1px,transparent 1px)}
+[data-theme="light"] #fx-scan,[data-theme="light"] #fx-radar{opacity:.25}
+[data-theme="light"] .portal,[data-theme="light"] .section,[data-theme="light"] .card,[data-theme="light"] .stats-grid{background:color-mix(in srgb,#fff 78%,transparent)!important}
+
+@media(max-width:720px){#fx-radar{width:80vmax;height:80vmax;opacity:.3}#fx-orb1,#fx-orb2{opacity:.35}}
+@media(prefers-reduced-motion:reduce){#fx-grid,#fx-orb1,#fx-orb2,#fx-scan,#fx-radar::after,.mark,.brand .dot,.btn-candidate,.btn-recruiter,.btn-primary,.btn.primary,.btnglow,.sendbtn,#gSubmit,.portal,.stats-grid,.section,.page-intro,.circuit,.composer,.gatecard,.card,.hero>*{animation:none!important}#fx-scan{display:none}}
+.gate{background:rgba(11,10,31,.5)!important}
+html.gated .app,html.gated header{opacity:0!important}
+[data-theme="light"] .gate{background:rgba(243,242,252,.55)!important}
+/* FX-END */
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="top">
+      <div class="brand"><span class="mark" aria-hidden="true"></span><span>JobScope</span></div>
+    </div>
+
+    <div class="hero">
+      <h1>Find the role. Or find the person.</h1>
+      <p>JobScope searches the job boards for candidates and gives recruiters one place to run the hiring pipeline. Pick your portal to sign in.</p>
+    </div>
+
+    <div class="portals">
+      <!-- Candidate Login -->
+      <section class="portal candidate" aria-labelledby="cand-title">
+        <div class="portal-head">
+          <div class="portal-title" id="cand-title">Candidate Portal</div>
+          <div class="portal-sub">Find jobs, tailor resumes, track applications</div>
+        </div>
+        <form id="candidate-login-form">
+          <div class="form-group">
+            <label for="c-email">Email</label>
+            <input type="email" id="c-email" required placeholder="you@example.com" autocomplete="username">
+          </div>
+          <div class="form-group">
+            <label for="c-password">Password</label>
+            <input type="password" id="c-password" required placeholder="••••••••" autocomplete="current-password">
+          </div>
+          <div class="error" id="c-error" role="alert"></div>
+          <button type="submit" class="btn btn-candidate">Sign in as candidate</button>
+        </form>
+        <div class="links">
+          <a href="#" onclick="showRegister('candidate'); return false;">Create candidate account</a>
+        </div>
+      </section>
+
+      <!-- Recruiter Login -->
+      <section class="portal recruiter" aria-labelledby="rec-title">
+        <div class="portal-head">
+          <div class="portal-title" id="rec-title">Recruiter Portal</div>
+          <div class="portal-sub">Manage jobs, candidates, and hiring pipeline</div>
+        </div>
+        <form id="recruiter-login-form">
+          <div class="form-group">
+            <label for="r-email">Email</label>
+            <input type="email" id="r-email" required placeholder="recruiter@company.com" autocomplete="username">
+          </div>
+          <div class="form-group">
+            <label for="r-password">Password</label>
+            <input type="password" id="r-password" required placeholder="••••••••" autocomplete="current-password">
+          </div>
+          <div class="error" id="r-error" role="alert"></div>
+          <button type="submit" class="btn btn-recruiter">Sign in as recruiter</button>
+        </form>
+        <div class="links">
+          <a href="#" onclick="showRegister('recruiter'); return false;">Create recruiter account</a>
+        </div>
+      </section>
+    </div>
+
+    <div class="footer">
+      <div>JobScope - AI-powered recruitment platform</div>
+      <div class="admin-link"><a href="/admin">Super Admin Login</a></div>
+    </div>
+  </div>
+
+  <!-- Simple registration modal (inline prompt style) -->
+  <div id="register-modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="reg-title">
+    <div class="modal-card">
+      <h3 id="reg-title">Create Account</h3>
+      <div class="form-group"><label for="reg-email">Email</label><input type="email" id="reg-email"></div>
+      <div class="form-group"><label for="reg-password">Password</label><input type="password" id="reg-password"></div>
+      <div class="form-group"><label for="reg-password2">Confirm Password</label><input type="password" id="reg-password2"></div>
+      <div class="error" id="reg-error" role="alert"></div>
+      <div class="modal-actions">
+        <button class="btn btn-candidate" id="reg-submit" onclick="doRegister()">Create Account</button>
+        <button class="btn btn-cancel" onclick="closeRegister()">Cancel</button>
+      </div>
+      <div id="reg-info"></div>
+    </div>
+  </div>
+
+  <script>
+    let registerRole = 'candidate';
+
+    function showRegister(role) {
+      registerRole = role;
+      document.getElementById('reg-title').textContent = role === 'recruiter' ? 'Create Recruiter Account' : 'Create Candidate Account';
+      const btn = document.getElementById('reg-submit');
+      btn.className = 'btn ' + (role === 'recruiter' ? 'btn-recruiter' : 'btn-candidate');
+      document.getElementById('register-modal').style.display = 'flex';
+      document.getElementById('reg-error').textContent = '';
+      document.getElementById('reg-info').textContent = '';
+    }
+    function closeRegister() {
+      document.getElementById('register-modal').style.display = 'none';
+    }
+
+    async function doRegister() {
+      const email = document.getElementById('reg-email').value.trim();
+      const password = document.getElementById('reg-password').value;
+      const password2 = document.getElementById('reg-password2').value;
+      const err = document.getElementById('reg-error');
+      const info = document.getElementById('reg-info');
+      err.textContent = '';
+      info.textContent = '';
+      if (!email || !password) { err.textContent = 'Email and password are required'; return; }
+      if (password !== password2) { err.textContent = 'Passwords do not match'; return; }
+      if (password.length < 8) { err.textContent = 'Password must be at least 8 characters'; return; }
+      try {
+        const r = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'same-origin',
+          body: JSON.stringify({email, password, role: registerRole})
+        });
+        const data = await r.json();
+        if (data.ok) {
+          if (data.needs_verification) {
+            info.textContent = 'Account created. Please check your email to verify, then sign in.';
+            if (data.dev_link) info.innerHTML += '<br><a href="' + data.dev_link + '">Verify link (dev)</a>';
+          } else {
+            closeRegister();
+            if (registerRole === 'recruiter') window.location.href = '/recruiter';
+            else window.location.href = '/candidate';
+          }
+        } else {
+          err.textContent = data.error || 'Registration failed';
+        }
+      } catch(e) {
+        err.textContent = 'Could not reach server';
+      }
+    }
+
+    async function login(email, password, role, errorEl) {
+      errorEl.textContent = '';
+      try {
+        const r = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'same-origin',
+          body: JSON.stringify({email, password, role})
+        });
+        const data = await r.json();
+        if (data.ok) {
+          // Check if user role matches the portal they're logging into
+          const userRole = data.role || 'candidate';
+          if (role === 'recruiter' && userRole !== 'recruiter' && userRole !== 'super_admin') {
+            errorEl.textContent = 'This account is not a recruiter account. Use the candidate portal.';
+            await fetch('/api/auth/logout', {method:'POST', credentials:'same-origin'});
+            return;
+          }
+          if (role === 'candidate' && (userRole === 'recruiter' || userRole === 'super_admin')) {
+            errorEl.textContent = 'This is a recruiter/super admin account. Use the recruiter portal.';
+            await fetch('/api/auth/logout', {method:'POST', credentials:'same-origin'});
+            return;
+          }
+          if (userRole === 'recruiter' || userRole === 'super_admin') {
+            window.location.href = '/recruiter';
+          } else {
+            window.location.href = '/candidate';
+          }
+        } else {
+          errorEl.textContent = data.error || 'Login failed';
+        }
+      } catch(e) {
+        errorEl.textContent = 'Could not reach server';
+      }
+    }
+
+    document.getElementById('candidate-login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await login(document.getElementById('c-email').value, document.getElementById('c-password').value, 'candidate', document.getElementById('c-error'));
+    });
+
+    document.getElementById('recruiter-login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await login(document.getElementById('r-email').value, document.getElementById('r-password').value, 'recruiter', document.getElementById('r-error'));
+    });
+
+    // Check if already logged in
+    (async () => {
+      try {
+        const r = await fetch('/api/auth/state', {credentials:'same-origin'});
+        const st = await r.json();
+        if (st.authenticated && st.verified) {
+          if (st.role === 'recruiter' || st.role === 'super_admin') window.location.href = '/recruiter';
+          else if (st.role === 'candidate') window.location.href = '/candidate';
+        }
+      } catch(e) {}
+    })();
+  </script>
+<script>/* FX-START decorative background; aria-hidden, pointer-events none */
+(function(){
+  if(window.__fx)return;window.__fx=1;
+  var b=document.body,mk=function(id,cls){var d=document.createElement('div');d.id=id;d.className='fx-layer'+(cls?' '+cls:'');d.setAttribute('aria-hidden','true');b.insertBefore(d,b.firstChild);return d};
+  ['fx-spot','fx-scan','fx-radar','fx-orb2','fx-orb1','fx-grid'].forEach(function(i){mk(i)});
+  var c=document.createElement('canvas');c.id='fx-bg';c.setAttribute('aria-hidden','true');b.insertBefore(c,b.firstChild);
+  var x=c.getContext('2d'),W,H,P=[],m={x:-999,y:-999},dpr=Math.min(window.devicePixelRatio||1,1.5),
+      still=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function col(){return document.documentElement.getAttribute('data-theme')==='light'?'79,70,229':'143,127,255'}
+  function size(){W=c.width=innerWidth*dpr;H=c.height=innerHeight*dpr;c.style.width=innerWidth+'px';c.style.height=innerHeight+'px';
+    var n=Math.min(90,Math.round(innerWidth*innerHeight/16000));P=[];
+    for(var i=0;i<n;i++)P.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.35*dpr,vy:(Math.random()-.5)*.35*dpr,r:(Math.random()*1.4+.6)*dpr})}
+  function draw(){
+    x.clearRect(0,0,W,H);var k=col(),L=150*dpr,mx=m.x*dpr,my=m.y*dpr,i,j,p,q,d;
+    for(i=0;i<P.length;i++){p=P[i];
+      if(!still){p.x+=p.vx;p.y+=p.vy;if(p.x<0||p.x>W)p.vx*=-1;if(p.y<0||p.y>H)p.vy*=-1}
+      for(j=i+1;j<P.length;j++){q=P[j];d=Math.hypot(p.x-q.x,p.y-q.y);
+        if(d<L){x.strokeStyle='rgba('+k+','+(0.22*(1-d/L)).toFixed(3)+')';x.lineWidth=dpr*.8;x.beginPath();x.moveTo(p.x,p.y);x.lineTo(q.x,q.y);x.stroke()}}
+      d=Math.hypot(p.x-mx,p.y-my);
+      if(d<200*dpr){x.strokeStyle='rgba('+k+','+(0.5*(1-d/(200*dpr))).toFixed(3)+')';x.beginPath();x.moveTo(p.x,p.y);x.lineTo(mx,my);x.stroke()}
+      x.fillStyle='rgba('+k+',.75)';x.beginPath();x.arc(p.x,p.y,p.r,0,6.283);x.fill()}
+    if(!still&&!document.hidden)requestAnimationFrame(draw)}
+  size();draw();addEventListener('resize',size);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden&&!still)requestAnimationFrame(draw)});
+  var s=document.getElementById('fx-spot');
+  addEventListener('pointermove',function(e){m.x=e.clientX;m.y=e.clientY;s.style.setProperty('--mx',e.clientX+'px');s.style.setProperty('--my',e.clientY+'px')},{passive:true});
+})();
+/* FX-END */
+</script>
+<script></script>
+</body>
+</html>

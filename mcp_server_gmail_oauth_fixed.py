@@ -259,7 +259,8 @@ def search_job_emails(sender: str = "", days_back: int = 60, max_results: int = 
     if resync_if_stale:
         for acct in accounts:
             try:
-                if gmail_index.is_stale(acct):\n                    sync_gmail_cache(days_back=days_back, account=acct)
+                if gmail_index.is_stale(acct):
+                    sync_gmail_cache(days_back=days_back, account=acct)
             except Exception:
                 pass
     rows: List[Dict[str, Any]] = []

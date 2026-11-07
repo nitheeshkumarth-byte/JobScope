@@ -1180,11 +1180,12 @@ def test_every_id_the_script_touches_exists_in_the_markup():
     script = re.search(r"(?s)<script>(.*)</script>", html).group(1)
     markup = html[: html.index("<script>")]
     # deck* are built at runtime by the deck renderer, so they are not in the
-    # initial markup by design. im*/avClose are the same: the identity dropdown
-    # and the avatar picker are injected when the user opens them, so they exist
-    # in the DOM only from that moment on.
+    # initial markup by design. avClose/avFile/avUpload are the same: the avatar
+    # picker is injected when the user opens it, so they exist in the DOM only
+    # from that moment on. imNick/imAvatar/signOutBtn are static now (the header
+    # dropdown rows are markup, not rebuilt by JS).
     runtime_only = {"deckCount", "deckDots", "deckNext", "deckPrev", "deckStage",
-                    "imNick", "imAvatar", "imOut", "avClose"}
+                    "avClose", "avFile", "avUpload"}
     referenced = set(re.findall(r'\$\("([^"]+)"\)', script)) - runtime_only
     present = set(re.findall(r'\bid="([^"]+)"', markup))
     assert not (referenced - present), \
@@ -1626,7 +1627,14 @@ def test_the_drifting_background_is_strong_enough_to_actually_be_seen():
     "pretty", but it can refuse the exact values that shipped invisible.
     """
     css = _css()
-    alphas = [float(a) for a in re.findall(r"rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\.(\d+)\s*\)", css)]
+    # Only the two background layers count. The decorative FX layer has its own
+    # keyframes whose alpha legitimately reaches 0 at the end of a pulse.
+    blobs = ""
+    for selector in ("body::before", "body::after"):
+        m = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+        assert m, f"{selector} rule disappeared"
+        blobs += m.group(1)
+    alphas = [float(a) for a in re.findall(r"rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\.(\d+)\s*\)", blobs)]
     assert alphas, "no gradient alphas found in the stylesheet"
     assert min(alphas) >= 0.18, (
         f"weakest blob alpha {min(alphas)} is below the 0.18 floor; the "
@@ -1848,6 +1856,9 @@ def test_config_endpoint_exposes_the_real_board_registry():
 
     names = d._board_names()
     assert "Indeed" in names and "LinkedIn" in names
+    import mcp_server_indeed_scraper as scraper
+    if not getattr(scraper, "_SCRAPLING_AVAILABLE", False):
+        pytest.skip("Scrapling is optional; degraded mode probes every board")
     defaults = d._default_board_names()
     assert set(defaults) < set(names), "some boards must be skippable by default"
     for skipped in ("Glassdoor", "Foundit", "Naukri"):
@@ -1946,14 +1957,14 @@ def test_the_responsive_overrides_come_after_the_components_they_override():
         assert css.index(component) < banner, (
             f"{component!r} is defined after the responsive block and will beat it"
         )
-    # And no component rule may creep in after the responsive block. The sheet
-    # now ends with the scrollbar-hiding override (it has to, for the same
-    # cascade reason: .slist/.roledd-list restate `scrollbar-width: thin`
-    # hundreds of lines below the first hide rule).
+    # And no component rule may creep in after the responsive block. The
+    # decorative layer is appended last and is allowed to sit after the
+    # scrollbar override; nothing may follow the layer itself.
     tail = css.rstrip()
-    assert tail.endswith(
-        ".gate::-webkit-scrollbar { width: 0; height: 0; display: none; }"
-    ), "the stylesheet no longer ends with the trailing override block"
+    assert tail.endswith("/* FX-END */"), (
+        "the decorative layer must stay last, after every component rule"
+    )
+    assert ".gate::-webkit-scrollbar { width: 0; height: 0; display: none; }" in tail
     assert css.rindex("scrollbar-width: none") > css.rindex(
         "scrollbar-width: thin"
     ), (
@@ -2033,14 +2044,21 @@ def test_the_identity_pill_replaces_the_raw_email_in_the_header():
     assert "display_name" in script, "the header does not use the display name"
 
 
-def test_the_logo_dropdown_offers_exactly_the_three_actions():
+def test_the_logo_dropdown_offers_the_account_actions():
+    """The redesign moved the account actions into static rows in the header
+    menu, so they are no longer rebuilt by identMenuOpen(). Sign out lives with
+    them instead of being injected as #imOut."""
     html = _html()
-    assert 'id="identMenu"' in html
+    header = html.split("</header>")[0]
+    assert 'id="identMenu"' in header
+    for el in ("identHead", "imNick", "imAvatar", "themeBtn", "resetAllBtn",
+               "signOutBtn"):
+        assert f'id="{el}"' in header, f"#{el} is missing from the header menu"
     script = _script()
-    menu = script.split("function identMenuOpen(")[1][:1200]
-    assert "imNick" in menu, "no way to change the nickname"
-    assert "imAvatar" in menu, "no way to change the logo"
-    assert "imOut" in menu, "no sign out in the dropdown"
+    menu = script.split("function identMenuOpen(")[1][:900]
+    assert '$("imNick").onclick' in menu, "no way to change the nickname"
+    assert '$("imAvatar").onclick' in menu, "no way to change the logo"
+    assert '$("signOutBtn").onclick' in script, "sign out is not wired"
 
 
 def test_the_avatar_picker_offers_several_options():
