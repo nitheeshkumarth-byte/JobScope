@@ -205,7 +205,65 @@ tbody tr:hover td{background:color-mix(in srgb,var(--signal,#8f7fff) 7%,transpar
 html.gated .app,html.gated header{opacity:0!important}
 [data-theme="light"] .gate{background:rgba(243,242,252,.55)!important}
 /* FX-END */
-</style>
+    /* ---- recruiter hiring loop ---- */
+    .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .toolbar .form-input,.toolbar select{width:auto;min-width:150px;padding:7px 10px;font-size:14px}
+    .empty{padding:34px 22px;text-align:center;color:var(--muted);font-size:14.5px}
+    .b-ok{background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ok)}
+    .b-warn{background:color-mix(in srgb,var(--warn) 22%,transparent);color:var(--warn)}
+    .b-bad{background:color-mix(in srgb,var(--bad) 20%,transparent);color:var(--bad)}
+    .b-info{background:color-mix(in srgb,var(--accent) 20%,transparent);color:var(--accent)}
+    .b-mute{background:var(--surface-2);color:var(--muted)}
+    .badge{display:inline-block;padding:3px 10px;border-radius:99px;font-size:12.5px;font-weight:600;white-space:nowrap}
+    .row-actions{display:flex;gap:6px;flex-wrap:wrap}
+    .btn-sm{padding:5px 10px;font-size:13px}
+    .btn-danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,var(--border))}
+    .who b{display:block;font-weight:600}.who span{font-size:12.5px;color:var(--muted)}
+    .modal-back{position:fixed;inset:0;z-index:200;background:rgba(5,4,20,.66);backdrop-filter:blur(4px);display:none;align-items:flex-start;justify-content:center;overflow:auto;padding:5vh 16px}
+    .modal-back.open{display:flex}
+    .modal-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;width:100%;max-width:640px;box-shadow:0 30px 80px rgba(0,0,0,.45)}
+    .modal-box h2{font-family:var(--font-display);font-size:19px;padding:16px 22px;border-bottom:1px solid var(--border)}
+    .modal-body{padding:20px 22px 4px}
+    .modal-foot{padding:14px 22px 18px;display:flex;gap:10px;justify-content:flex-end;align-items:center}
+    .modal-foot .msg{margin:0 auto 0 0}
+    .kanban{display:flex;gap:14px;padding:16px;overflow-x:auto;align-items:flex-start}
+    .kcol{flex:0 0 232px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;min-height:160px;transition:border-color .15s,background .15s}
+    .kcol.over{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,var(--surface-2))}
+    .kcol h3{font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:11px 13px;display:flex;justify-content:space-between}
+    .kcol h3 b{color:var(--text)}
+    .kcards{padding:0 10px 10px;display:grid;gap:9px;min-height:60px}
+    .kcard{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 11px;cursor:grab;font-size:13.5px}
+    .kcard:active{cursor:grabbing}.kcard.drag{opacity:.4}
+    .kcard b{display:block;font-size:14px}.kcard span{color:var(--muted);font-size:12.5px;display:block}
+    .kcard select{width:100%;margin-top:8px;font-size:12.5px;padding:4px 6px}
+    .task{display:flex;gap:12px;align-items:flex-start;padding:13px 22px;border-bottom:1px solid var(--border)}
+    .task:last-child{border-bottom:none}.task input{margin-top:5px;accent-color:var(--accent);width:17px;height:17px}
+    .task .t{flex:1}.task .t b{font-weight:600}.task.done .t b{text-decoration:line-through;color:var(--muted)}
+    .task .t span{display:block;font-size:12.5px;color:var(--muted)}
+    #toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,20px);background:var(--surface);color:var(--text);border:1px solid var(--border);padding:10px 18px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:.25s;z-index:300;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+    #toast.show{opacity:1;transform:translate(-50%,0)}#toast.err{border-color:var(--bad);color:var(--bad)}
+    @media (max-width:640px){.grid-2{grid-template-columns:1fr}}
+      /* ---- identity + calendar ---- */
+    .av{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;flex:none;overflow:hidden;color:#fff;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.02em}
+    .av.lg{width:42px;height:42px;font-size:15px}.av img{width:100%;height:100%;object-fit:cover}
+    .dropdown-header{display:flex;gap:12px;align-items:center}
+    .cal-head{display:grid;grid-template-columns:repeat(7,1fr);border-bottom:1px solid var(--border);background:var(--surface-2)}
+    .cal-head div{padding:8px;text-align:center;font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+    .cal{display:grid;grid-template-columns:repeat(7,1fr)}
+    .cal-day{min-height:104px;border-right:1px solid var(--border);border-bottom:1px solid var(--border);padding:6px;cursor:pointer;min-width:0}
+    .cal-day:nth-child(7n){border-right:none}.cal-day:hover{background:var(--surface-2)}
+    .cal-day.off{opacity:.45}.cal-day .n{font-size:13px;font-weight:600;color:var(--muted);display:inline-block;min-width:24px;text-align:center;border-radius:99px}
+    .cal-day.today .n{background:var(--accent);color:var(--accent-ink)}
+    .ci{display:block;width:100%;text-align:left;margin-top:4px;padding:3px 6px;border-radius:6px;font-size:12px;font-family:inherit;cursor:pointer;border:1px solid transparent;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .ci.iv{background:var(--accent);color:var(--accent-ink)}
+    .ci.slot{background:transparent;color:var(--warn);border:1px dashed var(--warn)}
+    .ci.ev{background:var(--surface-2);color:var(--text);border-color:var(--border)}
+    .cal-legend{display:flex;gap:16px;flex-wrap:wrap;padding:10px 22px;font-size:13px;color:var(--muted);border-bottom:1px solid var(--border)}
+    .cal-legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+    .pend{padding:12px 22px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    .pend .who{flex:1;min-width:200px}
+    @media (max-width:640px){.cal-day{min-height:62px;padding:3px}.ci{font-size:10.5px;padding:2px 3px}.cal-head div{padding:6px 0;font-size:10px}}
+  </style>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
@@ -294,14 +352,15 @@ html.gated .app,html.gated header{opacity:0!important}
           <button class="btn" onclick="toggleTheme()">Theme</button>
           <div style="position: relative;">
             <button class="account-btn" id="accountBtn" onclick="toggleAccountMenu(event)">
-              <svg class="ic" aria-hidden="true"><use href="#i-user"/></svg>
+              <span class="av" aria-hidden="true"></span>
               <span id="user-email">Account</span>
               <span aria-hidden="true">▾</span>
             </button>
             <div class="dropdown" id="accountDropdown">
               <div class="dropdown-header">
-                <div style="font-weight: 600;" id="dropdown-name">Recruiter</div>
-                <div class="dropdown-email" id="dropdown-email"></div>
+                <span id="dropdown-av"></span>
+                <div><div style="font-weight: 600;" id="dropdown-name">Recruiter</div>
+                <div class="dropdown-email" id="dropdown-email"></div></div>
               </div>
               <div class="dropdown-item" onclick="showPageFromMenu('recruiter-profile')"><svg class="ic" aria-hidden="true"><use href="#i-user"/></svg>Recruiter Profile</div>
               <div class="dropdown-item" onclick="showPageFromMenu('settings')"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg>Account Settings</div>
@@ -326,6 +385,9 @@ html.gated .app,html.gated header{opacity:0!important}
           <div class="stats-side">
             <span>Total Jobs<b id="stat-jobs">-</b></span>
             <span>Active Jobs<b id="stat-active">-</b></span>
+            <span>Candidates<b id="stat-cands">-</b></span>
+            <span>Ready for interview<b id="stat-ready">-</b></span>
+            <span>Slots to confirm<b id="stat-slots">-</b></span>
           </div>
           
           <div class="section">
@@ -349,48 +411,56 @@ html.gated .app,html.gated header{opacity:0!important}
           <div class="section">
             <div class="section-header">
               <div class="section-title">Job Openings</div>
-              <button class="btn btn-primary" onclick="showCreateJob()">Create Job</button>
+              <div class="toolbar">
+                <select id="job-filter" aria-label="Filter jobs by status" onchange="renderJobs()">
+                  <option value="">All statuses</option><option value="draft">Draft</option><option value="published">Published</option><option value="paused">Paused</option><option value="closed">Closed</option>
+                </select>
+                <button class="btn btn-primary" onclick="showCreateJob()">Create Job</button>
+              </div>
             </div>
             <div class="table-wrap">
             <table>
               <thead>
-                <tr><th>Job Title</th><th>Location</th><th>Type</th><th>Status</th><th>Actions</th></tr>
+                <tr><th>Job Title</th><th>Location</th><th>Type</th><th>Applicants</th><th>Status</th><th>Actions</th></tr>
               </thead>
               <tbody id="jobs-list"></tbody>
             </table>
             </div>
           </div>
         </div>
-        
+
         <!-- Applications Page -->
         <div id="page-applications" class="page">
           <div class="section">
             <div class="section-header">
               <div class="section-title">All Applications</div>
+              <div class="toolbar">
+                <select id="app-job-filter" aria-label="Filter by job" onchange="renderApplications()"></select>
+                <select id="app-status-filter" aria-label="Filter by status" onchange="renderApplications()"></select>
+              </div>
             </div>
             <div class="table-wrap">
             <table>
               <thead>
-                <tr><th>Candidate ID</th><th>Job ID</th><th>Status</th><th>Applied Date</th><th>Actions</th></tr>
+                <tr><th>Candidate</th><th>Job</th><th>Status</th><th>Applied Date</th><th>Actions</th></tr>
               </thead>
               <tbody id="all-apps"></tbody>
             </table>
             </div>
           </div>
         </div>
-        
+
         <!-- Pipeline Page -->
         <div id="page-pipeline" class="page">
           <div class="section">
             <div class="section-header">
               <div class="section-title">Recruitment Pipeline (Kanban)</div>
+              <div class="toolbar"><select id="pipe-job-filter" aria-label="Filter by job" onchange="renderPipeline()"></select></div>
             </div>
-            <div class="soon">
-              Pipeline view coming soon. Use Applications page to manage status.
-            </div>
+            <div class="kanban" id="kanban"></div>
           </div>
         </div>
-        
+
         <!-- Recruiter Profile Page -->
         <div id="page-recruiter-profile" class="page">
           <div class="section">
@@ -463,23 +533,100 @@ html.gated .app,html.gated header{opacity:0!important}
         </div>
         
         <!-- Other pages placeholder -->
-        <div id="page-candidates" class="page"><div class="section"><div class="section-header"><div class="section-title">Candidates</div></div><div class="soon">Candidate management interface</div></div></div>
+        <div id="page-candidates" class="page">
+          <div class="section">
+            <div class="section-header">
+              <div class="section-title">Candidates</div>
+              <div class="toolbar">
+                <input class="form-input" id="cand-search" placeholder="Search name, email, location" aria-label="Search candidates" oninput="renderCandidates()">
+                <button class="btn btn-primary" onclick="showCandidateForm()">Add Candidate</button>
+              </div>
+            </div>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Name</th><th>Contact</th><th>Location</th><th>Expected CTC</th><th>Availability</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody id="cand-list"></tbody>
+            </table></div>
+          </div>
+        </div>
         <div id="page-talent-pool" class="page"><div class="section"><div class="section-header"><div class="section-title">Talent Pool</div></div><div class="soon">Talent pool management</div></div></div>
         <div id="page-saved" class="page"><div class="section"><div class="section-header"><div class="section-title">Saved Candidates</div></div><div class="soon">Saved candidates</div></div></div>
-        <div id="page-tasks" class="page"><div class="section"><div class="section-header"><div class="section-title">My Tasks</div></div><div class="soon">Task management</div></div></div>
-        <div id="page-calendar" class="page"><div class="section"><div class="section-header"><div class="section-title">Calendar</div></div><div class="soon">Interview calendar</div></div></div>
-        <div id="page-interviews" class="page"><div class="section"><div class="section-header"><div class="section-title">Interviews</div></div><div class="soon">Interview scheduling</div></div></div>
+        <div id="page-tasks" class="page">
+          <div class="section">
+            <div class="section-header">
+              <div class="section-title">My Tasks</div>
+              <div class="toolbar">
+                <select id="task-filter" aria-label="Filter tasks" onchange="renderTasks()"><option value="open">Open</option><option value="">All</option><option value="completed">Completed</option></select>
+                <button class="btn btn-primary" onclick="showTaskForm()">Add Task</button>
+              </div>
+            </div>
+            <div id="task-list"></div>
+          </div>
+        </div>
+        <div id="page-calendar" class="page">
+          <div class="section">
+            <div class="section-header">
+              <div class="section-title" id="cal-title">Calendar</div>
+              <div class="toolbar">
+                <button class="btn btn-sm" onclick="calMove(-1)" aria-label="Previous month">‹</button>
+                <button class="btn btn-sm" onclick="calToday()">Today</button>
+                <button class="btn btn-sm" onclick="calMove(1)" aria-label="Next month">›</button>
+                <button class="btn btn-primary" onclick="showEventForm()">Add event</button>
+              </div>
+            </div>
+            <div class="cal-legend"><span><i style="background:var(--accent)"></i>Interview</span><span><i style="border:1px dashed var(--warn)"></i>Slot offered by a candidate</span><span><i style="background:var(--surface-2);border:1px solid var(--border)"></i>Your event</span><span id="cal-sync">Updates automatically</span></div>
+            <div id="cal-pending"></div>
+            <div class="cal-head"><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div><div>Sun</div></div>
+            <div class="cal" id="cal-grid"></div>
+          </div>
+        </div>
+        <div id="page-interviews" class="page">
+          <div class="section">
+            <div class="section-header">
+              <div class="section-title">Interviews</div>
+              <button class="btn btn-primary" onclick="showInterviewForm()">Schedule Interview</button>
+            </div>
+            <div class="table-wrap"><table>
+              <thead><tr><th>When</th><th>Candidate</th><th>Job</th><th>Type</th><th>Where</th><th>Status</th></tr></thead>
+              <tbody id="iv-list"></tbody>
+            </table></div>
+          </div>
+        </div>
         <div id="page-offers" class="page"><div class="section"><div class="section-header"><div class="section-title">Offers</div></div><div class="soon">Offer management</div></div></div>
         <div id="page-ai-search" class="page"><div class="section"><div class="section-header"><div class="section-title">AI Candidate Search</div></div><div class="soon">AI-powered search using natural language</div></div></div>
         <div id="page-resume-screening" class="page"><div class="section"><div class="section-header"><div class="section-title">Resume Screening</div></div><div class="soon">AI resume screening</div></div></div>
         <div id="page-matching" class="page"><div class="section"><div class="section-header"><div class="section-title">Candidate Matching</div></div><div class="soon">AI candidate matching</div></div></div>
         <div id="page-analytics" class="page"><div class="section"><div class="section-header"><div class="section-title">Recruitment Analytics</div></div><div class="soon">Analytics dashboard</div></div></div>
         <div id="page-team" class="page"><div class="section"><div class="section-header"><div class="section-title">Team Management</div></div><div class="soon">Team management</div></div></div>
-        <div id="page-company" class="page"><div class="section"><div class="section-header"><div class="section-title">Company Profile</div><button class="btn btn-primary" onclick="showCreateCompany()">Setup Company</button></div><div style="padding: 24px;" id="company-info">No company set up</div></div></div>
+        <div id="page-company" class="page">
+          <div class="section">
+            <div class="section-header"><div class="section-title">Company Profile</div><button class="btn btn-primary" onclick="showCreateCompany()">Setup Company</button></div>
+            <div style="padding: 24px; max-width: 760px;">
+              <div id="company-info" class="hint" style="margin-bottom:18px">No company set up</div>
+              <div class="grid-2">
+                <div class="form-group"><label class="form-label" for="co-name">Company Name</label><input class="form-input" id="co-name"></div>
+                <div class="form-group"><label class="form-label" for="co-industry">Industry</label><input class="form-input" id="co-industry"></div>
+              </div>
+              <div class="grid-2">
+                <div class="form-group"><label class="form-label" for="co-website">Website</label><input class="form-input" id="co-website" placeholder="https://"></div>
+                <div class="form-group"><label class="form-label" for="co-location">Location</label><input class="form-input" id="co-location"></div>
+              </div>
+              <div class="form-group"><label class="form-label" for="co-desc">About</label><textarea class="form-textarea" id="co-desc"></textarea></div>
+              <button class="btn btn-primary" onclick="saveCompany()">Save Company</button>
+              <div class="msg" id="co-msg"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </main>
   </div>
 
+  <div class="modal-back" id="modal" onclick="if(event.target===this)closeModal()">
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h2 id="modal-title"></h2><div class="modal-body" id="modal-body"></div>
+      <div class="modal-foot"><div class="msg" id="modal-msg" role="alert"></div><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" id="modal-save" onclick="submitModal()">Save</button></div>
+    </div>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
   <script>
     const $ = id => document.getElementById(id);
     let currentUser = null;
@@ -528,12 +675,19 @@ html.gated .app,html.gated header{opacity:0!important}
       if (page === 'recruiter-profile') loadRecruiterProfile();
       if (page === 'settings') loadSettings();
       if (page === 'users') loadUsers();
+      if (page === 'pipeline') loadPipeline();
+      if (page === 'candidates') loadCandidates();
+      if (page === 'tasks') loadTasks();
+      if (page === 'interviews') loadInterviews();
+      if (page === 'company') loadCompany();
+      if (page === 'calendar') loadCalendar();
+      if (page === 'overview') loadDashboard();
     }
     
     async function loadUser() {
       try {
         const r = await fetch('/api/auth/state', {credentials:'same-origin'});
-        const st = await r.json();
+        let st = await r.json();
         if (!st.authenticated) {
           window.location.href = '/';
           return;
@@ -543,15 +697,14 @@ html.gated .app,html.gated header{opacity:0!important}
           window.location.href = '/';
           return;
         }
+        st = await applyPendingProfile(st);
         currentUser = st;
         if (st.role === 'super_admin' || st.is_owner) {
           const navUsers = $('nav-users');
           if (navUsers) navUsers.style.display = 'flex';
         }
-        $('user-email').textContent = st.email;
-        $('dropdown-email').textContent = st.email;
-        $('dropdown-name').textContent = st.email.split('@')[0];
         $('rp-email').value = st.email;
+        renderIdentity(st);
         loadDashboard();
         loadCompany();
         loadAvailableModels();
@@ -560,41 +713,7 @@ html.gated .app,html.gated header{opacity:0!important}
       }
     }
     
-    async function loadDashboard() {
-      try {
-        const r = await fetch('/api/recruiter/dashboard/stats', {credentials:'same-origin'});
-        const data = await r.json();
-        if (data.ok) {
-          const s = data.stats;
-          $('stat-jobs').textContent = s.total_jobs;
-          $('stat-active').textContent = s.active_jobs;
-          $('stat-apps').textContent = s.total_applications;
-          $('stat-new').textContent = s.new_applications;
-          $('stat-shortlisted').textContent = s.shortlisted;
-          $('stat-interviews').textContent = s.interview_scheduled;
-          $('stat-offers').textContent = s.offers_released;
-          $('stat-hired').textContent = s.hired;
-          
-          const tbody = $('recent-apps');
-          tbody.innerHTML = '';
-          (data.recent_applications || []).forEach(app => {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `<td>Candidate #${app.candidate_user_id}</td><td>Job #${app.job_id}</td><td><span class="badge badge-${app.status === 'shortlisted' ? 'shortlisted' : app.status === 'interview_scheduled' ? 'interview' : 'applied'}">${app.status}</span></td><td>${app.applied_at || ''}</td>`;
-            tbody.appendChild(tr);
-          });
-        }
-      } catch(e) { console.error(e); }
-    }
     
-    async function loadCompany() {
-      try {
-        const r = await fetch('/api/recruiter/company', {credentials:'same-origin'});
-        const data = await r.json();
-        if (data.ok && data.company) {
-          $('company-info').innerHTML = `<strong>${data.company.name}</strong><br>${data.company.industry || ''}<br>${data.company.location || ''}`;
-        }
-      } catch(e) {}
-    }
     
     async function loadRecruiterProfile() {
       try {
@@ -602,7 +721,7 @@ html.gated .app,html.gated header{opacity:0!important}
         if (r.ok) {
           const data = await r.json();
           if (data.profile) {
-            $('rp-name').value = data.profile.full_name || data.profile.name || '';
+            $('rp-name').value = data.profile.full_name || '';
             $('rp-title').value = data.profile.title || '';
             $('rp-phone').value = data.profile.phone || '';
           }
@@ -686,6 +805,7 @@ html.gated .app,html.gated header{opacity:0!important}
         const data = await r.json();
         const msg = $('rp-msg');
         if (data.ok) {
+          if (data.identity) renderIdentity(data.identity);
           msg.textContent = 'Profile saved successfully';
           msg.className = 'msg ok';
         } else {
@@ -785,86 +905,11 @@ html.gated .app,html.gated header{opacity:0!important}
       });
     });
     
-    async function loadJobs() {
-      try {
-        const r = await fetch('/api/recruiter/jobs', {credentials:'same-origin'});
-        const data = await r.json();
-        const tbody = $('jobs-list');
-        tbody.innerHTML = '';
-        (data.jobs || []).forEach(job => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td>${job.title || ''}</td><td>${job.location || ''}</td><td>${job.employment_type || ''}</td><td>${job.status || ''}</td><td><button class="btn" onclick="viewJobApps(${job.id})">View Apps</button></td>`;
-          tbody.appendChild(tr);
-        });
-      } catch(e) {}
-    }
     
-    async function loadApplications() {
-      try {
-        const r = await fetch('/api/recruiter/applications', {credentials:'same-origin'});
-        const data = await r.json();
-        const tbody = $('all-apps');
-        tbody.innerHTML = '';
-        (data.applications || []).forEach(app => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td>#${app.candidate_user_id}</td><td>#${app.job_id}</td><td><select onchange="updateStatus(${app.id}, this.value)"><option value="applied" ${app.status==='applied'?'selected':''}>Applied</option><option value="recruiter_review" ${app.status==='recruiter_review'?'selected':''}>Review</option><option value="shortlisted" ${app.status==='shortlisted'?'selected':''}>Shortlisted</option><option value="interview_scheduled" ${app.status==='interview_scheduled'?'selected':''}>Interview Scheduled</option><option value="rejected" ${app.status==='rejected'?'selected':''}>Rejected</option><option value="hired" ${app.status==='hired'?'selected':''}>Hired</option></select></td><td>${app.applied_at || ''}</td><td><button class="btn">View Profile</button></td>`;
-          tbody.appendChild(tr);
-        });
-      } catch(e) {}
-    }
     
-    async function updateStatus(appId, status) {
-      try {
-        await fetch(`/api/recruiter/applications/${appId}/status`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          credentials: 'same-origin',
-          body: JSON.stringify({status})
-        });
-        alert('Status updated');
-        loadDashboard();
-      } catch(e) {}
-    }
     
-    async function showCreateCompany() {
-      const name = prompt('Company Name:');
-      if (!name) return;
-      try {
-        await fetch('/api/recruiter/company', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          credentials: 'same-origin',
-          body: JSON.stringify({name})
-        });
-        alert('Company created');
-        loadCompany();
-      } catch(e) {}
-    }
     
-    async function showCreateJob() {
-      const title = prompt('Job Title:');
-      if (!title) return;
-      try {
-        await fetch('/api/recruiter/jobs', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          credentials: 'same-origin',
-          body: JSON.stringify({title, description: 'Job description', status: 'published'})
-        });
-        alert('Job created');
-        loadJobs();
-        loadDashboard();
-      } catch(e) {}
-    }
     
-    function viewJobApps(jobId) {
-      document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-      document.querySelectorAll('.nav-item').forEach(i => { if (i.dataset.page === 'applications') { i.classList.add('active'); }});
-      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-      $('page-applications').classList.add('active');
-      $('page-title').textContent = 'Applications';
-      loadApplications();
-    }
     
     async function logout() {
       try {
@@ -873,6 +918,392 @@ html.gated .app,html.gated header{opacity:0!important}
       window.location.href = '/';
     }
     
+    /* ===== Hiring loop: shared helpers ===== */
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const S = { company: null, jobs: [], apps: [], cands: [], tasks: [], ivs: [] };
+    const APP_STATUS = {applied:'Applied',ai_screening:'AI screening',recruiter_review:'In review',shortlisted:'Shortlisted',interview_scheduled:'Interview scheduled',interview_completed:'Interview done',technical_round:'Technical round',hr_round:'HR round',offer_released:'Offer released',offer_accepted:'Offer accepted',hired:'Hired',rejected:'Rejected',withdrawn:'Withdrawn',on_hold:'On hold',offer_declined:'Offer declined'};
+    const statusTone = s => ['hired','offer_accepted','shortlisted','published','completed','scheduled'].includes(s) ? 'b-ok'
+      : ['rejected','withdrawn','offer_declined','closed','cancelled','no_show'].includes(s) ? 'b-bad'
+      : ['on_hold','paused','draft','pending','in_progress','rescheduled'].includes(s) ? 'b-warn' : 'b-info';
+    const badge = (s, label) => `<span class="badge ${statusTone(s)}">${esc(label || APP_STATUS[s] || s)}</span>`;
+    const fmtDate = d => { const t = new Date(d); return isNaN(t) ? (d || '') : t.toLocaleDateString(undefined, {day:'numeric', month:'short', year:'numeric'}); };
+    const fmtWhen = d => { const t = new Date(d); return isNaN(t) ? (d || '') : t.toLocaleString(undefined, {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'}); };
+    const opts = (list, cur) => list.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(l)}</option>`).join('');
+    const appOpts = cur => opts(Object.entries(APP_STATUS), cur);
+
+    let toastT;
+    function toast(msg, bad) {
+      const t = $('toast'); t.textContent = msg; t.className = 'show' + (bad ? ' err' : '');
+      clearTimeout(toastT); toastT = setTimeout(() => t.className = '', 2600);
+    }
+    async function api(path, method, body) {
+      const r = await fetch(path, {method: method || 'GET', credentials: 'same-origin',
+        headers: body ? {'Content-Type': 'application/json'} : undefined, body: body ? JSON.stringify(body) : undefined});
+      let data = {};
+      try { data = await r.json(); } catch (e) {}
+      if (!r.ok || data.ok === false) throw new Error(data.detail || data.error || 'Request failed (' + r.status + ')');
+      return data;
+    }
+
+    /* modal: fields is HTML; onSave returns a promise, the modal closes when it resolves */
+    let modalSave = null;
+    function openModal(title, bodyHtml, onSave, saveLabel) {
+      $('modal-title').textContent = title; $('modal-body').innerHTML = bodyHtml;
+      $('modal-msg').textContent = ''; $('modal-save').textContent = saveLabel || 'Save';
+      modalSave = onSave; $('modal-save').style.display = onSave ? '' : 'none'; $('modal').classList.add('open');
+      const f = $('modal-body').querySelector('input,select,textarea'); if (f) f.focus();
+    }
+    function closeModal() { $('modal').classList.remove('open'); modalSave = null; }
+    async function submitModal() {
+      const b = $('modal-save'); b.disabled = true;
+      try { await modalSave(); closeModal(); }
+      catch (e) { $('modal-msg').textContent = e.message; $('modal-msg').className = 'msg err'; }
+      finally { b.disabled = false; }
+    }
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+    const val = id => $(id).value.trim();
+    const num = id => { const v = val(id); return v === '' ? null : Number(v); };
+    const field = (id, label, v, type) => `<div class="form-group"><label class="form-label" for="${id}">${label}</label><input class="form-input" id="${id}" type="${type || 'text'}" value="${esc(v)}"></div>`;
+
+    /* ===== data ===== */
+    async function loadCore() {
+      const [j, a] = await Promise.all([api('/api/recruiter/jobs'), api('/api/recruiter/applications')]);
+      S.jobs = j.jobs || []; S.apps = a.applications || [];
+    }
+    const jobFilterOpts = () => '<option value="">All jobs</option>' + S.jobs.map(j => `<option value="${j.id}">${esc(j.title)}</option>`).join('');
+    function fillFilter(id) { const el = $(id), cur = el.value; el.innerHTML = jobFilterOpts(); el.value = cur; }
+
+    async function loadDashboard() {
+      try {
+        const data = await api('/api/recruiter/dashboard/stats'), s = data.stats;
+        $('stat-jobs').textContent = s.total_jobs; $('stat-active').textContent = s.active_jobs;
+        $('stat-apps').textContent = s.total_applications; $('stat-new').textContent = s.new_applications;
+        $('stat-shortlisted').textContent = s.shortlisted; $('stat-interviews').textContent = s.interview_scheduled;
+        $('stat-offers').textContent = s.offers_released;
+        $('stat-cands').textContent = s.candidates; $('stat-ready').textContent = s.candidates_ready; $('stat-slots').textContent = s.pending_slots; $('stat-hired').textContent = s.hired;
+        const rows = (data.recent_applications || []).map(a => `<tr><td>${esc(a.candidate_name || 'Candidate #' + a.candidate_user_id)}</td><td>${esc(a.job_title || 'Job #' + a.job_id)}</td><td>${badge(a.status)}</td><td>${esc(fmtDate(a.applied_at))}</td></tr>`);
+        $('recent-apps').innerHTML = rows.join('') || '<tr><td colspan="4" class="empty">No applications yet. Publish a job to start receiving them.</td></tr>';
+      } catch (e) { console.error(e); }
+    }
+
+    /* ===== company ===== */
+    async function loadCompany() {
+      try {
+        const data = await api('/api/recruiter/company'); S.company = data.company;
+        const c = S.company;
+        $('company-info').innerHTML = c ? `<strong>${esc(c.name)}</strong><br>${esc(c.industry || '')}${c.industry && c.location ? ' · ' : ''}${esc(c.location || '')}` : 'No company set up yet. Add your company details to start posting jobs.';
+        $('co-name').value = c?.name || ''; $('co-industry').value = c?.industry || ''; $('co-website').value = c?.website || '';
+        $('co-location').value = c?.location || ''; $('co-desc').value = c?.description || '';
+      } catch (e) {}
+    }
+    function showCreateCompany() { showPageNav('company'); $('co-name').focus(); }
+    async function saveCompany() {
+      const msg = $('co-msg');
+      try {
+        await api('/api/recruiter/company', 'POST', {name: val('co-name'), industry: val('co-industry'), website: val('co-website'), location: val('co-location'), description: val('co-desc')});
+        msg.textContent = 'Company saved'; msg.className = 'msg ok'; await loadCompany();
+      } catch (e) { msg.textContent = e.message; msg.className = 'msg err'; }
+      setTimeout(() => { msg.textContent = ''; msg.className = 'msg'; }, 3000);
+    }
+
+    /* ===== jobs ===== */
+    async function loadJobs() { try { await loadCore(); } catch (e) {} renderJobs(); }
+    function renderJobs() {
+      const f = $('job-filter').value, n = {};
+      S.apps.forEach(a => n[a.job_id] = (n[a.job_id] || 0) + 1);
+      const rows = S.jobs.filter(j => !f || j.status === f).map(j => {
+        const next = j.status === 'published' ? ['paused', 'Pause'] : ['published', j.status === 'closed' ? 'Reopen' : 'Publish'];
+        return `<tr><td class="who"><b>${esc(j.title)}</b><span>${esc(j.department || '')}</span></td><td>${esc(j.location || '')}</td><td>${esc(j.employment_type || '')}</td><td>${n[j.id] || 0}</td><td>${badge(j.status)}</td>
+          <td><div class="row-actions"><button class="btn btn-sm" onclick="viewJobApps(${j.id})">Apps</button><button class="btn btn-sm" onclick="showCreateJob(${j.id})">Edit</button>
+          <button class="btn btn-sm" onclick="setJobStatus(${j.id},'${next[0]}')">${next[1]}</button>${j.status !== 'closed' ? `<button class="btn btn-sm btn-danger" onclick="setJobStatus(${j.id},'closed')">Close</button>` : ''}</div></td></tr>`;
+      });
+      $('jobs-list').innerHTML = rows.join('') || '<tr><td colspan="6" class="empty">No jobs here yet. Use Create Job to post your first opening.</td></tr>';
+    }
+    const skills = v => { try { return JSON.parse(v || '[]'); } catch (e) { return []; } };
+    function showCreateJob(id) {
+      if (!S.company) { toast('Set up your company first', true); showPageNav('company'); return; }
+      const j = S.jobs.find(x => x.id === id) || {};
+      openModal(id ? 'Edit job' : 'Create job', `
+        ${field('jf-title', 'Job title', j.title)}
+        <div class="grid-2">${field('jf-dept', 'Department', j.department)}${field('jf-loc', 'Location', j.location)}</div>
+        <div class="grid-2">
+          <div class="form-group"><label class="form-label" for="jf-type">Employment type</label><select class="form-select" id="jf-type">${opts([['full-time','Full-time'],['part-time','Part-time'],['contract','Contract'],['internship','Internship']], j.employment_type || 'full-time')}</select></div>
+          <div class="form-group"><label class="form-label" for="jf-mode">Work mode</label><select class="form-select" id="jf-mode">${opts([['onsite','On-site'],['hybrid','Hybrid'],['remote','Remote']], j.work_mode || 'onsite')}</select></div>
+        </div>
+        <div class="grid-2">${field('jf-minx', 'Min experience (yrs)', j.min_experience ?? '', 'number')}${field('jf-maxx', 'Max experience (yrs)', j.max_experience ?? '', 'number')}</div>
+        <div class="grid-2">${field('jf-smin', 'Salary min', j.salary_min ?? '', 'number')}${field('jf-smax', 'Salary max', j.salary_max ?? '', 'number')}</div>
+        <div class="grid-2">${field('jf-open', 'Openings', j.openings ?? 1, 'number')}${field('jf-dead', 'Application deadline', j.application_deadline, 'date')}</div>
+        ${field('jf-req', 'Required skills (comma separated)', skills(j.required_skills).join(', '))}
+        <div class="form-group"><label class="form-label" for="jf-desc">Description</label><textarea class="form-textarea" id="jf-desc">${esc(j.description)}</textarea></div>
+        <div class="form-group"><label class="form-label" for="jf-status">Status</label><select class="form-select" id="jf-status">${opts([['draft','Draft'],['published','Published'],['paused','Paused'],['closed','Closed']], j.status || 'published')}</select></div>`,
+        async () => {
+          if (!val('jf-title') || !val('jf-desc')) throw new Error('Title and description are required');
+          const body = {title: val('jf-title'), department: val('jf-dept'), location: val('jf-loc'), employment_type: val('jf-type'), work_mode: val('jf-mode'),
+            min_experience: num('jf-minx'), max_experience: num('jf-maxx'), salary_min: num('jf-smin'), salary_max: num('jf-smax'),
+            openings: num('jf-open') || 1, application_deadline: val('jf-dead'), description: val('jf-desc'), status: val('jf-status'),
+            required_skills: val('jf-req').split(',').map(s => s.trim()).filter(Boolean)};
+          await api(id ? `/api/recruiter/jobs/${id}/update` : '/api/recruiter/jobs', 'POST', body);
+          toast(id ? 'Job updated' : 'Job created'); await loadJobs(); loadDashboard();
+        }, id ? 'Save changes' : 'Create job');
+    }
+    async function setJobStatus(id, status) {
+      if (status === 'closed' && !confirm('Close this job? Candidates will no longer see it.')) return;
+      try { await api(`/api/recruiter/jobs/${id}/status`, 'POST', {status}); toast('Job ' + status); await loadJobs(); loadDashboard(); }
+      catch (e) { toast(e.message, true); }
+    }
+    function viewJobApps(jobId) { showPageNav('applications'); $('app-job-filter').value = String(jobId); renderApplications(); }
+
+    /* ===== applications ===== */
+    async function loadApplications() {
+      try { await loadCore(); } catch (e) {}
+      fillFilter('app-job-filter');
+      const sf = $('app-status-filter'), cur = sf.value;
+      sf.innerHTML = '<option value="">All statuses</option>' + Object.entries(APP_STATUS).map(([v, l]) => `<option value="${v}">${l}</option>`).join(''); sf.value = cur;
+      renderApplications();
+    }
+    function renderApplications() {
+      const j = $('app-job-filter').value, s = $('app-status-filter').value;
+      const rows = S.apps.filter(a => (!j || String(a.job_id) === j) && (!s || a.status === s)).map(a => `<tr>
+        <td class="who"><b>${esc(a.candidate_name || '#' + a.candidate_user_id)}</b><span>${esc(a.candidate_email || '')}</span></td>
+        <td>${esc(a.job_title || '#' + a.job_id)}</td>
+        <td><select aria-label="Status" onchange="updateStatus(${a.id}, this.value)">${appOpts(a.status)}</select></td>
+        <td>${esc(fmtDate(a.applied_at))}</td>
+        <td><button class="btn btn-sm" onclick="showInterviewForm(${a.id})">Schedule interview</button></td></tr>`);
+      $('all-apps').innerHTML = rows.join('') || '<tr><td colspan="5" class="empty">No applications match.</td></tr>';
+    }
+    async function updateStatus(appId, status) {
+      const a = S.apps.find(x => x.id === appId), prev = a && a.status;
+      try {
+        await api(`/api/recruiter/applications/${appId}/status`, 'POST', {status});
+        if (a) a.status = status; toast('Status updated'); loadDashboard();
+        if ($('page-pipeline').classList.contains('active')) renderPipeline();
+      } catch (e) { toast(e.message, true); if (a) a.status = prev; renderApplications(); renderPipeline(); }
+    }
+
+    /* ===== pipeline (drag and drop) ===== */
+    const COLS = [
+      ['applied', 'Applied', ['applied', 'ai_screening']], ['recruiter_review', 'In review', ['recruiter_review', 'on_hold']],
+      ['shortlisted', 'Shortlisted', ['shortlisted']], ['interview_scheduled', 'Interview', ['interview_scheduled', 'interview_completed', 'technical_round', 'hr_round']],
+      ['offer_released', 'Offer', ['offer_released', 'offer_accepted', 'offer_declined']], ['hired', 'Hired', ['hired']], ['rejected', 'Rejected', ['rejected', 'withdrawn']]];
+    async function loadPipeline() { try { await loadCore(); } catch (e) {} fillFilter('pipe-job-filter'); renderPipeline(); }
+    function renderPipeline() {
+      const j = $('pipe-job-filter').value, apps = S.apps.filter(a => !j || String(a.job_id) === j);
+      $('kanban').innerHTML = COLS.map(([key, label, sts]) => {
+        const list = apps.filter(a => sts.includes(a.status));
+        return `<div class="kcol" data-col="${key}"><h3>${label}<b>${list.length}</b></h3><div class="kcards">${list.map(a => `
+          <div class="kcard" draggable="true" data-id="${a.id}"><b>${esc(a.candidate_name || '#' + a.candidate_user_id)}</b><span>${esc(a.job_title || '')}</span>
+          ${a.status !== key ? `<span>${esc(APP_STATUS[a.status])}</span>` : ''}
+          <select aria-label="Move ${esc(a.candidate_name || 'candidate')} to" onchange="updateStatus(${a.id}, this.value)">${appOpts(a.status)}</select></div>`).join('')}</div></div>`;
+      }).join('');
+    }
+    (() => { /* delegated, so re-rendering the board never loses the handlers */
+      const k = $('kanban'); let dragId = null;
+      k.addEventListener('dragstart', e => { const c = e.target.closest('.kcard'); if (!c) return; dragId = +c.dataset.id; c.classList.add('drag'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragId); });
+      k.addEventListener('dragend', () => { dragId = null; k.querySelectorAll('.drag,.over').forEach(n => n.classList.remove('drag', 'over')); });
+      k.addEventListener('dragover', e => { const col = e.target.closest('.kcol'); if (!col || dragId == null) return; e.preventDefault(); k.querySelectorAll('.over').forEach(n => n !== col && n.classList.remove('over')); col.classList.add('over'); });
+      k.addEventListener('drop', e => {
+        const col = e.target.closest('.kcol'); if (!col || dragId == null) return; e.preventDefault();
+        const a = S.apps.find(x => x.id === dragId), target = col.dataset.col, def = COLS.find(c => c[0] === target);
+        if (a && !def[2].includes(a.status)) { a.status = target; renderPipeline(); updateStatus(dragId, target); } else renderPipeline();
+      });
+    })();
+
+    /* ===== candidates (recruiter's own CRM list) ===== */
+    const CAND_STATUS = [['working','Working'],['available','Available'],['ready_for_interview','Ready for interview'],['interviewing','Interviewing'],['offered','Offered'],['placed','Placed'],['not_interested','Not interested']];
+    async function loadCandidates() { try { S.cands = (await api('/api/candidates')).candidates || []; } catch (e) { toast(e.message, true); } renderCandidates(); }
+    function renderCandidates() {
+      const q = $('cand-search').value.toLowerCase();
+      const rows = S.cands.filter(c => !q || [c.name, c.email, c.current_location].join(' ').toLowerCase().includes(q)).map(c => `<tr>
+        <td class="who"><b>${esc(c.name)}</b></td><td class="who"><b>${esc(c.email || '')}</b><span>${esc(c.phone || '')}</span></td><td>${esc(c.current_location || '')}</td>
+        <td>${esc(c.expected_ctc || '')}</td><td>${esc(c.availability || '')}</td><td>${badge(c.status, (CAND_STATUS.find(s => s[0] === c.status) || [0, c.status])[1])}</td>
+        <td><div class="row-actions"><button class="btn btn-sm" onclick="showCandidateForm('${esc(c.id)}')">Edit</button><button class="btn btn-sm btn-danger" onclick="deleteCandidate('${esc(c.id)}')">Delete</button></div></td></tr>`);
+      $('cand-list').innerHTML = rows.join('') || '<tr><td colspan="7" class="empty">No candidates yet. Add the people you are tracking.</td></tr>';
+    }
+    function showCandidateForm(id) {
+      const c = S.cands.find(x => x.id === id) || {};
+      openModal(id ? 'Edit candidate' : 'Add candidate', `
+        <div class="grid-2">${field('cf-name', 'Name', c.name)}${field('cf-email', 'Email', c.email, 'email')}</div>
+        <div class="grid-2">${field('cf-phone', 'Phone', c.phone)}${field('cf-loc', 'Current location', c.current_location)}</div>
+        <div class="grid-2">${field('cf-cur', 'Current CTC', c.current_ctc)}${field('cf-exp', 'Expected CTC', c.expected_ctc)}</div>
+        <div class="grid-2">${field('cf-avail', 'Availability', c.availability)}
+          <div class="form-group"><label class="form-label" for="cf-status">Status</label><select class="form-select" id="cf-status">${opts(CAND_STATUS, c.status || 'working')}</select></div></div>
+        <div class="form-group"><label class="form-label" for="cf-notes">Notes</label><textarea class="form-textarea" id="cf-notes">${esc(c.notes)}</textarea></div>`,
+        async () => {
+          if (!val('cf-name')) throw new Error('Name is required');
+          await api('/api/candidates', 'POST', {id: id || null, name: val('cf-name'), email: val('cf-email'), phone: val('cf-phone'), current_location: val('cf-loc'),
+            current_ctc: val('cf-cur'), expected_ctc: val('cf-exp'), availability: val('cf-avail'), status: val('cf-status'), notes: val('cf-notes')});
+          toast('Candidate saved'); loadCandidates(); loadDashboard();
+        });
+    }
+    async function deleteCandidate(id) {
+      if (!confirm('Delete this candidate?')) return;
+      try { await api('/api/candidates/' + encodeURIComponent(id), 'DELETE'); toast('Candidate deleted'); loadCandidates(); loadDashboard(); } catch (e) { toast(e.message, true); }
+    }
+
+    /* ===== tasks ===== */
+    async function loadTasks() { try { S.tasks = (await api('/api/recruiter/tasks')).tasks || []; } catch (e) { toast(e.message, true); } renderTasks(); }
+    function renderTasks() {
+      const f = $('task-filter').value, today = new Date().toISOString().slice(0, 10);
+      const list = S.tasks.filter(t => f === 'open' ? !['completed', 'cancelled'].includes(t.status) : !f || t.status === f);
+      $('task-list').innerHTML = list.map(t => `<div class="task${t.status === 'completed' ? ' done' : ''}">
+        <input type="checkbox" aria-label="Done" ${t.status === 'completed' ? 'checked' : ''} onchange="toggleTask(${t.id}, this.checked)">
+        <div class="t"><b>${esc(t.title)}</b><span>${esc(t.description || '')}</span><span>${t.due_date ? (t.due_date < today && t.status !== 'completed' ? '<span class="badge b-bad">Overdue</span> ' : '') + 'Due ' + esc(fmtDate(t.due_date)) : 'No due date'}</span></div>
+        ${badge(t.priority === 'high' ? 'rejected' : t.priority === 'low' ? 'pending' : 'applied', t.priority)}
+        <button class="btn btn-sm btn-danger" onclick="deleteTask(${t.id})">Delete</button></div>`).join('') || '<div class="empty">Nothing here. Add a task to keep track of follow-ups.</div>';
+    }
+    function showTaskForm() {
+      openModal('Add task', `${field('tf-title', 'Title')}${field('tf-desc', 'Details')}
+        <div class="grid-2">${field('tf-due', 'Due date', '', 'date')}<div class="form-group"><label class="form-label" for="tf-pri">Priority</label><select class="form-select" id="tf-pri">${opts([['low','Low'],['medium','Medium'],['high','High']], 'medium')}</select></div></div>`,
+        async () => {
+          if (!val('tf-title')) throw new Error('Title is required');
+          await api('/api/recruiter/tasks', 'POST', {title: val('tf-title'), description: val('tf-desc'), due_date: val('tf-due'), priority: val('tf-pri')});
+          toast('Task added'); loadTasks();
+        }, 'Add task');
+    }
+    async function toggleTask(id, done) {
+      try { await api(`/api/recruiter/tasks/${id}/update`, 'POST', {status: done ? 'completed' : 'pending'}); loadTasks(); } catch (e) { toast(e.message, true); loadTasks(); }
+    }
+    async function deleteTask(id) {
+      if (!confirm('Delete this task?')) return;
+      try { await api('/api/recruiter/tasks/' + id, 'DELETE'); loadTasks(); } catch (e) { toast(e.message, true); }
+    }
+
+    /* ===== interviews ===== */
+    async function loadInterviews() {
+      try { const [iv] = await Promise.all([api('/api/recruiter/interviews'), loadCore()]); S.ivs = iv.interviews || []; } catch (e) { toast(e.message, true); }
+      renderInterviews();
+    }
+    const IV_TYPES = [['phone_screening','Phone screening'],['technical_interview','Technical interview'],['hr_interview','HR interview'],['managerial_interview','Managerial interview'],['final_interview','Final interview']];
+    function renderInterviews() {
+      $('iv-list').innerHTML = S.ivs.map(i => `<tr><td>${esc(fmtWhen(i.scheduled_at))}<div class="hint">${i.duration_minutes || 60} min</div></td>
+        <td class="who"><b>${esc(i.candidate_name)}</b><span>${esc(i.candidate_email || '')}</span></td><td>${esc(i.job_title || '')}</td>
+        <td>${esc((IV_TYPES.find(t => t[0] === i.interview_type) || [0, i.interview_type])[1])}</td>
+        <td>${i.meeting_link ? `<a href="${esc(i.meeting_link)}" target="_blank" rel="noopener noreferrer">Meeting link</a>` : esc(i.location || '')}</td>
+        <td><select aria-label="Interview status" onchange="setInterviewStatus(${i.id}, this.value)">${opts([['scheduled','Scheduled'],['rescheduled','Rescheduled'],['completed','Completed'],['cancelled','Cancelled'],['no_show','No show']], i.status)}</select></td></tr>`).join('')
+        || '<tr><td colspan="6" class="empty">No interviews scheduled. Use Schedule Interview or the button on an application.</td></tr>';
+    }
+    function showInterviewForm(appId) {
+      if (!S.apps.length) { toast('No applications to interview yet', true); return; }
+      openModal('Schedule interview', `
+        <div class="form-group"><label class="form-label" for="if-app">Application</label><select class="form-select" id="if-app">${S.apps.map(a => `<option value="${a.id}"${a.id === appId ? ' selected' : ''}>${esc(a.candidate_name)} — ${esc(a.job_title)}</option>`).join('')}</select></div>
+        <div class="grid-2">${field('if-when', 'Date and time', '', 'datetime-local')}${field('if-dur', 'Duration (min)', 60, 'number')}</div>
+        <div class="form-group"><label class="form-label" for="if-type">Type</label><select class="form-select" id="if-type">${opts(IV_TYPES, 'phone_screening')}</select></div>
+        ${field('if-link', 'Meeting link', '', 'url')}${field('if-loc', 'Location')}
+        <div class="form-group"><label class="form-label" for="if-note">Instructions for the candidate</label><textarea class="form-textarea" id="if-note"></textarea></div>`,
+        async () => {
+          if (!val('if-when')) throw new Error('Pick a date and time');
+          await api('/api/recruiter/interviews', 'POST', {application_id: +val('if-app'), scheduled_at: toISO(val('if-when')), duration_minutes: num('if-dur') || 60,
+            interview_type: val('if-type'), meeting_link: val('if-link'), location: val('if-loc'), instructions: val('if-note')});
+          toast('Interview scheduled'); loadInterviews(); loadDashboard();
+          if ($('page-applications').classList.contains('active')) loadApplications();
+        }, 'Schedule');
+    }
+    async function setInterviewStatus(id, status) {
+      try { await api(`/api/recruiter/interviews/${id}/update`, 'POST', {status}); toast('Interview ' + status.replace('_', ' ')); } catch (e) { toast(e.message, true); loadInterviews(); }
+    }
+
+    /* ===== identity: nickname + logo chosen at sign-up ===== */
+    const AVATAR_GRAD = {aurora:["#4f46e5","#7c3aed"],ember:["#f97316","#ef4444"],forest:["#059669","#34d399"],harbor:["#0ea5e9","#6366f1"],iris:["#8b5cf6","#ec4899"],sand:["#d97706","#fbbf24"],slate:["#475569","#94a3b8"],violet:["#6d28d9","#a855f7"],coral:["#fb7185","#f43f5e"],mint:["#14b8a6","#5eead4"],dusk:["#7c3aed","#2563eb"],cobalt:["#2563eb","#06b6d4"]};
+    const initials = n => { const p = String(n || '').trim().split(/[\s._@-]+/).filter(Boolean); return !p.length ? '?' : p.length === 1 ? p[0].slice(0, 2) : p[0][0] + p[1][0]; };
+    const userImg = email => { try { return localStorage.getItem('js-avimg:' + String(email || '').toLowerCase()) || ''; } catch (e) { return ''; } };
+    function avatarHtml(id, name, email, cls) {
+      const img = userImg(email);
+      if (img) return `<span class="av ${cls || ''}"><img alt="" src="${esc(img)}"></span>`;
+      const g = AVATAR_GRAD[id] || AVATAR_GRAD.aurora;
+      return `<span class="av ${cls || ''}" style="background:linear-gradient(135deg,${g[0]},${g[1]})">${esc(initials(name))}</span>`;
+    }
+    function renderIdentity(st) {
+      const name = st.display_name || st.nickname || (st.email || '').split('@')[0];
+      $('accountBtn').querySelector('.av').outerHTML = avatarHtml(st.avatar, name, st.email);
+      $('user-email').textContent = name;
+      $('accountBtn').title = 'Signed in as ' + st.email;
+      $('dropdown-av').innerHTML = avatarHtml(st.avatar, name, st.email, 'lg');
+      $('dropdown-name').textContent = name; $('dropdown-email').textContent = st.email;
+      if (st.nickname !== undefined && !$('rp-name').value) $('rp-name').value = st.nickname || '';
+    }
+    /* The sign-up form stores the chosen logo and nickname locally until the account is confirmed;
+       apply them the first time that account reaches this portal. */
+    async function applyPendingProfile(st) {
+      let p; try { p = JSON.parse(localStorage.getItem('js-pending-profile') || 'null'); } catch (e) { p = null; }
+      if (!p || String(p.email) !== String(st.email).toLowerCase()) return st;
+      try { localStorage.removeItem('js-pending-profile'); } catch (e) {}
+      if (p.img) try { localStorage.setItem('js-avimg:' + p.email, p.img); } catch (e) {}
+      const patch = {}; if (p.nick) patch.nickname = p.nick; if (!p.img && p.avatar) patch.avatar = p.avatar;
+      if (Object.keys(patch).length) try { return {...st, ...(await api('/api/auth/identity', 'POST', patch))}; } catch (e) {}
+      return st;
+    }
+
+    /* ===== calendar ===== */
+    const pad = n => String(n).padStart(2, '0');
+    const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    const toISO = local => { const t = new Date(local); if (isNaN(t)) throw new Error('Pick a valid date and time'); return t.toISOString(); };
+    const hhmm = iso => new Date(iso).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'});
+    let cal = {events: [], slots: [], interviews: []}, calCur = new Date(); calCur.setDate(1);
+
+    async function loadCalendar(silent) {
+      try { cal = await api('/api/recruiter/calendar'); $('cal-sync').textContent = 'Updates automatically · ' + new Date().toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'}); }
+      catch (e) { if (!silent) toast(e.message, true); }
+      renderCalendar();
+    }
+    function calMove(n) { calCur = new Date(calCur.getFullYear(), calCur.getMonth() + n, 1); renderCalendar(); }
+    function calToday() { calCur = new Date(); calCur.setDate(1); renderCalendar(); }
+    function renderCalendar() {
+      $('cal-title').textContent = calCur.toLocaleDateString(undefined, {month: 'long', year: 'numeric'});
+      const byDay = {}, add = (iso, html) => { (byDay[ymd(new Date(iso))] = byDay[ymd(new Date(iso))] || []).push([iso, html]); };
+      cal.interviews.filter(i => !['cancelled'].includes(i.status)).forEach(i => add(i.scheduled_at, `<button class="ci iv" onclick="showCalItem('iv',${i.id})">${hhmm(i.scheduled_at)} ${esc(i.candidate_name)}</button>`));
+      cal.slots.forEach(s => add(s.start_at, `<button class="ci slot" onclick="showCalItem('slot',${s.id})">${hhmm(s.start_at)} ? ${esc(s.candidate_name)}</button>`));
+      cal.events.forEach(e => add(e.start_at, `<button class="ci ev" onclick="showCalItem('ev',${e.id})">${hhmm(e.start_at)} ${esc(e.title)}</button>`));
+      const first = new Date(calCur.getFullYear(), calCur.getMonth(), 1), lead = (first.getDay() + 6) % 7, today = ymd(new Date());
+      let cells = '';
+      const total = Math.ceil((lead + new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate()) / 7) * 7;
+      for (let i = 0; i < total; i++) {
+        const d = new Date(first.getFullYear(), first.getMonth(), 1 - lead + i), k = ymd(d);
+        const items = (byDay[k] || []).sort((a, b) => a[0] < b[0] ? -1 : 1).map(x => x[1]).join('');
+        cells += `<div class="cal-day${d.getMonth() !== first.getMonth() ? ' off' : ''}${k === today ? ' today' : ''}" onclick="if(event.target===this||event.target.className==='n')showEventForm('${k}')"><span class="n">${d.getDate()}</span>${items}</div>`;
+      }
+      $('cal-grid').innerHTML = cells;
+      $('cal-pending').innerHTML = cal.slots.length ? cal.slots.map(s => `<div class="pend"><div class="who"><b>${esc(s.candidate_name)}</b><span>offered ${esc(fmtWhen(s.start_at))} (${s.duration_minutes} min) for ${esc(s.job_title)}</span></div>
+        <button class="btn btn-sm btn-primary" onclick="confirmSlot(${s.id})">Confirm interview</button><button class="btn btn-sm" onclick="declineSlot(${s.id})">Decline</button></div>`).join('') : '';
+    }
+    async function confirmSlot(id) {
+      try { await api(`/api/recruiter/slots/${id}/confirm`, 'POST', {}); toast('Interview confirmed'); closeModal(); loadCalendar(); loadDashboard(); }
+      catch (e) { toast(e.message, true); loadCalendar(); }
+    }
+    async function declineSlot(id) {
+      try { await api(`/api/recruiter/slots/${id}/decline`, 'POST', {}); toast('Slot declined'); closeModal(); loadCalendar(); loadDashboard(); }
+      catch (e) { toast(e.message, true); loadCalendar(); }
+    }
+    function showCalItem(kind, id) {
+      if (kind === 'slot') { const s = cal.slots.find(x => x.id === id); if (!s) return;
+        openModal('Slot offered by ' + s.candidate_name, `<p>${esc(fmtWhen(s.start_at))} · ${s.duration_minutes} min</p><p class="hint">${esc(s.job_title)} · ${esc(s.candidate_email)}</p>
+          <div class="modal-foot" style="padding:18px 0 0"><button class="btn" onclick="declineSlot(${id})">Decline</button><button class="btn btn-primary" onclick="confirmSlot(${id})">Confirm interview</button></div>`, null); }
+      else if (kind === 'iv') { const i = cal.interviews.find(x => x.id === id); if (!i) return;
+        openModal('Interview · ' + i.candidate_name, `<p>${esc(fmtWhen(i.scheduled_at))} · ${i.duration_minutes || 60} min</p><p class="hint">${esc(i.job_title)} · ${esc(i.candidate_email)}</p>
+          <p>${i.meeting_link ? `<a href="${esc(i.meeting_link)}" target="_blank" rel="noopener noreferrer">Meeting link</a>` : esc(i.location || '')}</p><p>${badge(i.status)}</p>`, null); }
+      else { const e = cal.events.find(x => x.id === id); if (!e) return;
+        openModal(e.title, `<p>${esc(fmtWhen(e.start_at))}</p><p class="hint">${esc(e.notes || '')}</p>
+          <div class="modal-foot" style="padding:18px 0 0"><button class="btn btn-danger" onclick="deleteEvent(${id})">Delete event</button></div>`, null); }
+    }
+    function showEventForm(day) {
+      openModal('Add event', `${field('ef-title', 'Title')}${field('ef-when', 'Date and time', (day || ymd(new Date())) + 'T09:00', 'datetime-local')}${field('ef-notes', 'Notes')}`,
+        async () => {
+          if (!val('ef-title')) throw new Error('Title is required');
+          await api('/api/recruiter/events', 'POST', {title: val('ef-title'), start_at: toISO(val('ef-when')), notes: val('ef-notes')});
+          toast('Event added'); loadCalendar();
+        }, 'Add event');
+    }
+    async function deleteEvent(id) {
+      try { await api('/api/recruiter/events/' + id, 'DELETE'); closeModal(); toast('Event deleted'); loadCalendar(); } catch (e) { toast(e.message, true); }
+    }
+    /* "Updates automatically": poll while the page is open, and refresh when the tab regains focus. */
+    function livePoll() {
+      if (document.hidden) return;
+      if ($('page-calendar').classList.contains('active')) loadCalendar(true);
+      else if ($('page-overview').classList.contains('active')) loadDashboard();
+    }
+    setInterval(livePoll, 30000);
+    document.addEventListener('visibilitychange', livePoll);
+
     initTheme();
     loadUser();
   </script>

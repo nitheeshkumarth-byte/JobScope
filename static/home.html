@@ -78,6 +78,11 @@
     .modal-card h3{font-family:var(--font-display);font-size:24px;letter-spacing:-.02em;margin-bottom:18px}
     .modal-actions{display:flex;gap:10px;margin-top:12px}
     .btn-cancel{background:var(--surface-2);color:var(--ink);border:1px solid var(--line)}
+    #register-modal{overflow:auto;align-items:flex-start!important}.modal-card{margin:auto}
+    .reg-avgrid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+    .reg-avgrid button{aspect-ratio:1;border-radius:50%;border:2px solid transparent;color:#fff;font-weight:700;font-size:13px;cursor:pointer;text-transform:uppercase}
+    .reg-avgrid button.picked{border-color:var(--ink);box-shadow:0 0 0 2px var(--signal,#8f7fff)}
+    .reg-avrow{display:flex;align-items:center;gap:10px;margin-top:10px}.reg-avprev{width:38px;height:38px;border-radius:50%;overflow:hidden;display:inline-block}.reg-avprev img{width:100%;height:100%;object-fit:cover}
     #reg-info{margin-top:10px;font-size:13.5px;color:var(--muted)}
     #reg-info a{color:var(--teal)}
 
@@ -231,6 +236,11 @@ html.gated .app,html.gated header{opacity:0!important}
       <div class="form-group"><label for="reg-email">Email</label><input type="email" id="reg-email"></div>
       <div class="form-group"><label for="reg-password">Password</label><input type="password" id="reg-password"></div>
       <div class="form-group"><label for="reg-password2">Confirm Password</label><input type="password" id="reg-password2"></div>
+      <div class="form-group"><label for="reg-nick">Display name</label><input type="text" id="reg-nick" maxlength="40" placeholder="Shown in the top bar and your account menu" autocomplete="nickname"></div>
+      <div class="form-group"><label>Profile logo</label>
+        <div id="reg-avgrid" class="reg-avgrid"></div>
+        <div class="reg-avrow"><button type="button" class="btn btn-cancel" id="reg-avupload">Upload your own</button><span id="reg-avprev" class="reg-avprev" hidden></span><input type="file" id="reg-avfile" accept="image/*" hidden></div>
+      </div>
       <div class="error" id="reg-error" role="alert"></div>
       <div class="modal-actions">
         <button class="btn btn-candidate" id="reg-submit" onclick="doRegister()">Create Account</button>
@@ -241,6 +251,40 @@ html.gated .app,html.gated header{opacity:0!important}
   </div>
 
   <script>
+    /* Sign-up identity: nickname + logo. Kept locally until the account is first signed in, then applied
+       by the portal it lands on (same mechanism as the candidate sign-up form). */
+    const REG_GRAD = {aurora:["#4f46e5","#7c3aed"],ember:["#f97316","#ef4444"],forest:["#059669","#34d399"],harbor:["#0ea5e9","#6366f1"],iris:["#8b5cf6","#ec4899"],sand:["#d97706","#fbbf24"],slate:["#475569","#94a3b8"],violet:["#6d28d9","#a855f7"],coral:["#fb7185","#f43f5e"],mint:["#14b8a6","#5eead4"],dusk:["#7c3aed","#2563eb"],cobalt:["#2563eb","#06b6d4"]};
+    const REG = {avatar: 'aurora', img: ''};
+    const regInit = () => { const n = (document.getElementById('reg-nick').value || document.getElementById('reg-email').value.split('@')[0] || 'you').trim(); const p = n.split(/[\s._-]+/).filter(Boolean); return (p.length > 1 ? p[0][0] + p[1][0] : (p[0] || '?').slice(0, 2)); };
+    function paintRegLogo() {
+      const ini = regInit().replace(/[<>&]/g, '');
+      document.getElementById('reg-avgrid').innerHTML = Object.keys(REG_GRAD).map(id => `<button type="button" data-av="${id}" class="${!REG.img && id === REG.avatar ? 'picked' : ''}" title="${id}" style="background:linear-gradient(135deg,${REG_GRAD[id].join(',')})">${ini}</button>`).join('');
+      const pv = document.getElementById('reg-avprev'); pv.hidden = !REG.img; pv.innerHTML = REG.img ? `<img alt="" src="${REG.img}">` : '';
+      document.getElementById('reg-avupload').textContent = REG.img ? 'Replace upload' : 'Upload your own';
+    }
+    function readLogo(file) {
+      return new Promise((ok, bad) => {
+        if (!file || !/^image\//.test(file.type)) return bad(new Error('Choose an image file.'));
+        if (file.size > 5 * 1024 * 1024) return bad(new Error('Image must be under 5 MB.'));
+        const fr = new FileReader(); fr.onerror = () => bad(new Error('Could not read that file.'));
+        fr.onload = () => { const im = new Image(); im.onerror = () => bad(new Error('That image could not be opened.'));
+          im.onload = () => { const s = Math.min(im.width, im.height), c = document.createElement('canvas'); c.width = c.height = 128;
+            c.getContext('2d').drawImage(im, (im.width - s) / 2, (im.height - s) / 2, s, s, 0, 0, 128, 128); ok(c.toDataURL('image/jpeg', 0.85)); };
+          im.src = fr.result; };
+        fr.readAsDataURL(file);
+      });
+    }
+    document.getElementById('reg-avgrid').addEventListener('click', e => { const b = e.target.closest('[data-av]'); if (!b) return; REG.avatar = b.dataset.av; REG.img = ''; paintRegLogo(); });
+    document.getElementById('reg-avupload').onclick = () => document.getElementById('reg-avfile').click();
+    document.getElementById('reg-avfile').onchange = async function () {
+      const f = this.files && this.files[0]; this.value = ''; if (!f) return;
+      try { REG.img = await readLogo(f); paintRegLogo(); } catch (e) { document.getElementById('reg-error').textContent = e.message; }
+    };
+    ['reg-nick', 'reg-email'].forEach(id => document.getElementById(id).addEventListener('input', paintRegLogo));
+    function savePendingProfile(email) {
+      try { localStorage.setItem('js-pending-profile', JSON.stringify({email: email.toLowerCase(), avatar: REG.avatar, img: REG.img, nick: document.getElementById('reg-nick').value.trim()})); } catch (e) {}
+    }
+
     let registerRole = 'candidate';
 
     function showRegister(role) {
@@ -251,6 +295,7 @@ html.gated .app,html.gated header{opacity:0!important}
       document.getElementById('register-modal').style.display = 'flex';
       document.getElementById('reg-error').textContent = '';
       document.getElementById('reg-info').textContent = '';
+      paintRegLogo();
     }
     function closeRegister() {
       document.getElementById('register-modal').style.display = 'none';
@@ -276,6 +321,7 @@ html.gated .app,html.gated header{opacity:0!important}
         });
         const data = await r.json();
         if (data.ok) {
+          savePendingProfile(email);
           if (data.needs_verification) {
             info.textContent = 'Account created. Please check your email to verify, then sign in.';
             if (data.dev_link) info.innerHTML += '<br><a href="' + data.dev_link + '">Verify link (dev)</a>';

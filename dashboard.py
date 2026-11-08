@@ -64,7 +64,6 @@ import mailer
 import resume_data
 import resume_generator
 import rag_store
-
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(HERE, "static")
 LOG_DIR = os.path.join(HERE, "logs")
@@ -1494,7 +1493,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="JobScope", lifespan=lifespan)
+# Registered before every route below so the router's recruiter/candidate
+# endpoints win over the older same-path definitions further down.
+import recruiter_api
+app.include_router(recruiter_api.router)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "message": "JobScope backend is running"}
 
 
 @app.middleware("http")
@@ -1811,6 +1819,9 @@ async def session_state(request: Request):
     needs_bootstrap = auth.count_users() == 0
     if needs_bootstrap:
         return {"ok": False, "authenticated": False, "needs_bootstrap": True, "signed_in": False,
+                "seconds_left": 0,
+                "idle_minutes": auth.SESSION_IDLE_MINUTES,
+                "extend_minutes": auth.SESSION_EXTEND_MINUTES,
                 "smtp_configured": smtp}
     if not user:
         return {"ok": False, "authenticated": False, "signed_in": False, "seconds_left": 0,
@@ -1940,69 +1951,7 @@ class CandidateRequest(BaseModel):
     notes: str = ""
 
 
-@app.get("/api/candidates")
-async def get_candidates(request: Request, status: str | None = None, ctx: Ctx = Depends(build_ctx)):
-    try:
-        cands = auth.list_candidates(ctx.uid, status)
-        return {"ok": True, "candidates": cands}
-    except Exception as e:
-        return {"ok": False, "candidates": [], "error": str(e)}
-
-
-@app.post("/api/candidates")
-async def post_candidate(req: CandidateRequest, ctx: Ctx = Depends(build_ctx)):
-    try:
-        cand = auth.upsert_candidate(ctx.uid, req.model_dump())
-        return {"ok": True, "candidate": cand}
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
-
-
-@app.delete("/api/candidates/{cand_id}")
-async def delete_candidate(cand_id: str, ctx: Ctx = Depends(build_ctx)):
-    try:
-        ok = auth.delete_candidate(ctx.uid, cand_id)
-        return {"ok": bool(ok)}
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
-
-
-# Recruiter CRM API Routes
-class CompanyRequest(BaseModel):
-    name: str = ""
-    website: str = ""
-    industry: str = ""
-    description: str = ""
-    location: str = ""
-    logo_url: str = ""
-
-
-class JobRequest(BaseModel):
-    title: str = ""
-    company_id: int | None = None
-    department: str = ""
-    description: str = ""
-    required_skills: list = []
-    preferred_skills: list = []
-    min_experience: int | None = None
-    max_experience: int | None = None
-    education_req: str = ""
-    employment_type: str = ""
-    work_mode: str = ""
-    location: str = ""
-    salary_min: int | None = None
-    salary_max: int | None = None
-    currency: str = "INR"
-    openings: int = 1
-    application_deadline: str = ""
-    status: str = "draft"
-
-
-class ApplicationStatusRequest(BaseModel):
-    status: str = ""
-    note: str = ""
-
-
+# Recruiter CRM helpers shared by the task/interview routes below.
 def _require_role(ctx: Ctx, roles: list[str]):
     user_role = ctx.user.get("role", "candidate")
     if user_role not in roles and user_role != "super_admin":
@@ -2010,45 +1959,9 @@ def _require_role(ctx: Ctx, roles: list[str]):
     return True
 
 
-@app.post("/api/recruiter/company")
-async def create_company(req: CompanyRequest, ctx: Ctx = Depends(build_ctx)):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    company = auth.create_company(req.name, created_by=ctx.uid, website=req.website, 
-                                 industry=req.industry, description=req.description,
-                                 location=req.location, logo_url=req.logo_url)
-    # Create/update recruiter profile
-    auth.create_recruiter_profile(ctx.uid, company_id=company.get("id"))
-    return {"ok": True, "company": company}
-
-
-@app.get("/api/recruiter/company")
-async def get_recruiter_company(ctx: Ctx = Depends(build_ctx)):
-    _require_role(ctx, ["recruiter", "super_admin"])
+def _company_id(ctx: Ctx) -> int | None:
     profile = auth.get_recruiter_profile(ctx.uid)
-    if profile and profile.get("company_id"):
-        company = auth.get_company(profile["company_id"])
-        return {"ok": True, "company": company, "profile": profile}
-    return {"ok": True, "company": None, "profile": profile}
-
-
-@app.post("/api/recruiter/jobs")
-async def create_job(req: JobRequest, ctx: Ctx = Depends(build_ctx)):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    profile = auth.get_recruiter_profile(ctx.uid)
-    company_id = req.company_id or (profile.get("company_id") if profile else None)
-    if not company_id:
-        raise HTTPException(status_code=400, detail="Company required")
-    job = auth.create_job(company_id, ctx.uid, req.model_dump())
-    return {"ok": True, "job": job}
-
-
-@app.get("/api/recruiter/jobs")
-async def list_recruiter_jobs(ctx: Ctx = Depends(build_ctx), status: str | None = None):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    profile = auth.get_recruiter_profile(ctx.uid)
-    company_id = profile.get("company_id") if profile else None
-    jobs = auth.list_jobs(company_id=company_id, status=status)
-    return {"ok": True, "jobs": jobs}
+    return profile.get("company_id") if profile else None
 
 
 @app.get("/api/jobs")
@@ -2066,97 +1979,10 @@ async def apply_job(job_id: int, request: Request, ctx: Ctx = Depends(build_ctx)
     return {"ok": True, "application": app}
 
 
-@app.get("/api/recruiter/applications")
-async def list_recruiter_applications(ctx: Ctx = Depends(build_ctx), job_id: int | None = None):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    if job_id:
-        apps = auth.list_applications(job_id=job_id)
-    else:
-        profile = auth.get_recruiter_profile(ctx.uid)
-        company_id = profile.get("company_id") if profile else None
-        # Get all jobs for company then applications
-        jobs = auth.list_jobs(company_id=company_id)
-        all_apps = []
-        for j in jobs:
-            all_apps.extend(auth.list_applications(job_id=j['id']))
-        apps = all_apps
-    return {"ok": True, "applications": apps}
-
-
-@app.post("/api/recruiter/applications/{app_id}/status")
-async def update_app_status(app_id: int, req: ApplicationStatusRequest, ctx: Ctx = Depends(build_ctx)):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    ok = auth.update_application_status(app_id, req.status)
-    return {"ok": bool(ok)}
-
-
-@app.get("/api/recruiter/dashboard/stats")
-async def recruiter_dashboard_stats(ctx: Ctx = Depends(build_ctx)):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    profile = auth.get_recruiter_profile(ctx.uid)
-    company_id = profile.get("company_id") if profile else None
-    jobs = auth.list_jobs(company_id=company_id)
-    all_apps = []
-    for j in jobs:
-        all_apps.extend(auth.list_applications(job_id=j['id']))
-    stats = {
-        "total_jobs": len(jobs),
-        "active_jobs": len([j for j in jobs if j.get('status') == 'published']),
-        "total_applications": len(all_apps),
-        "new_applications": len([a for a in all_apps if a.get('status') == 'applied']),
-        "shortlisted": len([a for a in all_apps if a.get('status') == 'shortlisted']),
-        "interview_scheduled": len([a for a in all_apps if a.get('status') == 'interview_scheduled']),
-        "offers_released": len([a for a in all_apps if a.get('status') == 'offer_released']),
-        "hired": len([a for a in all_apps if a.get('status') == 'hired']),
-    }
-    return {"ok": True, "stats": stats, "recent_applications": all_apps[:10], "jobs": jobs}
-
-
-class RecruiterProfileRequest(BaseModel):
-    full_name: str = ""
-    title: str = ""
-    phone: str = ""
-
-
-@app.get("/api/recruiter/profile")
-async def get_recruiter_profile_api(ctx: Ctx = Depends(build_ctx)):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    profile = auth.get_recruiter_profile(ctx.uid)
-    return {"ok": True, "profile": profile or {}}
-
-
-@app.post("/api/recruiter/profile")
-async def save_recruiter_profile_api(req: RecruiterProfileRequest, ctx: Ctx = Depends(build_ctx)):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    profile = auth.create_recruiter_profile(ctx.uid, title=req.title, phone=req.phone)
-    # Also store name if possible - extend if needed
-    return {"ok": True, "profile": profile}
-
-
 # Config endpoints for model selection
-@app.get("/api/config")
-async def get_config(ctx: Ctx = Depends(build_ctx)):
-    # Return config from session/state if available
-    cfg = getattr(ctx, 'config', {}) or {}
-    return {"ok": True, **cfg}
-
-
-@app.post("/api/config")
-async def save_config(req: Request, ctx: Ctx = Depends(build_ctx)):
-    try:
-        body = await req.json()
-    except Exception:
-        body = {}
-    # Try to save to a simple store if possible
-    try:
-        if not hasattr(app.state, 'recruiter_config'):
-            app.state.recruiter_config = {}
-        app.state.recruiter_config[ctx.uid] = body
-    except Exception:
-        pass
-    return {"ok": True}
-
-
+# NOTE: the real /api/config routes live further down (get + update). The old
+# stubs that used to sit here returned an empty dict and shadowed them because
+# FastAPI matches the first registered route.
 @app.get("/api/config/models")
 async def get_models():
     # Try to get available models from Ollama if possible
@@ -2526,36 +2352,6 @@ async def gmail_listings(days_back: int = 0, query: str = "", limit: int = 0,
     return {"sources": by_sender, "total": len(jobs), "jobs": jobs,
             "days_back": days,
             "cached_total": gmail_index.count_listings()}
-
-
-@app.get("/api/candidates")
-async def get_candidates(ctx: Ctx = Depends(build_ctx), status: str | None = None):
-    return {"ok": True, "candidates": auth.list_candidates(ctx.uid, status)}
-
-
-@app.post("/api/candidates")
-async def save_candidate(req: Request, ctx: Ctx = Depends(build_ctx)):
-    body = await req.json()
-    cid = auth.upsert_candidate(
-        ctx.uid,
-        candidate_id=body.get("id") or None,
-        name=body.get("name") or "",
-        current_location=body.get("current_location") or "",
-        expected_ctc=body.get("expected_ctc") or "",
-        current_ctc=body.get("current_ctc") or "",
-        email=body.get("email") or "",
-        phone=body.get("phone") or "",
-        availability=body.get("availability") or "",
-        status=body.get("status") or "working",
-        notes=body.get("notes") or "",
-    )
-    return {"ok": True, "id": cid}
-
-
-@app.delete("/api/candidates/{candidate_id}")
-async def remove_candidate(candidate_id: str, ctx: Ctx = Depends(build_ctx)):
-    ok = auth.delete_candidate(ctx.uid, candidate_id)
-    return {"ok": bool(ok)}
 
 
 @app.get("/api/config")
@@ -3598,3 +3394,91 @@ if __name__ == "__main__":
             raise SystemExit(0 if "already running" in busy else 1)
 
     uvicorn.run("dashboard:app", host=host, port=port, reload=reload)
+
+
+# --- Recruiter hiring loop: tasks and interviews -------------------------------
+class TaskRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    due_date: str | None = None
+    status: str | None = None
+    priority: str | None = None
+    related_to_type: str | None = None
+    related_to_id: int | None = None
+
+
+class InterviewRequest(BaseModel):
+    application_id: int | None = None
+    interview_type: str | None = None
+    scheduled_at: str | None = None
+    duration_minutes: int | None = None
+    meeting_link: str | None = None
+    location: str | None = None
+    instructions: str | None = None
+    status: str | None = None
+
+
+@app.get("/api/recruiter/tasks")
+async def list_recruiter_tasks(ctx: Ctx = Depends(build_ctx)):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    return {"ok": True, "tasks": auth.list_tasks(ctx.uid)}
+
+
+@app.post("/api/recruiter/tasks")
+async def create_recruiter_task(req: TaskRequest, ctx: Ctx = Depends(build_ctx)):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    if not (req.title or "").strip():
+        raise HTTPException(status_code=400, detail="Title required")
+    return {"ok": True, "task": auth.create_task(ctx.uid, _company_id(ctx), req.model_dump())}
+
+
+@app.post("/api/recruiter/tasks/{task_id}/update")
+async def update_recruiter_task(task_id: int, req: TaskRequest, ctx: Ctx = Depends(build_ctx)):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    data = req.model_dump(exclude_unset=True)
+    if "status" in data and data["status"] not in auth.TASK_STATUSES:
+        raise HTTPException(status_code=400, detail="Unknown status")
+    task = auth.update_task(ctx.uid, task_id, data)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"ok": True, "task": task}
+
+
+@app.delete("/api/recruiter/tasks/{task_id}")
+async def delete_recruiter_task(task_id: int, ctx: Ctx = Depends(build_ctx)):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    if not auth.delete_task(ctx.uid, task_id):
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"ok": True}
+
+
+@app.get("/api/recruiter/interviews")
+async def list_recruiter_interviews(ctx: Ctx = Depends(build_ctx)):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    cid = _company_id(ctx)
+    return {"ok": True, "interviews": auth.list_interviews(cid) if cid else []}
+
+
+@app.post("/api/recruiter/interviews")
+async def create_recruiter_interview(req: InterviewRequest, ctx: Ctx = Depends(build_ctx)):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    if not req.application_id or not req.scheduled_at:
+        raise HTTPException(status_code=400, detail="Application and time required")
+    cid = _company_id(ctx)
+    iv = auth.create_interview(cid, ctx.uid, req.model_dump()) if cid else None
+    if not iv:
+        raise HTTPException(status_code=404, detail="Application not found")
+    return {"ok": True, "interview": iv}
+
+
+@app.post("/api/recruiter/interviews/{interview_id}/update")
+async def update_recruiter_interview(interview_id: int, req: InterviewRequest, ctx: Ctx = Depends(build_ctx)):
+    _require_role(ctx, ["recruiter", "super_admin"])
+    data = req.model_dump(exclude_unset=True, exclude={"application_id"})
+    if "status" in data and data["status"] not in auth.INTERVIEW_STATUSES:
+        raise HTTPException(status_code=400, detail="Unknown status")
+    cid = _company_id(ctx)
+    iv = auth.update_interview(cid, interview_id, data) if cid else None
+    if not iv:
+        raise HTTPException(status_code=404, detail="Interview not found")
+    return {"ok": True, "interview": iv}

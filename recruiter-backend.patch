@@ -1,0 +1,552 @@
+diff --git a/auth.py b/auth.py
+index 584ab04..4cae063 100644
+--- a/auth.py
++++ b/auth.py
+@@ -636,42 +636,6 @@ def delete_user(uid: int) -> bool:
+ # --------------------------------------------------------------------------
+ 
+ 
+-def list_candidates(user_id: int, status: str | None = None) -> list[dict]:
+-    with connect() as conn:
+-        if status:
+-            rows = conn.execute(
+-                "SELECT * FROM candidates WHERE user_id = ? AND status = ? ORDER BY created_at DESC",
+-                (user_id, status)).fetchall()
+-        else:
+-            rows = conn.execute(
+-                "SELECT * FROM candidates WHERE user_id = ? ORDER BY created_at DESC",
+-                (user_id,)).fetchall()
+-    return [dict(r) for r in rows]
+-
+-
+-def upsert_candidate(user_id: int, cand: dict) -> dict:
+-    cand_id = cand.get("id") or secrets.token_urlsafe(12)
+-    now = _now()
+-    with connect() as conn:
+-        conn.execute(
+-            """INSERT INTO candidates (id, user_id, name, current_location, expected_ctc, current_ctc, email, phone, availability, status, notes, created_at, updated_at)
+-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+-               ON CONFLICT(user_id, id) DO UPDATE SET
+-                 name=excluded.name, current_location=excluded.current_location, expected_ctc=excluded.expected_ctc, current_ctc=excluded.current_ctc,
+-                 email=excluded.email, phone=excluded.phone, availability=excluded.availability, status=excluded.status, notes=excluded.notes, updated_at=excluded.updated_at""",
+-            (cand_id, user_id, cand.get("name") or "", cand.get("current_location") or "", cand.get("expected_ctc") or "",
+-             cand.get("current_ctc") or "", cand.get("email") or "", cand.get("phone") or "", cand.get("availability") or "",
+-             cand.get("status") or "working", cand.get("notes") or "", now, now))
+-        row = conn.execute("SELECT * FROM candidates WHERE user_id = ? AND id = ?", (user_id, cand_id)).fetchone()
+-    return dict(row) if row else {"id": cand_id}
+-
+-
+-def delete_candidate(user_id: int, cand_id: str) -> bool:
+-    with connect() as conn:
+-        cur = conn.execute("DELETE FROM candidates WHERE user_id = ? AND id = ?", (user_id, cand_id))
+-        return cur.rowcount > 0
+-
+-
+ # Recruiter CRM helpers
+ def create_company(name: str, created_by: int = None, **kwargs) -> dict:
+     now = _now()
+@@ -696,7 +660,10 @@ def create_recruiter_profile(user_id: int, company_id: int = None, **kwargs) ->
+         conn.execute(
+             """INSERT INTO recruiter_profiles (user_id, company_id, title, phone, created_at)
+                VALUES (?,?,?,?,?)
+-               ON CONFLICT(user_id) DO UPDATE SET company_id=excluded.company_id, title=excluded.title, phone=excluded.phone""",
++               ON CONFLICT(user_id) DO UPDATE SET
++                 company_id=COALESCE(excluded.company_id, company_id),
++                 title=COALESCE(excluded.title, title),
++                 phone=COALESCE(excluded.phone, phone)""",
+             (user_id, company_id, kwargs.get('title'), kwargs.get('phone'), now))
+         row = conn.execute("SELECT * FROM recruiter_profiles WHERE user_id = ?", (user_id,)).fetchone()
+     return dict(row) if row else {}
+@@ -775,6 +742,162 @@ def update_application_status(application_id: int, status: str) -> bool:
+         return cur.rowcount > 0
+ 
+ 
++# --- Recruiter hiring loop -------------------------------------------------
++_COMPANY_FIELDS = ("name", "website", "logo_url", "industry", "description", "location")
++_JOB_FIELDS = ("title", "department", "description", "min_experience", "max_experience",
++               "education_req", "employment_type", "work_mode", "location", "salary_min",
++               "salary_max", "currency", "openings", "application_deadline", "status")
++JOB_STATUSES = ("draft", "published", "paused", "closed")
++APP_STATUSES = ("applied", "ai_screening", "recruiter_review", "shortlisted", "interview_scheduled",
++                "interview_completed", "technical_round", "hr_round", "offer_released", "offer_accepted",
++                "hired", "rejected", "withdrawn", "on_hold", "offer_declined")
++TASK_STATUSES = ("pending", "in_progress", "completed", "cancelled")
++INTERVIEW_STATUSES = ("scheduled", "rescheduled", "completed", "cancelled", "no_show")
++
++
++def _update(conn, table: str, row_id: int, allowed: tuple, data: dict, stamp: bool = True) -> None:
++    """Set only the allowed keys present in data, so a partial edit never blanks the rest."""
++    sets = {k: data[k] for k in allowed if k in data}
++    if stamp:
++        sets["updated_at"] = _now()
++    if not sets:
++        return
++    conn.execute(f"UPDATE {table} SET " + ", ".join(f"{k} = ?" for k in sets) + " WHERE id = ?",
++                 (*sets.values(), row_id))
++
++
++def update_company(cid: int, data: dict) -> dict | None:
++    with connect() as conn:
++        _update(conn, "companies", cid, _COMPANY_FIELDS, data, stamp=False)
++    return get_company(cid)
++
++
++def get_job(jid: int) -> dict | None:
++    with connect() as conn:
++        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (jid,)).fetchone()
++    return dict(row) if row else None
++
++
++def update_job(jid: int, data: dict) -> dict | None:
++    data = dict(data)
++    for k in ("required_skills", "preferred_skills"):
++        if k in data:
++            data[k] = json.dumps(data[k] or [])
++    with connect() as conn:
++        _update(conn, "jobs", jid, _JOB_FIELDS + ("required_skills", "preferred_skills"), data)
++    return get_job(jid)
++
++
++def list_company_applications(company_id: int, job_id: int = None) -> list[dict]:
++    """Applications for one company's jobs, with the candidate and job names joined in."""
++    sql = ("SELECT a.*, j.title AS job_title, u.email AS candidate_email, "
++           "COALESCE(cp.full_name, u.nickname, u.email) AS candidate_name, "
++           "cp.professional_title AS candidate_title, cp.location AS candidate_location "
++           "FROM applications a JOIN jobs j ON j.id = a.job_id "
++           "JOIN users u ON u.id = a.candidate_user_id "
++           "LEFT JOIN candidate_profiles cp ON cp.user_id = a.candidate_user_id "
++           "WHERE j.company_id = ?")
++    args = [company_id]
++    if job_id:
++        sql += " AND a.job_id = ?"
++        args.append(job_id)
++    with connect() as conn:
++        rows = conn.execute(sql + " ORDER BY a.applied_at DESC", args).fetchall()
++    return [dict(r) for r in rows]
++
++
++def set_company_application_status(company_id: int, application_id: int, status: str) -> bool:
++    """Like update_application_status, but only for an application on this company's jobs."""
++    with connect() as conn:
++        cur = conn.execute(
++            "UPDATE applications SET status = ?, updated_at = ? WHERE id = ? AND job_id IN "
++            "(SELECT id FROM jobs WHERE company_id = ?)", (status, _now(), application_id, company_id))
++        return cur.rowcount > 0
++
++
++def list_tasks(recruiter_id: int) -> list[dict]:
++    with connect() as conn:
++        rows = conn.execute(
++            "SELECT * FROM tasks WHERE recruiter_id = ? ORDER BY (status IN ('completed','cancelled')), "
++            "COALESCE(due_date, '9999'), id DESC", (recruiter_id,)).fetchall()
++    return [dict(r) for r in rows]
++
++
++def create_task(recruiter_id: int, company_id: int | None, data: dict) -> dict:
++    now = _now()
++    with connect() as conn:
++        cur = conn.execute(
++            "INSERT INTO tasks (recruiter_id, company_id, title, description, due_date, status, priority, "
++            "related_to_type, related_to_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
++            (recruiter_id, company_id, data["title"], data.get("description"), data.get("due_date") or None,
++             data.get("status") or "pending", data.get("priority") or "medium",
++             data.get("related_to_type") or None, data.get("related_to_id"), now, now))
++        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (cur.lastrowid,)).fetchone()
++    return dict(row)
++
++
++def update_task(recruiter_id: int, task_id: int, data: dict) -> dict | None:
++    with connect() as conn:
++        if not conn.execute("SELECT 1 FROM tasks WHERE id = ? AND recruiter_id = ?", (task_id, recruiter_id)).fetchone():
++            return None
++        _update(conn, "tasks", task_id, ("title", "description", "due_date", "status", "priority"), data)
++        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
++    return dict(row)
++
++
++def delete_task(recruiter_id: int, task_id: int) -> bool:
++    with connect() as conn:
++        return conn.execute("DELETE FROM tasks WHERE id = ? AND recruiter_id = ?", (task_id, recruiter_id)).rowcount > 0
++
++
++def list_interviews(company_id: int) -> list[dict]:
++    with connect() as conn:
++        rows = conn.execute(
++            "SELECT i.*, j.title AS job_title, u.email AS candidate_email, "
++            "COALESCE(cp.full_name, u.nickname, u.email) AS candidate_name "
++            "FROM interviews i JOIN jobs j ON j.id = i.job_id JOIN users u ON u.id = i.candidate_user_id "
++            "LEFT JOIN candidate_profiles cp ON cp.user_id = i.candidate_user_id "
++            "WHERE j.company_id = ? ORDER BY i.scheduled_at", (company_id,)).fetchall()
++    return [dict(r) for r in rows]
++
++
++def create_interview(company_id: int, recruiter_id: int, data: dict) -> dict | None:
++    """Schedule an interview and move the application to interview_scheduled. None if the
++    application is not on one of this company's jobs."""
++    now = _now()
++    with connect() as conn:
++        app = conn.execute(
++            "SELECT a.id, a.job_id, a.candidate_user_id FROM applications a JOIN jobs j ON j.id = a.job_id "
++            "WHERE a.id = ? AND j.company_id = ?", (data["application_id"], company_id)).fetchone()
++        if not app:
++            return None
++        cur = conn.execute(
++            "INSERT INTO interviews (application_id, job_id, candidate_user_id, recruiter_id, interview_type, "
++            "scheduled_at, duration_minutes, meeting_link, location, instructions, status, created_at, updated_at) "
++            "VALUES (?,?,?,?,?,?,?,?,?,?,'scheduled',?,?)",
++            (app["id"], app["job_id"], app["candidate_user_id"], recruiter_id,
++             data.get("interview_type") or "phone_screening", data["scheduled_at"],
++             data.get("duration_minutes") or 60, data.get("meeting_link") or None,
++             data.get("location") or None, data.get("instructions") or None, now, now))
++        conn.execute("UPDATE applications SET status = 'interview_scheduled', updated_at = ? WHERE id = ?",
++                     (now, app["id"]))
++        row = conn.execute("SELECT * FROM interviews WHERE id = ?", (cur.lastrowid,)).fetchone()
++    return dict(row)
++
++
++def update_interview(company_id: int, interview_id: int, data: dict) -> dict | None:
++    with connect() as conn:
++        if not conn.execute(
++                "SELECT 1 FROM interviews i JOIN jobs j ON j.id = i.job_id WHERE i.id = ? AND j.company_id = ?",
++                (interview_id, company_id)).fetchone():
++            return None
++        _update(conn, "interviews", interview_id,
++                ("interview_type", "scheduled_at", "duration_minutes", "meeting_link", "location",
++                 "instructions", "status"), data)
++        row = conn.execute("SELECT * FROM interviews WHERE id = ?", (interview_id,)).fetchone()
++    return dict(row)
++
++
+ def owner_user() -> dict | None:
+     """The account that owns the migrated CV sessions, if there is one."""
+     with connect() as conn:
+diff --git a/dashboard.py b/dashboard.py
+index 5b1822d..c334302 100644
+--- a/dashboard.py
++++ b/dashboard.py
+@@ -1940,33 +1940,6 @@ class CandidateRequest(BaseModel):
+     notes: str = ""
+ 
+ 
+-@app.get("/api/candidates")
+-async def get_candidates(request: Request, status: str | None = None, ctx: Ctx = Depends(build_ctx)):
+-    try:
+-        cands = auth.list_candidates(ctx.uid, status)
+-        return {"ok": True, "candidates": cands}
+-    except Exception as e:
+-        return {"ok": False, "candidates": [], "error": str(e)}
+-
+-
+-@app.post("/api/candidates")
+-async def post_candidate(req: CandidateRequest, ctx: Ctx = Depends(build_ctx)):
+-    try:
+-        cand = auth.upsert_candidate(ctx.uid, req.model_dump())
+-        return {"ok": True, "candidate": cand}
+-    except Exception as e:
+-        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+-
+-
+-@app.delete("/api/candidates/{cand_id}")
+-async def delete_candidate(cand_id: str, ctx: Ctx = Depends(build_ctx)):
+-    try:
+-        ok = auth.delete_candidate(ctx.uid, cand_id)
+-        return {"ok": bool(ok)}
+-    except Exception as e:
+-        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+-
+-
+ # Recruiter CRM API Routes
+ class CompanyRequest(BaseModel):
+     name: str = ""
+@@ -2010,14 +1983,24 @@ def _require_role(ctx: Ctx, roles: list[str]):
+     return True
+ 
+ 
++def _company_id(ctx: Ctx) -> int | None:
++    profile = auth.get_recruiter_profile(ctx.uid)
++    return profile.get("company_id") if profile else None
++
++
+ @app.post("/api/recruiter/company")
+ async def create_company(req: CompanyRequest, ctx: Ctx = Depends(build_ctx)):
+     _require_role(ctx, ["recruiter", "super_admin"])
+-    company = auth.create_company(req.name, created_by=ctx.uid, website=req.website, 
+-                                 industry=req.industry, description=req.description,
+-                                 location=req.location, logo_url=req.logo_url)
+-    # Create/update recruiter profile
+-    auth.create_recruiter_profile(ctx.uid, company_id=company.get("id"))
++    if not req.name.strip():
++        raise HTTPException(status_code=400, detail="Company name required")
++    fields = dict(website=req.website, industry=req.industry, description=req.description,
++                  location=req.location, logo_url=req.logo_url)
++    cid = _company_id(ctx)
++    if cid:
++        company = auth.update_company(cid, {"name": req.name.strip(), **fields})
++    else:
++        company = auth.create_company(req.name.strip(), created_by=ctx.uid, **fields)
++        auth.create_recruiter_profile(ctx.uid, company_id=company.get("id"))
+     return {"ok": True, "company": company}
+ 
+ 
+@@ -2045,10 +2028,8 @@ async def create_job(req: JobRequest, ctx: Ctx = Depends(build_ctx)):
+ @app.get("/api/recruiter/jobs")
+ async def list_recruiter_jobs(ctx: Ctx = Depends(build_ctx), status: str | None = None):
+     _require_role(ctx, ["recruiter", "super_admin"])
+-    profile = auth.get_recruiter_profile(ctx.uid)
+-    company_id = profile.get("company_id") if profile else None
+-    jobs = auth.list_jobs(company_id=company_id, status=status)
+-    return {"ok": True, "jobs": jobs}
++    cid = _company_id(ctx)
++    return {"ok": True, "jobs": auth.list_jobs(company_id=cid, status=status) if cid else []}
+ 
+ 
+ @app.get("/api/jobs")
+@@ -2069,47 +2050,40 @@ async def apply_job(job_id: int, request: Request, ctx: Ctx = Depends(build_ctx)
+ @app.get("/api/recruiter/applications")
+ async def list_recruiter_applications(ctx: Ctx = Depends(build_ctx), job_id: int | None = None):
+     _require_role(ctx, ["recruiter", "super_admin"])
+-    if job_id:
+-        apps = auth.list_applications(job_id=job_id)
+-    else:
+-        profile = auth.get_recruiter_profile(ctx.uid)
+-        company_id = profile.get("company_id") if profile else None
+-        # Get all jobs for company then applications
+-        jobs = auth.list_jobs(company_id=company_id)
+-        all_apps = []
+-        for j in jobs:
+-            all_apps.extend(auth.list_applications(job_id=j['id']))
+-        apps = all_apps
+-    return {"ok": True, "applications": apps}
++    cid = _company_id(ctx)
++    return {"ok": True, "applications": auth.list_company_applications(cid, job_id) if cid else []}
+ 
+ 
+ @app.post("/api/recruiter/applications/{app_id}/status")
+ async def update_app_status(app_id: int, req: ApplicationStatusRequest, ctx: Ctx = Depends(build_ctx)):
+     _require_role(ctx, ["recruiter", "super_admin"])
+-    ok = auth.update_application_status(app_id, req.status)
+-    return {"ok": bool(ok)}
++    if req.status not in auth.APP_STATUSES:
++        raise HTTPException(status_code=400, detail="Unknown status")
++    cid = _company_id(ctx)
++    ok = bool(cid) and auth.set_company_application_status(cid, app_id, req.status)
++    if not ok:
++        raise HTTPException(status_code=404, detail="Application not found")
++    return {"ok": True}
+ 
+ 
+ @app.get("/api/recruiter/dashboard/stats")
+ async def recruiter_dashboard_stats(ctx: Ctx = Depends(build_ctx)):
+     _require_role(ctx, ["recruiter", "super_admin"])
+-    profile = auth.get_recruiter_profile(ctx.uid)
+-    company_id = profile.get("company_id") if profile else None
+-    jobs = auth.list_jobs(company_id=company_id)
+-    all_apps = []
+-    for j in jobs:
+-        all_apps.extend(auth.list_applications(job_id=j['id']))
++    cid = _company_id(ctx)
++    jobs = auth.list_jobs(company_id=cid) if cid else []
++    apps = auth.list_company_applications(cid) if cid else []
++    n = lambda st: len([a for a in apps if a.get("status") == st])
+     stats = {
+         "total_jobs": len(jobs),
+-        "active_jobs": len([j for j in jobs if j.get('status') == 'published']),
+-        "total_applications": len(all_apps),
+-        "new_applications": len([a for a in all_apps if a.get('status') == 'applied']),
+-        "shortlisted": len([a for a in all_apps if a.get('status') == 'shortlisted']),
+-        "interview_scheduled": len([a for a in all_apps if a.get('status') == 'interview_scheduled']),
+-        "offers_released": len([a for a in all_apps if a.get('status') == 'offer_released']),
+-        "hired": len([a for a in all_apps if a.get('status') == 'hired']),
++        "active_jobs": len([j for j in jobs if j.get("status") == "published"]),
++        "total_applications": len(apps),
++        "new_applications": n("applied"),
++        "shortlisted": n("shortlisted"),
++        "interview_scheduled": n("interview_scheduled"),
++        "offers_released": n("offer_released"),
++        "hired": n("hired"),
+     }
+-    return {"ok": True, "stats": stats, "recent_applications": all_apps[:10], "jobs": jobs}
++    return {"ok": True, "stats": stats, "recent_applications": apps[:10], "jobs": jobs}
+ 
+ 
+ class RecruiterProfileRequest(BaseModel):
+@@ -2128,7 +2102,7 @@ async def get_recruiter_profile_api(ctx: Ctx = Depends(build_ctx)):
+ @app.post("/api/recruiter/profile")
+ async def save_recruiter_profile_api(req: RecruiterProfileRequest, ctx: Ctx = Depends(build_ctx)):
+     _require_role(ctx, ["recruiter", "super_admin"])
+-    profile = auth.create_recruiter_profile(ctx.uid, title=req.title, phone=req.phone)
++    profile = auth.create_recruiter_profile(ctx.uid, title=req.title or None, phone=req.phone or None)
+     # Also store name if possible - extend if needed
+     return {"ok": True, "profile": profile}
+ 
+@@ -3597,4 +3571,125 @@ if __name__ == "__main__":
+             print(busy)
+             raise SystemExit(0 if "already running" in busy else 1)
+ 
+-    uvicorn.run("dashboard:app", host=host, port=port, reload=reload)
+\ No newline at end of file
++    uvicorn.run("dashboard:app", host=host, port=port, reload=reload)
++
++
++# --- Recruiter hiring loop: job edit/close, tasks, interviews -------------------
++class JobStatusRequest(BaseModel):
++    status: str
++
++
++class TaskRequest(BaseModel):
++    title: str | None = None
++    description: str | None = None
++    due_date: str | None = None
++    status: str | None = None
++    priority: str | None = None
++    related_to_type: str | None = None
++    related_to_id: int | None = None
++
++
++class InterviewRequest(BaseModel):
++    application_id: int | None = None
++    interview_type: str | None = None
++    scheduled_at: str | None = None
++    duration_minutes: int | None = None
++    meeting_link: str | None = None
++    location: str | None = None
++    instructions: str | None = None
++    status: str | None = None
++
++
++def _own_job(ctx: Ctx, job_id: int) -> dict:
++    job = auth.get_job(job_id)
++    cid = _company_id(ctx)
++    if not job or not cid or job.get("company_id") != cid:
++        raise HTTPException(status_code=404, detail="Job not found")
++    return job
++
++
++@app.post("/api/recruiter/jobs/{job_id}/update")
++async def update_recruiter_job(job_id: int, req: JobRequest, ctx: Ctx = Depends(build_ctx)):
++    _require_role(ctx, ["recruiter", "super_admin"])
++    _own_job(ctx, job_id)
++    data = req.model_dump(exclude={"company_id"}, exclude_unset=True)
++    if not data.get("title", "x").strip() or not data.get("description", "x").strip():
++        raise HTTPException(status_code=400, detail="Title and description required")
++    if "status" in data and data["status"] not in auth.JOB_STATUSES:
++        raise HTTPException(status_code=400, detail="Unknown status")
++    return {"ok": True, "job": auth.update_job(job_id, data)}
++
++
++@app.post("/api/recruiter/jobs/{job_id}/status")
++async def set_recruiter_job_status(job_id: int, req: JobStatusRequest, ctx: Ctx = Depends(build_ctx)):
++    _require_role(ctx, ["recruiter", "super_admin"])
++    _own_job(ctx, job_id)
++    if req.status not in auth.JOB_STATUSES:
++        raise HTTPException(status_code=400, detail="Unknown status")
++    return {"ok": True, "job": auth.update_job(job_id, {"status": req.status})}
++
++
++@app.get("/api/recruiter/tasks")
++async def list_recruiter_tasks(ctx: Ctx = Depends(build_ctx)):
++    _require_role(ctx, ["recruiter", "super_admin"])
++    return {"ok": True, "tasks": auth.list_tasks(ctx.uid)}
++
++
++@app.post("/api/recruiter/tasks")
++async def create_recruiter_task(req: TaskRequest, ctx: Ctx = Depends(build_ctx)):
++    _require_role(ctx, ["recruiter", "super_admin"])
++    if not (req.title or "").strip():
++        raise HTTPException(status_code=400, detail="Title required")
++    return {"ok": True, "task": auth.create_task(ctx.uid, _company_id(ctx), req.model_dump())}
++
++
++@app.post("/api/recruiter/tasks/{task_id}/update")
++async def update_recruiter_task(task_id: int, req: TaskRequest, ctx: Ctx = Depends(build_ctx)):
++    _require_role(ctx, ["recruiter", "super_admin"])
++    data = req.model_dump(exclude_unset=True)
++    if "status" in data and data["status"] not in auth.TASK_STATUSES:
++        raise HTTPException(status_code=400, detail="Unknown status")
++    task = auth.update_task(ctx.uid, task_id, data)
++    if not task:
++        raise HTTPException(status_code=404, detail="Task not found")
++    return {"ok": True, "task": task}
++
++
++@app.delete("/api/recruiter/tasks/{task_id}")
++async def delete_recruiter_task(task_id: int, ctx: Ctx = Depends(build_ctx)):
++    _require_role(ctx, ["recruiter", "super_admin"])
++    if not auth.delete_task(ctx.uid, task_id):
++        raise HTTPException(status_code=404, detail="Task not found")
++    return {"ok": True}
++
++
++@app.get("/api/recruiter/interviews")
++async def list_recruiter_interviews(ctx: Ctx = Depends(build_ctx)):
++    _require_role(ctx, ["recruiter", "super_admin"])
++    cid = _company_id(ctx)
++    return {"ok": True, "interviews": auth.list_interviews(cid) if cid else []}
++
++
++@app.post("/api/recruiter/interviews")
++async def create_recruiter_interview(req: InterviewRequest, ctx: Ctx = Depends(build_ctx)):
++    _require_role(ctx, ["recruiter", "super_admin"])
++    if not req.application_id or not req.scheduled_at:
++        raise HTTPException(status_code=400, detail="Application and time required")
++    cid = _company_id(ctx)
++    iv = auth.create_interview(cid, ctx.uid, req.model_dump()) if cid else None
++    if not iv:
++        raise HTTPException(status_code=404, detail="Application not found")
++    return {"ok": True, "interview": iv}
++
++
++@app.post("/api/recruiter/interviews/{interview_id}/update")
++async def update_recruiter_interview(interview_id: int, req: InterviewRequest, ctx: Ctx = Depends(build_ctx)):
++    _require_role(ctx, ["recruiter", "super_admin"])
++    data = req.model_dump(exclude_unset=True, exclude={"application_id"})
++    if "status" in data and data["status"] not in auth.INTERVIEW_STATUSES:
++        raise HTTPException(status_code=400, detail="Unknown status")
++    cid = _company_id(ctx)
++    iv = auth.update_interview(cid, interview_id, data) if cid else None
++    if not iv:
++        raise HTTPException(status_code=404, detail="Interview not found")
++    return {"ok": True, "interview": iv}
+diff --git a/tests/test_recruiter_loop.py b/tests/test_recruiter_loop.py
+new file mode 100644
+index 0000000..b95c761
+--- /dev/null
++++ b/tests/test_recruiter_loop.py
+@@ -0,0 +1,37 @@
++"""Recruiter hiring loop: company scoping, job edit, interviews, tasks."""
++import auth
++
++
++def test_hiring_loop_is_scoped_to_the_company():
++    rec = auth.create_user("rec@x.com", "pw12345678", role="recruiter")
++    other = auth.create_user("rec2@x.com", "pw12345678", role="recruiter")
++    cand = auth.create_user("cand@x.com", "pw12345678")
++    co = auth.create_company("Acme", created_by=rec["id"])
++    co2 = auth.create_company("Other", created_by=other["id"])
++
++    auth.create_recruiter_profile(rec["id"], company_id=co["id"], title="HR")
++    auth.create_recruiter_profile(rec["id"])  # a partial save must keep company and title
++    prof = auth.get_recruiter_profile(rec["id"])
++    assert prof["company_id"] == co["id"] and prof["title"] == "HR"
++
++    job = auth.create_job(co["id"], rec["id"], {"title": "Dev", "description": "d"})
++    job = auth.update_job(job["id"], {"status": "published", "required_skills": ["py"]})
++    assert job["status"] == "published" and job["description"] == "d"
++
++    app = auth.apply_to_job(job["id"], cand["id"])
++    assert auth.list_company_applications(co["id"])[0]["candidate_email"] == "cand@x.com"
++    assert auth.list_company_applications(co2["id"]) == []
++    assert not auth.set_company_application_status(co2["id"], app["id"], "hired")
++    assert auth.set_company_application_status(co["id"], app["id"], "shortlisted")
++
++    data = {"application_id": app["id"], "scheduled_at": "2026-12-01T10:00"}
++    assert auth.create_interview(co2["id"], rec["id"], data) is None
++    iv = auth.create_interview(co["id"], rec["id"], data)
++    assert auth.list_company_applications(co["id"])[0]["status"] == "interview_scheduled"
++    assert auth.update_interview(co2["id"], iv["id"], {"status": "completed"}) is None
++    assert auth.update_interview(co["id"], iv["id"], {"status": "completed"})["status"] == "completed"
++
++    task = auth.create_task(rec["id"], co["id"], {"title": "Call"})
++    assert auth.update_task(other["id"], task["id"], {"status": "completed"}) is None
++    assert auth.update_task(rec["id"], task["id"], {"status": "completed"})["status"] == "completed"
++    assert auth.delete_task(rec["id"], task["id"])

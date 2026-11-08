@@ -1185,7 +1185,7 @@ def test_every_id_the_script_touches_exists_in_the_markup():
     # from that moment on. imNick/imAvatar/signOutBtn are static now (the header
     # dropdown rows are markup, not rebuilt by JS).
     runtime_only = {"deckCount", "deckDots", "deckNext", "deckPrev", "deckStage",
-                    "avClose", "avFile", "avUpload"}
+                    "avClose", "avFile", "avUpload", "slBody", "slClose"}
     referenced = set(re.findall(r'\$\("([^"]+)"\)', script)) - runtime_only
     present = set(re.findall(r'\bid="([^"]+)"', markup))
     assert not (referenced - present), \

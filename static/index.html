@@ -1305,6 +1305,7 @@ html.gated .app,html.gated header{opacity:0!important}
         <button class="row" id="recruitmentBtn" title="Recruitment - manage candidates">Recruitment</button>
         <button class="row" id="sidebarBtn" title="Saved sessions / profiles">Sessions</button>
         <button class="row" id="logsBtn" title="Run logs">History</button>
+        <button class="row" id="imSlots" title="Apply to jobs and offer interview times">Applications &amp; slots</button>
       </div>
       <div class="imcol"><div class="imh">Your account</div>
         <button class="row" id="imNick">✎ Change nickname</button>
@@ -2568,7 +2569,6 @@ async function resetEverything() {
 }
 $("sessNewBtn").onclick = newSession;
 $("resetAllBtn").onclick = resetEverything;
-loadSessions();
 $("logsBtn").onclick = () => { openDrawer("logsDrawer"); loadLogs(); };
 $("recruitmentBtn").onclick = () => { openDrawer("recruitmentDrawer"); loadRecruitment(); switchRecTab("working"); };
 
@@ -3503,7 +3503,13 @@ function gateHide() {
 function gErr(msg) { const e = $("gErr"); e.textContent = msg; e.hidden = !msg; }
 function gErr2(msg) { const e = $("gErr2"); e.textContent = msg; e.hidden = !msg; }
 
+/* Resolved once bootAuth has decided who is signed in. api() waits for it so a
+   protected call made during page load cannot race the auth check and 401. */
+let _authReady;
+const AUTH_READY = new Promise(resolve => { _authReady = resolve; });
+
 async function api(path, opts = {}) {
+  await AUTH_READY;
   const res = await fetch(path, { credentials: "same-origin", ...opts });
   if (res.status === 401) { gateShow("signin"); throw new Error("signed out"); }
   if (res.status === 403) { gateShow("check"); throw new Error("unverified"); }
@@ -3511,6 +3517,13 @@ async function api(path, opts = {}) {
 }
 
 async function bootAuth() {
+  // Every path out of the auth check must release api(), or a protected call
+  // that started during load would wait forever.
+  try { await _bootAuth(); }
+  finally { if (_authReady) { _authReady(); _authReady = null; } }
+}
+
+async function _bootAuth() {
   const qs = new URLSearchParams(location.search);
 
   // A confirmation link from the welcome mail: consume it, then land back in
@@ -3656,6 +3669,79 @@ async function saveIdentity(patch, note) {
   return r;
 }
 
+/* ---------- interview slots: the candidate applies, offers times, the recruiter confirms ---------- */
+async function openSlotsPanel() {
+  var wrap = document.createElement("div");
+  wrap.className = "rmodal";
+  wrap.style.cssText = "position:fixed;inset:0;z-index:120;display:grid;place-items:center;background:rgba(0,0,0,.45);padding:20px";
+  wrap.innerHTML = '<div class="wrap" style="width:min(580px,100%);max-height:88vh;overflow:auto">' +
+    '<div class="rhead"><h2>Applications &amp; interview slots</h2><button class="iconbtn" id="slClose">Close</button></div>' +
+    '<div class="rbody" id="slBody">Loading…</div></div>';
+  document.body.appendChild(wrap);
+  function close() { wrap.remove(); document.removeEventListener("keydown", onKey); }
+  function onKey(e) { if (e.key === "Escape") close(); }
+  document.addEventListener("keydown", onKey);
+  $("slClose").onclick = close;
+  var body = $("slBody");
+  var local = function (iso) { return new Date(iso).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); };
+  var SLOT_TXT = { proposed: "waiting for the recruiter", booked: "confirmed", declined: "not chosen" };
+  async function call(path, method, payload) {
+    var r = await fetch(path, { method: method || "GET", credentials: "same-origin",
+      headers: payload ? { "Content-Type": "application/json" } : undefined, body: payload ? JSON.stringify(payload) : undefined });
+    var j = {}; try { j = await r.json(); } catch (e) {}
+    if (!r.ok || j.ok === false) throw new Error(j.detail || j.error || "Request failed");
+    return j;
+  }
+  async function load() {
+    try {
+      var apps = (await call("/api/candidate/applications")).applications;
+      var jobs = (await call("/api/jobs")).jobs || [];
+      var applied = {}; // job titles already applied to are not offered again
+      apps.forEach(function (a) { applied[a.job_title] = 1; });
+      var h = "<h3 style='margin:0 0 8px;font-size:14px'>My applications</h3>";
+      h += apps.length ? apps.map(function (a) {
+        var s = a.interview
+          ? "<div style='color:var(--accent);margin:6px 0'>Interview confirmed: " + esc(local(a.interview.scheduled_at)) +
+            (a.interview.meeting_link ? ' · <a href="' + esc(a.interview.meeting_link) + '" target="_blank" rel="noopener noreferrer">Meeting link</a>' : "") + "</div>"
+          : a.slots.map(function (x) {
+              return "<div style='display:flex;gap:8px;align-items:center;margin:4px 0;font-size:13px'><span>" + esc(local(x.start_at)) + " · " + x.duration_minutes +
+                " min · <i>" + SLOT_TXT[x.status] + "</i></span>" +
+                (x.status === "proposed" ? '<button class="iconbtn" data-del="' + x.id + '">Withdraw</button>' : "") + "</div>";
+            }).join("");
+        var form = a.interview ? "" :
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"><input type="datetime-local" data-when="' + a.id + '" style="flex:1;min-width:190px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 8px;color-scheme:dark light">' +
+          '<select data-dur="' + a.id + '" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px"><option value="30">30 min</option><option value="45">45 min</option><option value="60" selected>60 min</option></select>' +
+          '<button class="iconbtn" data-offer="' + a.id + '">Offer this time</button></div>';
+        return "<div style='border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px'><b>" + esc(a.job_title) +
+          "</b> <span style='color:var(--muted);font-size:12.5px'>" + esc(a.company_name || "") + " · " + esc(a.status.replace(/_/g, " ")) + "</span>" + s + form + "</div>";
+      }).join("") : "<p style='color:var(--muted);font-size:13px'>You have not applied to any job yet.</p>";
+      var open = jobs.filter(function (j) { return !applied[j.title]; });
+      h += "<h3 style='margin:16px 0 8px;font-size:14px'>Open positions</h3>";
+      h += open.length ? open.map(function (j) {
+        return "<div style='display:flex;gap:10px;align-items:center;margin:6px 0'><div style='flex:1'><b>" + esc(j.title) + "</b><div style='color:var(--muted);font-size:12.5px'>" +
+          esc([j.location, j.employment_type, j.work_mode].filter(Boolean).join(" · ")) + '</div></div><button class="iconbtn" data-apply="' + j.id + '">Apply</button></div>';
+      }).join("") : "<p style='color:var(--muted);font-size:13px'>No open positions right now.</p>";
+      body.innerHTML = h;
+    } catch (e) { body.textContent = e.message === "Candidates only" ? "This is for candidate accounts." : e.message; }
+  }
+  body.addEventListener("click", async function (e) {
+    var t = e.target.closest("button"); if (!t) return;
+    try {
+      if (t.dataset.apply) { await call("/api/jobs/" + t.dataset.apply + "/apply", "POST", {}); toast("Application sent"); }
+      else if (t.dataset.del) { await call("/api/candidate/slots/" + t.dataset.del, "DELETE"); toast("Slot withdrawn"); }
+      else if (t.dataset.offer) {
+        var id = t.dataset.offer, v = body.querySelector('[data-when="' + id + '"]').value;
+        if (!v) { toast("Pick a date and time"); return; }
+        await call("/api/candidate/applications/" + id + "/slots", "POST",
+          { slots: [{ start_at: new Date(v).toISOString(), duration_minutes: +body.querySelector('[data-dur="' + id + '"]').value }] });
+        toast("Time offered to the recruiter");
+      } else return;
+      load();
+    } catch (err) { toast(err.message); }
+  });
+  load();
+}
+
 function identMenuOpen() {
   var m = $("identMenu");
   $("identHead").innerHTML =
@@ -3674,6 +3760,7 @@ function identMenuOpen() {
     var r = await saveIdentity({ nickname: v }, "Nickname updated");
     if (r && !r.needs_nickname) _maybeAskNickname.done = true;
   };
+  $("imSlots").onclick = () => { m.style.display = "none"; openSlotsPanel(); };
   $("imAvatar").onclick = async () => {
     m.style.display = "none";
     await openAvatarPicker();
@@ -4111,64 +4198,6 @@ loadPublicBoards();
 /* auth first: it decides whether the rest of the app is reachable at all */
 bootAuth();
 wireScrollHint();
-</script>
-<script>/* FX-START decorative background; aria-hidden, pointer-events none */
-(function(){
-  if(window.__fx)return;window.__fx=1;
-  var b=document.body,mk=function(id,cls){var d=document.createElement('div');d.id=id;d.className='fx-layer'+(cls?' '+cls:'');d.setAttribute('aria-hidden','true');b.insertBefore(d,b.firstChild);return d};
-  ['fx-spot','fx-scan','fx-radar','fx-orb2','fx-orb1','fx-grid'].forEach(function(i){mk(i)});
-  var c=document.createElement('canvas');c.id='fx-bg';c.setAttribute('aria-hidden','true');b.insertBefore(c,b.firstChild);
-  var x=c.getContext('2d'),W,H,P=[],m={x:-999,y:-999},dpr=Math.min(window.devicePixelRatio||1,1.5),
-      still=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
-  function col(){return document.documentElement.getAttribute('data-theme')==='light'?'79,70,229':'143,127,255'}
-  function size(){W=c.width=innerWidth*dpr;H=c.height=innerHeight*dpr;c.style.width=innerWidth+'px';c.style.height=innerHeight+'px';
-    var n=Math.min(90,Math.round(innerWidth*innerHeight/16000));P=[];
-    for(var i=0;i<n;i++)P.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.35*dpr,vy:(Math.random()-.5)*.35*dpr,r:(Math.random()*1.4+.6)*dpr})}
-  function draw(){
-    x.clearRect(0,0,W,H);var k=col(),L=150*dpr,mx=m.x*dpr,my=m.y*dpr,i,j,p,q,d;
-    for(i=0;i<P.length;i++){p=P[i];
-      if(!still){p.x+=p.vx;p.y+=p.vy;if(p.x<0||p.x>W)p.vx*=-1;if(p.y<0||p.y>H)p.vy*=-1}
-      for(j=i+1;j<P.length;j++){q=P[j];d=Math.hypot(p.x-q.x,p.y-q.y);
-        if(d<L){x.strokeStyle='rgba('+k+','+(0.22*(1-d/L)).toFixed(3)+')';x.lineWidth=dpr*.8;x.beginPath();x.moveTo(p.x,p.y);x.lineTo(q.x,q.y);x.stroke()}}
-      d=Math.hypot(p.x-mx,p.y-my);
-      if(d<200*dpr){x.strokeStyle='rgba('+k+','+(0.5*(1-d/(200*dpr))).toFixed(3)+')';x.beginPath();x.moveTo(p.x,p.y);x.lineTo(mx,my);x.stroke()}
-      x.fillStyle='rgba('+k+',.75)';x.beginPath();x.arc(p.x,p.y,p.r,0,6.283);x.fill()}
-    if(!still&&!document.hidden)requestAnimationFrame(draw)}
-  size();draw();addEventListener('resize',size);
-  document.addEventListener('visibilitychange',function(){if(!document.hidden&&!still)requestAnimationFrame(draw)});
-  var s=document.getElementById('fx-spot');
-  addEventListener('pointermove',function(e){m.x=e.clientX;m.y=e.clientY;s.style.setProperty('--mx',e.clientX+'px');s.style.setProperty('--my',e.clientY+'px')},{passive:true});
-})();
-/* FX-END */
-</script>
-<script>/* FX-START decorative background; aria-hidden, pointer-events none */
-(function(){
-  if(window.__fx)return;window.__fx=1;
-  var b=document.body,mk=function(id,cls){var d=document.createElement('div');d.id=id;d.className='fx-layer'+(cls?' '+cls:'');d.setAttribute('aria-hidden','true');b.insertBefore(d,b.firstChild);return d};
-  ['fx-spot','fx-scan','fx-radar','fx-orb2','fx-orb1','fx-grid'].forEach(function(i){mk(i)});
-  var c=document.createElement('canvas');c.id='fx-bg';c.setAttribute('aria-hidden','true');b.insertBefore(c,b.firstChild);
-  var x=c.getContext('2d'),W,H,P=[],m={x:-999,y:-999},dpr=Math.min(window.devicePixelRatio||1,1.5),
-      still=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
-  function col(){return document.documentElement.getAttribute('data-theme')==='light'?'79,70,229':'143,127,255'}
-  function size(){W=c.width=innerWidth*dpr;H=c.height=innerHeight*dpr;c.style.width=innerWidth+'px';c.style.height=innerHeight+'px';
-    var n=Math.min(90,Math.round(innerWidth*innerHeight/16000));P=[];
-    for(var i=0;i<n;i++)P.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.35*dpr,vy:(Math.random()-.5)*.35*dpr,r:(Math.random()*1.4+.6)*dpr})}
-  function draw(){
-    x.clearRect(0,0,W,H);var k=col(),L=150*dpr,mx=m.x*dpr,my=m.y*dpr,i,j,p,q,d;
-    for(i=0;i<P.length;i++){p=P[i];
-      if(!still){p.x+=p.vx;p.y+=p.vy;if(p.x<0||p.x>W)p.vx*=-1;if(p.y<0||p.y>H)p.vy*=-1}
-      for(j=i+1;j<P.length;j++){q=P[j];d=Math.hypot(p.x-q.x,p.y-q.y);
-        if(d<L){x.strokeStyle='rgba('+k+','+(0.22*(1-d/L)).toFixed(3)+')';x.lineWidth=dpr*.8;x.beginPath();x.moveTo(p.x,p.y);x.lineTo(q.x,q.y);x.stroke()}}
-      d=Math.hypot(p.x-mx,p.y-my);
-      if(d<200*dpr){x.strokeStyle='rgba('+k+','+(0.5*(1-d/(200*dpr))).toFixed(3)+')';x.beginPath();x.moveTo(p.x,p.y);x.lineTo(mx,my);x.stroke()}
-      x.fillStyle='rgba('+k+',.75)';x.beginPath();x.arc(p.x,p.y,p.r,0,6.283);x.fill()}
-    if(!still&&!document.hidden)requestAnimationFrame(draw)}
-  size();draw();addEventListener('resize',size);
-  document.addEventListener('visibilitychange',function(){if(!document.hidden&&!still)requestAnimationFrame(draw)});
-  var s=document.getElementById('fx-spot');
-  addEventListener('pointermove',function(e){m.x=e.clientX;m.y=e.clientY;s.style.setProperty('--mx',e.clientX+'px');s.style.setProperty('--my',e.clientY+'px')},{passive:true});
-})();
-/* FX-END */
 </script>
 <script>/* FX-START decorative background; aria-hidden, pointer-events none */
 (function(){
