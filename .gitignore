@@ -56,6 +56,12 @@ logs/*.jsonl
 # Sidebar session store (personal resume data)
 profiles.json
 
+# Uploaded candidate CVs (personal data; the app recreates the directory)
+data/resumes/
+
+# Generated /understand knowledge graph and its caches
+.ua/
+
 # Accounts database: password hashes, session cookies and email tokens.
 # This is the most sensitive file in the repo - it must never be committed.
 users.db

@@ -47,6 +47,8 @@ from dataclasses import replace
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.gzip import GZipMiddleware
 from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
@@ -1495,9 +1497,26 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="JobScope", lifespan=lifespan)
 # Registered before every route below so the router's recruiter/candidate
 # endpoints win over the older same-path definitions further down.
+import candidates_api
+import google_forms_api
 import recruiter_api
+app.include_router(candidates_api.router)
+app.include_router(google_forms_api.router)
 app.include_router(recruiter_api.router)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# Static pages ship as one large inline HTML file (index.html) and a 769 KB
+# architecture document; gzip is the cheapest possible win for both.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_error(request: Request, exc: StarletteHTTPException):
+    """A mistyped page URL gets a page back, not a JSON blob; the API keeps JSON."""
+    path = request.url.path
+    if exc.status_code == 404 and not path.startswith(("/api/", "/static/")):
+        return FileResponse(os.path.join(STATIC_DIR, "404.html"), status_code=404)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code,
+                        headers=getattr(exc, "headers", None))
 
 
 @app.get("/health")

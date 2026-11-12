@@ -18,8 +18,17 @@ requests==2.33.1
 # Loads .env into os.environ automatically
 python-dotenv==1.0.1
 
-# Gmail access uses imaplib (built into Python) + an app password —
+# Gmail access uses imaplib (built into Python) + an app password -
 # no extra dependency needed.
+
+# Google Forms applications intake (google_forms_api.py). The OAuth client is
+# the same installed-app client_secret.json the Gmail scripts use; only the
+# Forms API has to be enabled for that project. Imported lazily, so a checkout
+# without these still starts - the Google Forms page just reports that the
+# integration is unavailable.
+google-api-python-client==2.201.0
+google-auth==2.60.0
+google-auth-oauthlib==1.5.0
 
 # Web UI for the agent (ui.py) — run with: chainlit run ui.py
 chainlit==2.8.0

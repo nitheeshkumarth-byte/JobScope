@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 import auth
+import mailer
 
 router = APIRouter()
 
@@ -230,14 +231,18 @@ async def list_jobs(status: str | None = None, user: dict = Depends(_recruiter))
 
 
 @router.post("/api/recruiter/jobs")
-async def create_job(req: JobIn, user: dict = Depends(_recruiter)):
+def create_job(req: JobIn, user: dict = Depends(_recruiter)):
+    # Sync (not async) so FastAPI runs the optional Google form creation in its
+    # threadpool instead of blocking the event loop on Google's API.
     cid = _need_company(user)
     data = req.model_dump(exclude_none=True)
     if not (data.get("title") or "").strip() or not (data.get("description") or "").strip():
         raise HTTPException(status_code=400, detail="Title and description required")
     if data.get("status", "draft") not in JOB_STATUSES:
         raise HTTPException(status_code=400, detail="Unknown status")
-    return {"ok": True, "job": auth.create_job(cid, user["id"], data)}
+    job = auth.create_job(cid, user["id"], data)
+    import google_forms_api  # local: the job API stays free of the Google SDK import graph
+    return {"ok": True, "job": job, "form": google_forms_api.create_form_for_job(user, job)}
 
 
 @router.post("/api/recruiter/jobs/{job_id}/update")
@@ -470,6 +475,43 @@ def _book(conn, company_id: int, recruiter_id: int, application_id: int, schedul
     return dict(conn.execute("SELECT * FROM interviews WHERE id = ?", (cur.lastrowid,)).fetchone())
 
 
+def _mail_interview(iv: dict) -> dict:
+    """Email the candidate their interview details.
+
+    A Google Forms respondent applied with the address and name they typed into
+    the form, so this is the same information Applications shows the recruiter.
+    Delivery problems are reported, never raised: the interview is already booked.
+    """
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT u.email, COALESCE(cp.full_name, u.nickname, u.email) AS name, "
+            "j.title AS job_title, c.name AS company "
+            "FROM interviews i JOIN jobs j ON j.id = i.job_id JOIN users u ON u.id = i.candidate_user_id "
+            "LEFT JOIN candidate_profiles cp ON cp.user_id = i.candidate_user_id "
+            "LEFT JOIN companies c ON c.id = j.company_id WHERE i.id = ?", (iv["id"],)).fetchone()
+    if not row:
+        return {"sent": False, "error": "candidate not found"}
+    when = iv.get("scheduled_at") or ""
+    try:
+        when = datetime.fromisoformat(when.replace("Z", "+00:00")).strftime("%a %d %b %Y, %H:%M UTC")
+    except ValueError:
+        pass
+    lines = [f"Hello {row['name']},", "",
+             f"Your interview for {row['job_title']} is scheduled for {when} "
+             f"(about {iv.get('duration_minutes') or 60} minutes)."]
+    if iv.get("meeting_link"):
+        lines += ["", "Join here: " + iv["meeting_link"]]
+    if iv.get("location"):
+        lines += ["", "Where: " + iv["location"]]
+    if iv.get("instructions"):
+        lines += ["", "Notes: " + iv["instructions"]]
+    lines += ["", "Reply to this email if the time does not work for you.", ""]
+    if row["company"]:
+        lines.append(row["company"])
+    result = mailer.send(row["email"], f"Interview: {row['job_title']}", "\n".join(lines))
+    return {"sent": result.ok, "error": "" if result.ok else result.detail}
+
+
 @router.get("/api/recruiter/interviews")
 async def list_interviews(user: dict = Depends(_recruiter)):
     cid = _cid(user)
@@ -477,7 +519,7 @@ async def list_interviews(user: dict = Depends(_recruiter)):
 
 
 @router.post("/api/recruiter/interviews")
-async def create_interview(req: InterviewIn, user: dict = Depends(_recruiter)):
+def create_interview(req: InterviewIn, user: dict = Depends(_recruiter)):
     if not req.application_id or not req.scheduled_at:
         raise HTTPException(status_code=400, detail="Application and time required")
     cid = _need_company(user)
@@ -485,7 +527,7 @@ async def create_interview(req: InterviewIn, user: dict = Depends(_recruiter)):
         iv = _book(conn, cid, user["id"], req.application_id, _iso(req.scheduled_at), req.model_dump())
     if not iv:
         raise HTTPException(status_code=404, detail="Application not found")
-    return {"ok": True, "interview": iv}
+    return {"ok": True, "interview": iv, "mail": _mail_interview(iv)}
 
 
 @router.post("/api/recruiter/interviews/{interview_id}/update")
@@ -557,7 +599,7 @@ def _own_slot(conn, company_id: int, slot_id: int):
 
 
 @router.post("/api/recruiter/slots/{slot_id}/confirm")
-async def confirm_slot(slot_id: int, req: InterviewIn, user: dict = Depends(_recruiter)):
+def confirm_slot(slot_id: int, req: InterviewIn, user: dict = Depends(_recruiter)):
     """Accept a candidate's slot: books the interview and releases their other proposed slots."""
     cid = _need_company(user)
     with _db() as conn:
@@ -569,7 +611,7 @@ async def confirm_slot(slot_id: int, req: InterviewIn, user: dict = Depends(_rec
         iv = _book(conn, cid, user["id"], slot["application_id"], slot["start_at"], d)
         conn.execute("UPDATE interview_slots SET status = CASE WHEN id = ? THEN 'booked' ELSE 'declined' END "
                      "WHERE application_id = ? AND status = 'proposed'", (slot_id, slot["application_id"]))
-    return {"ok": True, "interview": iv}
+    return {"ok": True, "interview": iv, "mail": _mail_interview(iv)}
 
 
 @router.post("/api/recruiter/slots/{slot_id}/decline")

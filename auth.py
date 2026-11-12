@@ -754,27 +754,38 @@ def create_user(email: str, password: str, owner: bool = False, role: str = "can
         raise ValueError("that does not look like an email address")
     pwd_hash = hash_password(password)
     now = _now()
+    claimed = False
     with connect() as conn:
         try:
             cur = conn.execute(
                 "INSERT INTO users (email, password_hash, created_at, is_owner, role) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (email, pwd_hash, now, 1 if owner else 0, role))
+            uid = cur.lastrowid
         except sqlite3.IntegrityError:
-            raise ValueError("an account with that email already exists")
-        uid = cur.lastrowid
+            # google_forms_api creates unverified applicant accounts with an
+            # unusable password. Signing up with that address claims the row
+            # instead of dead-ending, so a form respondent can still join.
+            row = conn.execute(
+                "SELECT id FROM users WHERE email = ? COLLATE NOCASE AND verified_at IS NULL "
+                "AND password_hash LIKE '!%'", (email,)).fetchone()
+            if not row:
+                raise ValueError("an account with that email already exists")
+            uid, claimed = row["id"], True
+            conn.execute("UPDATE users SET password_hash = ?, role = ? WHERE id = ?",
+                         (pwd_hash, role, uid))
         if owner:
             # Belt and braces: exactly one owner even if two registrations race.
             conn.execute("UPDATE users SET is_owner = 0 WHERE id != ?", (uid,))
             conn.execute("UPDATE users SET is_owner = 1 WHERE id = ?", (uid,))
         conn.execute(
-            "INSERT INTO profiles (id, user_id, name, created_at, is_default, data) "
-            "VALUES (?, ?, ?, ?, 1, ?)",
-             ("default", uid, "Default", now,
-              json.dumps({"id": "default", "name": "Default", "created_at": now,
-                          "resume_text": "", "github_url": "", "skills": [],
-                          "cities": [], "roles": [], "role_suggestions": [],
-                          "work_modes": [], "regions": [], "remote_only": False})))
+            ("INSERT OR IGNORE" if claimed else "INSERT") + " INTO profiles "
+            "(id, user_id, name, created_at, is_default, data) VALUES (?, ?, ?, ?, 1, ?)",
+            ("default", uid, "Default", now,
+             json.dumps({"id": "default", "name": "Default", "created_at": now,
+                         "resume_text": "", "github_url": "", "skills": [],
+                         "cities": [], "roles": [], "role_suggestions": [],
+                         "work_modes": [], "regions": [], "remote_only": False})))
 
     return get_user(uid)
 

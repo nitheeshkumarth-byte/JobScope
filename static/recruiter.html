@@ -3,7 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>JobScope - Recruiter CRM</title>
+  <title>Overview - JobScope Recruiter CRM</title>
+  <meta name="description" content="JobScope recruiter CRM: post jobs, collect Google Forms applications, screen resumes, and run interviews and offers in one place.">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="apple-touch-icon" href="/static/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
@@ -46,6 +49,7 @@
     .main{flex:1;margin-left:264px;min-width:0}
     .header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 32px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
     .header h1{font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-.02em}
+    .head-left{display:flex;align-items:center;gap:12px;min-width:0}
     .user-menu{display:flex;align-items:center;gap:12px;position:relative}
     .content{padding:28px 32px 48px;max-width:1360px}
 
@@ -81,6 +85,16 @@
     [data-theme="dark"] .badge-shortlisted{background:#103a2b;color:#8fe6bf}
     [data-theme="dark"] .badge-interview{background:#41300c;color:#f2cf86}
     .hidden{display:none}
+
+    /* ---- small-screen shell: sidebar becomes a slide-in menu, page never scrolls sideways ---- */
+    html,body{overflow-x:hidden}
+    td,th{overflow-wrap:anywhere}
+    .brand{color:#fff;text-decoration:none}
+    .menu-toggle{display:none;align-items:center;justify-content:center;width:38px;height:38px;padding:0;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;flex:none}
+    #nav-scrim{display:none;position:fixed;inset:0;background:rgba(5,4,20,.55);z-index:140}
+    .nav-item[data-soon]::after{content:"Soon";margin-left:auto;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--side-muted);border:1px solid var(--side-line);border-radius:99px;padding:1px 7px}
+    .who a{color:inherit;text-decoration:none}
+    .who a:hover{text-decoration:underline}
     .page{display:none}
     .page.active{display:block}
     .soon{padding:44px 24px;color:var(--muted);font-size:15px;text-align:center}
@@ -110,16 +124,17 @@
 
     @media (max-width:1100px){.stats-grid{grid-template-columns:repeat(3,1fr)}.stat-card:nth-child(3n){border-right:none}.stat-card:nth-child(-n+3){border-bottom:1px solid var(--border)}}
     @media (max-width:768px){
-      .sidebar{width:68px}
-      .main{margin-left:68px}
-      .nav-label,.nav-item span,.brand span:last-child{display:none}
-      .brand{padding:0 0 20px;justify-content:center}
-      .nav-item{justify-content:center;padding:11px 0;margin:1px 8px}
-      .nav-item.active::before{left:-8px}
+      .menu-toggle{display:inline-flex}
+      .sidebar{width:min(264px,82vw);transform:translateX(-100%);visibility:hidden;transition:transform .2s,visibility .2s;z-index:150;padding-top:14px}
+      .sidebar.open{transform:none;visibility:visible}
+      #nav-scrim.open{display:block}
+      .main{margin-left:0}
+      .brand{padding:0 20px 18px}
+      .nav-item{padding:11px 12px;margin:1px 10px}
       .header{padding:12px 16px}
       .header{gap:8px}
-      .header h1{font-size:18px;white-space:nowrap}
-      .user-menu{gap:8px}
+      .header h1{font-size:18px;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
+      .user-menu{gap:8px;min-width:0}
       .account-btn{padding:6px 9px}
       .account-btn #user-email{max-width:70px}
       .content{padding:18px 14px 40px}
@@ -129,6 +144,9 @@
       .stat-card:nth-child(2n){border-right:none}
       .stats-side{flex-wrap:wrap;gap:8px 22px}
       .account-btn{max-width:150px}
+    }
+    @media (max-width:430px){
+      .account-btn #user-email{display:none}
     }
     @media (prefers-reduced-motion:reduce){*{transition:none!important}}
   /* FX-START futuristic layer: decorative only, no ids/links touched */
@@ -263,6 +281,24 @@ html.gated .app,html.gated header{opacity:0!important}
     .pend{padding:12px 22px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
     .pend .who{flex:1;min-width:200px}
     @media (max-width:640px){.cal-day{min-height:62px;padding:3px}.ci{font-size:10.5px;padding:2px 3px}.cal-head div{padding:6px 0;font-size:10px}}
+    /* ---- candidate drawer ---- */
+    .drawer-back{position:fixed;inset:0;z-index:180;background:rgba(5,4,20,.55);display:none}
+    .drawer-back.open{display:block}
+    .drawer{position:fixed;top:0;right:0;height:100%;width:min(480px,100%);background:var(--surface);border-left:1px solid var(--border);z-index:181;transform:translateX(105%);visibility:hidden;transition:transform .2s;display:flex;flex-direction:column;box-shadow:-20px 0 60px rgba(0,0,0,.35)}
+    .drawer.open{transform:none;visibility:visible}
+    .drawer-head{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .drawer-head h2{font-family:var(--font-display);font-size:19px}
+    .drawer-body{padding:18px 20px 28px;overflow-y:auto;flex:1}
+    .drawer-body h3{font-family:var(--font-display);font-size:15px;margin:18px 0 8px}
+    .tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+    .tag{display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--border);border-radius:99px;padding:2px 9px;font-size:12.5px}
+    .tag button{border:0;background:none;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:0}
+    .tag button:hover{color:var(--bad)}
+    .note{padding:9px 0;border-bottom:1px solid var(--border)}
+    .note:last-child{border-bottom:none}
+    .note .who2{font-size:13px;color:var(--muted)}
+    .note p{font-size:14px;white-space:pre-wrap;margin-top:3px}
+    @media (max-width:480px){.drawer-body{padding:14px 14px 24px}}
   </style>
 </head>
 <body>
@@ -290,11 +326,12 @@ html.gated .app,html.gated header{opacity:0!important}
     </defs>
   </svg>
   <div class="layout">
-    <aside class="sidebar">
-      <div class="brand">
+    <div id="nav-scrim" aria-hidden="true" onclick="closeMenu()"></div>
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="/recruiter">
         <span class="mark" aria-hidden="true"></span>
         <span>JobScope CRM</span>
-      </div>
+      </a>
       
       <div class="nav-section">
         <div class="nav-label">Workspace</div>
@@ -306,29 +343,30 @@ html.gated .app,html.gated header{opacity:0!important}
       <div class="nav-section">
         <div class="nav-label">Talent Management</div>
         <div class="nav-item" data-page="candidates"><svg class="ic" aria-hidden="true"><use href="#i-users"/></svg><span>Candidates</span></div>
-        <div class="nav-item" data-page="talent-pool"><svg class="ic" aria-hidden="true"><use href="#i-target"/></svg><span>Talent Pool</span></div>
-        <div class="nav-item" data-page="saved"><svg class="ic" aria-hidden="true"><use href="#i-bookmark"/></svg><span>Saved Candidates</span></div>
+        <div class="nav-item" data-page="talent-pool" data-soon="1"><svg class="ic" aria-hidden="true"><use href="#i-target"/></svg><span>Talent Pool</span></div>
+        <div class="nav-item" data-page="saved" data-soon="1"><svg class="ic" aria-hidden="true"><use href="#i-bookmark"/></svg><span>Saved Candidates</span></div>
       </div>
       
       <div class="nav-section">
         <div class="nav-label">Recruitment</div>
         <div class="nav-item" data-page="jobs"><svg class="ic" aria-hidden="true"><use href="#i-brief"/></svg><span>Jobs</span></div>
         <div class="nav-item" data-page="applications"><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg><span>Applications</span></div>
+        <div class="nav-item" data-page="google-forms"><svg class="ic" aria-hidden="true"><use href="#i-file"/></svg><span>Google Forms</span></div>
         <div class="nav-item" data-page="pipeline"><svg class="ic" aria-hidden="true"><use href="#i-flow"/></svg><span>Recruitment Pipeline</span></div>
         <div class="nav-item" data-page="interviews"><svg class="ic" aria-hidden="true"><use href="#i-mic"/></svg><span>Interviews</span></div>
-        <div class="nav-item" data-page="offers"><svg class="ic" aria-hidden="true"><use href="#i-file"/></svg><span>Offers</span></div>
+        <div class="nav-item" data-page="offers" data-soon="1"><svg class="ic" aria-hidden="true"><use href="#i-file"/></svg><span>Offers</span></div>
       </div>
       
       <div class="nav-section">
         <div class="nav-label">AI Recruitment</div>
-        <div class="nav-item" data-page="ai-search"><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg><span>AI Candidate Search</span></div>
+        <div class="nav-item" data-page="ai-search" data-soon="1"><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg><span>AI Candidate Search</span></div>
         <div class="nav-item" data-page="resume-screening"><svg class="ic" aria-hidden="true"><use href="#i-scan"/></svg><span>Resume Screening</span></div>
-        <div class="nav-item" data-page="matching"><svg class="ic" aria-hidden="true"><use href="#i-target"/></svg><span>Candidate Matching</span></div>
+        <div class="nav-item" data-page="matching" data-soon="1"><svg class="ic" aria-hidden="true"><use href="#i-target"/></svg><span>Candidate Matching</span></div>
       </div>
       
       <div class="nav-section">
         <div class="nav-label">Reports</div>
-        <div class="nav-item" data-page="analytics"><svg class="ic" aria-hidden="true"><use href="#i-chart"/></svg><span>Recruitment Analytics</span></div>
+        <div class="nav-item" data-page="analytics" data-soon="1"><svg class="ic" aria-hidden="true"><use href="#i-chart"/></svg><span>Recruitment Analytics</span></div>
       </div>
       
       <div class="nav-section">
@@ -339,7 +377,7 @@ html.gated .app,html.gated header{opacity:0!important}
       <div class="nav-section">
         <div class="nav-label">Settings</div>
         <div class="nav-item" data-page="company"><svg class="ic" aria-hidden="true"><use href="#i-build"/></svg><span>Company Profile</span></div>
-        <div class="nav-item" data-page="team"><svg class="ic" aria-hidden="true"><use href="#i-team"/></svg><span>Team Management</span></div>
+        <div class="nav-item" data-page="team" data-soon="1"><svg class="ic" aria-hidden="true"><use href="#i-team"/></svg><span>Team Management</span></div>
         <div class="nav-item" data-page="recruiter-profile"><svg class="ic" aria-hidden="true"><use href="#i-user"/></svg><span>Recruiter Profile</span></div>
         <div class="nav-item" data-page="settings"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg><span>Account Settings</span></div>
       </div>
@@ -347,7 +385,12 @@ html.gated .app,html.gated header{opacity:0!important}
     
     <main class="main">
       <header class="header">
-        <h1 id="page-title">Overview</h1>
+        <div class="head-left">
+          <button class="menu-toggle" id="menuToggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar" onclick="toggleMenu()">
+            <svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>
+          </button>
+          <h1 id="page-title">Overview</h1>
+        </div>
         <div class="user-menu">
           <button class="btn" onclick="toggleTheme()">Theme</button>
           <div style="position: relative;">
@@ -450,6 +493,30 @@ html.gated .app,html.gated header{opacity:0!important}
           </div>
         </div>
 
+        <div id="page-google-forms" class="page">
+          <div class="section">
+            <div class="section-header">
+              <div class="section-title">Google Forms applications</div>
+              <div class="toolbar">
+                <button class="btn" onclick="loadGoogleForms()">Refresh</button>
+              </div>
+            </div>
+            <div class="hint" id="gform-status" style="margin-bottom:12px"></div>
+            <div id="gform-link-box" style="display:none; padding:0 0 16px;">
+              <div class="grid-2">
+                <div class="form-group"><label class="form-label" for="gform-url">Google Form link or id</label><input class="form-input" id="gform-url" placeholder="https://docs.google.com/forms/d/..."></div>
+                <div class="form-group"><label class="form-label" for="gform-job">Add responses to job</label><select class="form-select" id="gform-job"></select></div>
+              </div>
+              <button class="btn btn-primary" onclick="linkGoogleForm()">Link form</button>
+              <div class="hint" style="margin-top:8px">Every job created while Google is connected gets its own published form. Responses sync into Applications as candidates, the submitted answers stay on the application, and a CV uploaded to Drive lands in Resume Screening (add a <b>File upload</b> question in Google Forms once — the API cannot create one). <b>The form must collect an email address</b> (form Settings → Responses → Collect email addresses, or an Email question) — a response without one is skipped, because the candidate account and every later email is keyed by it.</div>
+            </div>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Form</th><th>Job</th><th>Last synced</th><th>Actions</th></tr></thead>
+              <tbody id="gform-list"></tbody>
+            </table></div>
+          </div>
+        </div>
+
         <!-- Pipeline Page -->
         <div id="page-pipeline" class="page">
           <div class="section">
@@ -539,6 +606,8 @@ html.gated .app,html.gated header{opacity:0!important}
               <div class="section-title">Candidates</div>
               <div class="toolbar">
                 <input class="form-input" id="cand-search" placeholder="Search name, email, location" aria-label="Search candidates" oninput="renderCandidates()">
+                <input class="form-input" id="cand-skill" placeholder="Filter by skill" aria-label="Filter candidates by skill" onchange="loadCandidates()">
+                <input class="form-input" id="cand-tag" placeholder="Filter by tag" aria-label="Filter candidates by tag" onchange="loadCandidates()">
                 <button class="btn btn-primary" onclick="showCandidateForm()">Add Candidate</button>
               </div>
             </div>
@@ -593,7 +662,22 @@ html.gated .app,html.gated header{opacity:0!important}
         </div>
         <div id="page-offers" class="page"><div class="section"><div class="section-header"><div class="section-title">Offers</div></div><div class="soon">Offer management</div></div></div>
         <div id="page-ai-search" class="page"><div class="section"><div class="section-header"><div class="section-title">AI Candidate Search</div></div><div class="soon">AI-powered search using natural language</div></div></div>
-        <div id="page-resume-screening" class="page"><div class="section"><div class="section-header"><div class="section-title">Resume Screening</div></div><div class="soon">AI resume screening</div></div></div>
+        <div id="page-resume-screening" class="page">
+          <div class="section">
+            <div class="section-header">
+              <div class="section-title">Resume Screening</div>
+              <div class="toolbar">
+                <select id="screen-job" aria-label="Job to screen against" onchange="loadScreening()"></select>
+                <button class="btn" onclick="loadScreening()">Refresh</button>
+              </div>
+            </div>
+            <div class="hint" id="screen-hint" style="margin-bottom:12px"></div>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Candidate</th><th>Resume</th><th>ATS score</th><th>Band</th><th>Matched</th><th>Missing</th></tr></thead>
+              <tbody id="screen-list"></tbody>
+            </table></div>
+          </div>
+        </div>
         <div id="page-matching" class="page"><div class="section"><div class="section-header"><div class="section-title">Candidate Matching</div></div><div class="soon">AI candidate matching</div></div></div>
         <div id="page-analytics" class="page"><div class="section"><div class="section-header"><div class="section-title">Recruitment Analytics</div></div><div class="soon">Analytics dashboard</div></div></div>
         <div id="page-team" class="page"><div class="section"><div class="section-header"><div class="section-title">Team Management</div></div><div class="soon">Team management</div></div></div>
@@ -626,6 +710,14 @@ html.gated .app,html.gated header{opacity:0!important}
       <div class="modal-foot"><div class="msg" id="modal-msg" role="alert"></div><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" id="modal-save" onclick="submitModal()">Save</button></div>
     </div>
   </div>
+  <div class="drawer-back" id="cand-drawer-back" onclick="if(event.target===this)closeCandidate()"></div>
+  <aside class="drawer" id="cand-drawer" role="dialog" aria-modal="true" aria-labelledby="cand-drawer-title" aria-hidden="true">
+    <div class="drawer-head">
+      <h2 id="cand-drawer-title">Candidate</h2>
+      <button class="btn btn-sm" id="cand-drawer-close" onclick="closeCandidate()" aria-label="Close candidate details">Close</button>
+    </div>
+    <div class="drawer-body" id="cand-drawer-body"></div>
+  </aside>
   <div id="toast" role="status" aria-live="polite"></div>
   <script>
     const $ = id => document.getElementById(id);
@@ -653,6 +745,15 @@ html.gated .app,html.gated header{opacity:0!important}
       }
     });
     
+    function toggleMenu(force) {
+      const open = typeof force === 'boolean' ? force : !$('sidebar').classList.contains('open');
+      $('sidebar').classList.toggle('open', open);
+      $('nav-scrim').classList.toggle('open', open);
+      $('menuToggle').setAttribute('aria-expanded', String(open));
+    }
+    function closeMenu() { toggleMenu(false); }
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
+
     function showPageFromMenu(page) {
       $('accountDropdown').classList.remove('open');
       showPageNav(page);
@@ -669,6 +770,7 @@ html.gated .app,html.gated header{opacity:0!important}
         const navItem = Array.from(document.querySelectorAll('.nav-item')).find(i => i.dataset.page === page);
         if (navItem) $('page-title').textContent = navItem.textContent.replace(/^[^\w\s]+/, '').trim();
         else $('page-title').textContent = page.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        document.title = $('page-title').textContent + ' - JobScope Recruiter CRM';
       }
       if (page === 'jobs') loadJobs();
       if (page === 'applications') loadApplications();
@@ -677,6 +779,8 @@ html.gated .app,html.gated header{opacity:0!important}
       if (page === 'users') loadUsers();
       if (page === 'pipeline') loadPipeline();
       if (page === 'candidates') loadCandidates();
+      if (page === 'resume-screening') loadScreening();
+      if (page === 'google-forms') loadGoogleForms();
       if (page === 'tasks') loadTasks();
       if (page === 'interviews') loadInterviews();
       if (page === 'company') loadCompany();
@@ -708,6 +812,7 @@ html.gated .app,html.gated header{opacity:0!important}
         loadDashboard();
         loadCompany();
         loadAvailableModels();
+        if (location.hash === '#google-forms') showPageNav('google-forms');
       } catch(e) {
         window.location.href = '/';
       }
@@ -901,6 +1006,7 @@ html.gated .app,html.gated header{opacity:0!important}
     document.querySelectorAll('.nav-item').forEach(item => {
       item.addEventListener('click', () => {
         const page = item.dataset.page;
+        closeMenu();
         if (page) showPageNav(page);
       });
     });
@@ -920,7 +1026,9 @@ html.gated .app,html.gated header{opacity:0!important}
     
     /* ===== Hiring loop: shared helpers ===== */
     const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const S = { company: null, jobs: [], apps: [], cands: [], tasks: [], ivs: [] };
+    const mailTo = s => 'mailto:' + encodeURIComponent(s || '');
+    const telTo = s => 'tel:' + String(s || '').replace(/[^\d+]/g, '');
+    const S = { company: null, jobs: [], apps: [], cands: [], tasks: [], ivs: [], pipeline: [] };
     const APP_STATUS = {applied:'Applied',ai_screening:'AI screening',recruiter_review:'In review',shortlisted:'Shortlisted',interview_scheduled:'Interview scheduled',interview_completed:'Interview done',technical_round:'Technical round',hr_round:'HR round',offer_released:'Offer released',offer_accepted:'Offer accepted',hired:'Hired',rejected:'Rejected',withdrawn:'Withdrawn',on_hold:'On hold',offer_declined:'Offer declined'};
     const statusTone = s => ['hired','offer_accepted','shortlisted','published','completed','scheduled'].includes(s) ? 'b-ok'
       : ['rejected','withdrawn','offer_declined','closed','cancelled','no_show'].includes(s) ? 'b-bad'
@@ -946,21 +1054,29 @@ html.gated .app,html.gated header{opacity:0!important}
     }
 
     /* modal: fields is HTML; onSave returns a promise, the modal closes when it resolves */
-    let modalSave = null;
+    let modalSave = null, modalFocus = null;
     function openModal(title, bodyHtml, onSave, saveLabel) {
+      modalFocus = document.activeElement;
       $('modal-title').textContent = title; $('modal-body').innerHTML = bodyHtml;
       $('modal-msg').textContent = ''; $('modal-save').textContent = saveLabel || 'Save';
       modalSave = onSave; $('modal-save').style.display = onSave ? '' : 'none'; $('modal').classList.add('open');
       const f = $('modal-body').querySelector('input,select,textarea'); if (f) f.focus();
     }
-    function closeModal() { $('modal').classList.remove('open'); modalSave = null; }
+    function closeModal() {
+      $('modal').classList.remove('open'); modalSave = null;
+      if (modalFocus && modalFocus.focus) modalFocus.focus();
+      modalFocus = null;
+    }
     async function submitModal() {
       const b = $('modal-save'); b.disabled = true;
       try { await modalSave(); closeModal(); }
       catch (e) { $('modal-msg').textContent = e.message; $('modal-msg').className = 'msg err'; }
       finally { b.disabled = false; }
     }
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      if ($('modal').classList.contains('open')) closeModal(); else closeCandidate();
+    });
     const val = id => $(id).value.trim();
     const num = id => { const v = val(id); return v === '' ? null : Number(v); };
     const field = (id, label, v, type) => `<div class="form-group"><label class="form-label" for="${id}">${label}</label><input class="form-input" id="${id}" type="${type || 'text'}" value="${esc(v)}"></div>`;
@@ -1042,8 +1158,8 @@ html.gated .app,html.gated header{opacity:0!important}
             min_experience: num('jf-minx'), max_experience: num('jf-maxx'), salary_min: num('jf-smin'), salary_max: num('jf-smax'),
             openings: num('jf-open') || 1, application_deadline: val('jf-dead'), description: val('jf-desc'), status: val('jf-status'),
             required_skills: val('jf-req').split(',').map(s => s.trim()).filter(Boolean)};
-          await api(id ? `/api/recruiter/jobs/${id}/update` : '/api/recruiter/jobs', 'POST', body);
-          toast(id ? 'Job updated' : 'Job created'); await loadJobs(); loadDashboard();
+          const d = await api(id ? `/api/recruiter/jobs/${id}/update` : '/api/recruiter/jobs', 'POST', body);
+          toast(id ? 'Job updated' : (d.form ? 'Job created — Google Form ready' : 'Job created')); await loadJobs(); loadDashboard();
         }, id ? 'Save changes' : 'Create job');
     }
     async function setJobStatus(id, status) {
@@ -1064,12 +1180,18 @@ html.gated .app,html.gated header{opacity:0!important}
     function renderApplications() {
       const j = $('app-job-filter').value, s = $('app-status-filter').value;
       const rows = S.apps.filter(a => (!j || String(a.job_id) === j) && (!s || a.status === s)).map(a => `<tr>
-        <td class="who"><b>${esc(a.candidate_name || '#' + a.candidate_user_id)}</b><span>${esc(a.candidate_email || '')}</span></td>
+        <td class="who"><b>${esc(a.candidate_name || '#' + a.candidate_user_id)}</b><span>${a.candidate_email ? `<a href="${mailTo(a.candidate_email)}">${esc(a.candidate_email)}</a>` : ''}</span>${a.source === 'google_form' ? '<span class="badge b-info">Google Form</span>' : ''}</td>
         <td>${esc(a.job_title || '#' + a.job_id)}</td>
         <td><select aria-label="Status" onchange="updateStatus(${a.id}, this.value)">${appOpts(a.status)}</select></td>
         <td>${esc(fmtDate(a.applied_at))}</td>
-        <td><button class="btn btn-sm" onclick="showInterviewForm(${a.id})">Schedule interview</button></td></tr>`);
+        <td><div class="row-actions">${a.source === 'google_form' ? `<button class="btn btn-sm" onclick="showApplicationAnswers(${a.id})">Answers</button>` : ''}<button class="btn btn-sm" onclick="showInterviewForm(${a.id})">Schedule interview</button></div></td></tr>`);
       $('all-apps').innerHTML = rows.join('') || '<tr><td colspan="5" class="empty">No applications match.</td></tr>';
+    }
+    function showApplicationAnswers(id) {
+      const a = S.apps.find(x => x.id === id);
+      if (!a) return;
+      openModal('Application answers',
+        `<div class="hint" style="white-space:pre-wrap">${esc(a.cover_letter || 'No written answers were submitted.')}</div>`);
     }
     async function updateStatus(appId, status) {
       const a = S.apps.find(x => x.id === appId), prev = a && a.status;
@@ -1080,45 +1202,199 @@ html.gated .app,html.gated header{opacity:0!important}
       } catch (e) { toast(e.message, true); if (a) a.status = prev; renderApplications(); renderPipeline(); }
     }
 
+    /* ===== Google Forms intake ===== */
+    async function loadGoogleForms() {
+      const status = $('gform-status'), box = $('gform-link-box'), list = $('gform-list');
+      try {
+        if (!S.jobs.length) { try { await loadCore(); } catch (e) {} }
+        const d = await api('/api/recruiter/integrations/google-forms');
+        box.style.display = d.connected ? '' : 'none';
+        if (!d.connected) {
+          status.innerHTML = 'No Google account connected. ' +
+            '<button class="btn btn-primary" onclick="connectGoogleForms()">Connect Google</button>';
+        } else {
+          status.innerHTML = `Connected as <b>${esc(d.email || 'Google account')}</b> ` +
+            '<button class="btn btn-sm" onclick="connectGoogleForms()">Reconnect</button> ' +
+            '<button class="btn btn-sm btn-danger" onclick="disconnectGoogleForms()">Disconnect</button>';
+          $('gform-job').innerHTML = S.jobs.map(j => `<option value="${j.id}">${esc(j.title)}</option>`).join('');
+        }
+        list.innerHTML = (d.links || []).map(l => `<tr>
+          <td class="who"><a href="${gformUrl(l.form_id)}" target="_blank" rel="noopener"><b>${esc(l.form_title || l.form_id)}</b></a><span>${esc(l.form_id)}</span></td>
+          <td>${esc(l.job_title || '#' + l.job_id)}</td>
+          <td>${l.last_synced_at ? esc(fmtWhen(l.last_synced_at)) : 'Never'}</td>
+          <td><div class="row-actions"><button class="btn btn-sm" onclick="syncGoogleForm(${l.id})">Sync now</button>
+          <button class="btn btn-sm btn-danger" onclick="unlinkGoogleForm(${l.id})">Unlink</button></div></td></tr>`)
+          .join('') || '<tr><td colspan="4" class="empty">No forms linked yet.</td></tr>';
+        // Pull submissions in the background the first time the page opens, so a
+        // respondent's application is already in Applications without a click.
+        if (d.connected && d.links && d.links.length && !S.gformSynced) {
+          S.gformSynced = true;
+          autoSyncGoogleForms(d.links.map(l => l.id));
+        }
+      } catch (e) { status.textContent = e.message; }
+    }
+    const gformUrl = id => 'https://docs.google.com/forms/d/' + encodeURIComponent(id) + '/viewform';
+    // A form that never asks for an email cannot become an application; say so
+    // instead of reporting a successful sync that added nothing.
+    function gformSyncMessage(d) {
+      let msg = `Synced ${d.seen} response${d.seen === 1 ? '' : 's'}: ${d.added} new application${d.added === 1 ? '' : 's'}`
+        + (d.resumes ? `, ${d.resumes} resume${d.resumes === 1 ? '' : 's'}` : '');
+      if (d.no_email) {
+        msg += ` — ${d.no_email} skipped: no email address. Turn on "Collect email addresses" in the form settings or add an Email question, then the respondent must submit again.`;
+      } else if (d.duplicates) {
+        msg += ` — ${d.duplicates} already imported`;
+      }
+      return msg;
+    }
+    async function autoSyncGoogleForms(ids) {
+      let added = 0, noEmail = 0;
+      for (const id of ids) {
+        try {
+          const d = await api(`/api/recruiter/integrations/google-forms/links/${id}/sync`, 'POST');
+          added += d.added; noEmail += d.no_email || 0;
+        } catch (e) { continue; }
+      }
+      if (added) toast(`${added} new application${added === 1 ? '' : 's'} from Google Forms`);
+      if (noEmail) toast(`${noEmail} form response${noEmail === 1 ? '' : 's'} skipped: the form collected no email address`, true);
+      if (added) { loadApplications(); loadDashboard(); }
+      loadGoogleForms();
+    }
+    async function connectGoogleForms() {
+      try { const d = await api('/api/recruiter/integrations/google-forms/start'); window.location.href = d.url; }
+      catch (e) { toast(e.message, true); }
+    }
+    async function disconnectGoogleForms() {
+      try { await api('/api/recruiter/integrations/google-forms', 'DELETE'); toast('Google account disconnected'); loadGoogleForms(); }
+      catch (e) { toast(e.message, true); }
+    }
+    async function linkGoogleForm() {
+      const form = val('gform-url');
+      if (!form) { toast('Paste a Google Form link or id', true); return; }
+      try {
+        await api('/api/recruiter/integrations/google-forms/links', 'POST', {form, job_id: Number(val('gform-job'))});
+        $('gform-url').value = ''; toast('Form linked'); loadGoogleForms();
+      } catch (e) { toast(e.message, true); }
+    }
+    async function syncGoogleForm(id) {
+      try {
+        const d = await api(`/api/recruiter/integrations/google-forms/links/${id}/sync`, 'POST');
+        toast(gformSyncMessage(d), !!d.no_email);
+        loadGoogleForms(); loadApplications(); loadDashboard();
+      } catch (e) { toast(e.message, true); }
+    }
+    async function unlinkGoogleForm(id) {
+      try { await api(`/api/recruiter/integrations/google-forms/links/${id}`, 'DELETE'); toast('Form unlinked'); loadGoogleForms(); }
+      catch (e) { toast(e.message, true); }
+    }
+
     /* ===== pipeline (drag and drop) ===== */
     const COLS = [
       ['applied', 'Applied', ['applied', 'ai_screening']], ['recruiter_review', 'In review', ['recruiter_review', 'on_hold']],
       ['shortlisted', 'Shortlisted', ['shortlisted']], ['interview_scheduled', 'Interview', ['interview_scheduled', 'interview_completed', 'technical_round', 'hr_round']],
       ['offer_released', 'Offer', ['offer_released', 'offer_accepted', 'offer_declined']], ['hired', 'Hired', ['hired']], ['rejected', 'Rejected', ['rejected', 'withdrawn']]];
-    async function loadPipeline() { try { await loadCore(); } catch (e) {} fillFilter('pipe-job-filter'); renderPipeline(); }
+    async function loadPipeline() {
+      try {
+        await loadCore();
+        S.pipeline = (await api('/api/recruiter/pipeline')).entries || [];
+      } catch (e) {}
+      fillFilter('pipe-job-filter'); renderPipeline();
+    }
     function renderPipeline() {
-      const j = $('pipe-job-filter').value, apps = S.apps.filter(a => !j || String(a.job_id) === j);
+      const j = $('pipe-job-filter').value;
+      const apps = S.apps.filter(a => !j || String(a.job_id) === j);
+      const sourced = S.pipeline.filter(p => !j || String(p.job_id) === j);
       $('kanban').innerHTML = COLS.map(([key, label, sts]) => {
         const list = apps.filter(a => sts.includes(a.status));
-        return `<div class="kcol" data-col="${key}"><h3>${label}<b>${list.length}</b></h3><div class="kcards">${list.map(a => `
-          <div class="kcard" draggable="true" data-id="${a.id}"><b>${esc(a.candidate_name || '#' + a.candidate_user_id)}</b><span>${esc(a.job_title || '')}</span>
-          ${a.status !== key ? `<span>${esc(APP_STATUS[a.status])}</span>` : ''}
-          <select aria-label="Move ${esc(a.candidate_name || 'candidate')} to" onchange="updateStatus(${a.id}, this.value)">${appOpts(a.status)}</select></div>`).join('')}</div></div>`;
+        const srcs = sourced.filter(p => sts.includes(p.status));
+        const cards = [
+          ...srcs.map(p => `<div class="kcard" draggable="true" data-kind="src" data-id="${p.id}"><b>${esc(p.candidate_name)}</b><span>${esc(p.job_title || '')}</span>
+            <span><span class="badge b-info">Sourced</span></span>
+            <select aria-label="Move ${esc(p.candidate_name)} to" onchange="updatePipelineStatus(${p.id}, this.value)">${appOpts(p.status)}</select></div>`),
+          ...list.map(a => `<div class="kcard" draggable="true" data-kind="app" data-id="${a.id}"><b>${esc(a.candidate_name || '#' + a.candidate_user_id)}</b><span>${esc(a.job_title || '')}</span>
+            ${a.status !== key ? `<span>${esc(APP_STATUS[a.status])}</span>` : ''}
+            <select aria-label="Move ${esc(a.candidate_name || 'candidate')} to" onchange="updateStatus(${a.id}, this.value)">${appOpts(a.status)}</select></div>`)
+        ];
+        return `<div class="kcol" data-col="${key}"><h3>${label}<b>${cards.length}</b></h3><div class="kcards">${cards.join('')}</div></div>`;
       }).join('');
     }
+    async function updatePipelineStatus(id, status) {
+      const p = S.pipeline.find(x => x.id === id), prev = p && p.status;
+      try {
+        await api(`/api/recruiter/pipeline/${id}/status`, 'POST', {status});
+        if (p) p.status = status;
+        toast('Stage updated'); renderPipeline(); loadDashboard();
+      } catch (e) { toast(e.message, true); if (p) p.status = prev; renderPipeline(); }
+    }
     (() => { /* delegated, so re-rendering the board never loses the handlers */
-      const k = $('kanban'); let dragId = null;
-      k.addEventListener('dragstart', e => { const c = e.target.closest('.kcard'); if (!c) return; dragId = +c.dataset.id; c.classList.add('drag'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragId); });
-      k.addEventListener('dragend', () => { dragId = null; k.querySelectorAll('.drag,.over').forEach(n => n.classList.remove('drag', 'over')); });
-      k.addEventListener('dragover', e => { const col = e.target.closest('.kcol'); if (!col || dragId == null) return; e.preventDefault(); k.querySelectorAll('.over').forEach(n => n !== col && n.classList.remove('over')); col.classList.add('over'); });
+      const k = $('kanban'); let drag = null;
+      k.addEventListener('dragstart', e => { const c = e.target.closest('.kcard'); if (!c) return; drag = {kind: c.dataset.kind, id: +c.dataset.id}; c.classList.add('drag'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', drag.kind + ':' + drag.id); });
+      k.addEventListener('dragend', () => { drag = null; k.querySelectorAll('.drag,.over').forEach(n => n.classList.remove('drag', 'over')); });
+      k.addEventListener('dragover', e => { const col = e.target.closest('.kcol'); if (!col || !drag) return; e.preventDefault(); k.querySelectorAll('.over').forEach(n => n !== col && n.classList.remove('over')); col.classList.add('over'); });
       k.addEventListener('drop', e => {
-        const col = e.target.closest('.kcol'); if (!col || dragId == null) return; e.preventDefault();
-        const a = S.apps.find(x => x.id === dragId), target = col.dataset.col, def = COLS.find(c => c[0] === target);
-        if (a && !def[2].includes(a.status)) { a.status = target; renderPipeline(); updateStatus(dragId, target); } else renderPipeline();
+        const col = e.target.closest('.kcol'); if (!col || !drag) return; e.preventDefault();
+        const target = col.dataset.col, def = COLS.find(c => c[0] === target);
+        if (drag.kind === 'src') { if (def) updatePipelineStatus(drag.id, target); else renderPipeline(); }
+        else {
+          const a = S.apps.find(x => x.id === drag.id);
+          if (a && def && !def[2].includes(a.status)) { a.status = target; renderPipeline(); updateStatus(drag.id, target); } else renderPipeline();
+        }
       });
     })();
 
+    /* ===== resume screening: the existing ATS scorer against a job's JD ===== */
+    const bandBadge = b => `<span class="badge ${b === 'strong' ? 'b-ok' : b === 'good' ? 'b-info' : b === 'fair' ? 'b-warn' : 'b-bad'}">${esc(b)}</span>`;
+    const kw = list => (list || []).slice(0, 8).join(', ') + ((list || []).length > 8 ? '…' : '');
+    async function loadScreening() {
+      const sel = $('screen-job'), list = $('screen-list'), hint = $('screen-hint');
+      try {
+        await loadCore();
+        const cur = sel.value;
+        sel.innerHTML = S.jobs.map(j => `<option value="${j.id}">${esc(j.title)}</option>`).join('');
+        if (!S.jobs.length) { list.innerHTML = '<tr><td colspan="6" class="empty">Create a job first.</td></tr>'; hint.textContent = ''; return; }
+        if (cur && S.jobs.some(j => String(j.id) === cur)) sel.value = cur;
+        hint.textContent = 'Scoring resumes…';
+        const data = await api('/api/recruiter/screening?job_id=' + encodeURIComponent(sel.value));
+        if (String(data.job_id) !== sel.value) return;  // a newer job was picked while this ran
+        hint.textContent = data.results.length
+          ? `${data.results.length} resume${data.results.length === 1 ? '' : 's'} scored against “${data.job_title}”, best first.`
+          : 'No candidate resumes on file yet. Upload one from Add Candidate or a candidate drawer.';
+        list.innerHTML = data.results.map(r => `<tr>
+          <td class="who"><b>${esc(r.name)}</b><span>${esc(r.email || '')}</span></td>
+          <td>${esc(r.resume)}<span class="hint">${esc(fmtDate(r.resume_at))}</span></td>
+          <td><b>${Math.round(r.score)}</b>/100</td>
+          <td>${bandBadge(r.band)}</td>
+          <td>${esc(kw(r.hits) || '—')}</td>
+          <td>${esc(kw(r.missing) || '—')}</td></tr>`).join('');
+      } catch (e) {
+        list.innerHTML = '<tr><td colspan="6" class="empty">Could not screen resumes.</td></tr>';
+        hint.textContent = e.message;
+      }
+    }
+
     /* ===== candidates (recruiter's own CRM list) ===== */
-    const CAND_STATUS = [['working','Working'],['available','Available'],['ready_for_interview','Ready for interview'],['interviewing','Interviewing'],['offered','Offered'],['placed','Placed'],['not_interested','Not interested']];
-    async function loadCandidates() { try { S.cands = (await api('/api/candidates')).candidates || []; } catch (e) { toast(e.message, true); } renderCandidates(); }
+    const CAND_STATUS = [['working','Working'],['recruiter_entry','Recruiter entry'],['available','Available'],['ready_for_interview','Ready for interview'],['interviewing','Interviewing'],['offered','Offered'],['placed','Placed'],['not_interested','Not interested']];
+    async function loadCandidates() {
+      const p = new URLSearchParams();
+      const skill = $('cand-skill').value.trim(), tag = $('cand-tag').value.trim();
+      if (skill) p.set('skill', skill);
+      if (tag) p.set('tag', tag);
+      try { S.cands = (await api('/api/candidates' + (p.toString() ? '?' + p : ''))).candidates || []; }
+      catch (e) { toast(e.message, true); }
+      renderCandidates();
+    }
     function renderCandidates() {
       const q = $('cand-search').value.toLowerCase();
-      const rows = S.cands.filter(c => !q || [c.name, c.email, c.current_location].join(' ').toLowerCase().includes(q)).map(c => `<tr>
-        <td class="who"><b>${esc(c.name)}</b></td><td class="who"><b>${esc(c.email || '')}</b><span>${esc(c.phone || '')}</span></td><td>${esc(c.current_location || '')}</td>
+      const rows = S.cands.filter(c => !q || [c.name, c.email, c.current_location, c.phone].join(' ').toLowerCase().includes(q)).map(c => `<tr data-id="${esc(c.id)}">
+        <td class="who"><b>${esc(c.name)}</b></td><td class="who"><b>${c.email ? `<a href="${mailTo(c.email)}">${esc(c.email)}</a>` : ''}</b><span>${c.phone ? `<a href="${telTo(c.phone)}">${esc(c.phone)}</a>` : ''}</span></td><td>${esc(c.current_location || '')}</td>
         <td>${esc(c.expected_ctc || '')}</td><td>${esc(c.availability || '')}</td><td>${badge(c.status, (CAND_STATUS.find(s => s[0] === c.status) || [0, c.status])[1])}</td>
-        <td><div class="row-actions"><button class="btn btn-sm" onclick="showCandidateForm('${esc(c.id)}')">Edit</button><button class="btn btn-sm btn-danger" onclick="deleteCandidate('${esc(c.id)}')">Delete</button></div></td></tr>`);
+        <td><div class="row-actions"><button class="btn btn-sm" onclick="openCandidate('${esc(c.id)}')">View</button><button class="btn btn-sm" onclick="showCandidateForm('${esc(c.id)}')">Edit</button><button class="btn btn-sm btn-danger" onclick="deleteCandidate('${esc(c.id)}')">Delete</button></div></td></tr>`);
       $('cand-list').innerHTML = rows.join('') || '<tr><td colspan="7" class="empty">No candidates yet. Add the people you are tracking.</td></tr>';
     }
+    $('cand-list').addEventListener('click', e => {
+      if (e.target.closest('button,a,input,select')) return;
+      const row = e.target.closest('tr[data-id]');
+      if (row) openCandidate(row.dataset.id);
+    });
     function showCandidateForm(id) {
       const c = S.cands.find(x => x.id === id) || {};
       openModal(id ? 'Edit candidate' : 'Add candidate', `
@@ -1127,17 +1403,119 @@ html.gated .app,html.gated header{opacity:0!important}
         <div class="grid-2">${field('cf-cur', 'Current CTC', c.current_ctc)}${field('cf-exp', 'Expected CTC', c.expected_ctc)}</div>
         <div class="grid-2">${field('cf-avail', 'Availability', c.availability)}
           <div class="form-group"><label class="form-label" for="cf-status">Status</label><select class="form-select" id="cf-status">${opts(CAND_STATUS, c.status || 'working')}</select></div></div>
-        <div class="form-group"><label class="form-label" for="cf-notes">Notes</label><textarea class="form-textarea" id="cf-notes">${esc(c.notes)}</textarea></div>`,
+        <div class="form-group"><label class="form-label" for="cf-notes">Notes</label><textarea class="form-textarea" id="cf-notes">${esc(c.notes)}</textarea></div>
+        <div class="form-group"><label class="form-label" for="cf-resume">Resume (optional, PDF or DOCX)</label><input class="form-input" type="file" id="cf-resume" accept=".pdf,.docx"><div class="hint">${id ? 'Uploading a new resume replaces the current one. ' : ''}Scanned PDFs are read with OCR.</div></div>`,
         async () => {
           if (!val('cf-name')) throw new Error('Name is required');
-          await api('/api/candidates', 'POST', {id: id || null, name: val('cf-name'), email: val('cf-email'), phone: val('cf-phone'), current_location: val('cf-loc'),
+          const file = $('cf-resume').files[0];
+          const saved = await api('/api/candidates', 'POST', {id: id || null, name: val('cf-name'), email: val('cf-email'), phone: val('cf-phone'), current_location: val('cf-loc'),
             current_ctc: val('cf-cur'), expected_ctc: val('cf-exp'), availability: val('cf-avail'), status: val('cf-status'), notes: val('cf-notes')});
-          toast('Candidate saved'); loadCandidates(); loadDashboard();
+          if (file) await pushResume(saved.id, file);
+          toast(file ? 'Candidate saved with resume' : 'Candidate saved'); loadCandidates(); loadDashboard();
+          if (file && $('page-resume-screening').classList.contains('active')) loadScreening();
         });
     }
     async function deleteCandidate(id) {
       if (!confirm('Delete this candidate?')) return;
       try { await api('/api/candidates/' + encodeURIComponent(id), 'DELETE'); toast('Candidate deleted'); loadCandidates(); loadDashboard(); } catch (e) { toast(e.message, true); }
+    }
+
+    /* ===== candidate drawer: details, resume, notes, tags, add to job ===== */
+    let drawerFocus = null;
+    function closeCandidate() {
+      $('cand-drawer').classList.remove('open');
+      $('cand-drawer').setAttribute('aria-hidden', 'true');
+      $('cand-drawer-back').classList.remove('open');
+      if (drawerFocus && drawerFocus.focus) drawerFocus.focus();
+      drawerFocus = null;
+    }
+    async function openCandidate(id) {
+      drawerFocus = document.activeElement;
+      $('cand-drawer').classList.add('open');
+      $('cand-drawer').setAttribute('aria-hidden', 'false');
+      $('cand-drawer-back').classList.add('open');
+      await refreshCandidate(id);
+      if ($('cand-drawer').classList.contains('open')) $('cand-drawer-close').focus();
+    }
+    async function refreshCandidate(id) {
+      try { renderCandidateDrawer(await api('/api/candidates/' + encodeURIComponent(id))); }
+      catch (e) { toast(e.message, true); closeCandidate(); }
+    }
+    function renderCandidateDrawer(d) {
+      const c = d.candidate;
+      const contact = [c.email && `<a href="${mailTo(c.email)}">${esc(c.email)}</a>`, c.phone && `<a href="${telTo(c.phone)}">${esc(c.phone)}</a>`, c.current_location && esc(c.current_location)].filter(Boolean).join(' · ');
+      const tags = d.tags.map(t => `<span class="tag">${esc(t)}<button type="button" data-tag="${esc(t)}" aria-label="Remove tag ${esc(t)}">&times;</button></span>`).join('') || '<span class="hint">No tags yet</span>';
+      const resume = d.resume ? `<div class="hint">${esc(d.resume.filename)} · ${Math.max(1, Math.round(d.resume.size / 1024))} KB</div>
+        <div class="hint">Skills: ${esc((d.resume.skills || []).join(', ') || 'none detected')}</div>
+        <div class="toolbar" style="margin-top:8px"><a class="btn btn-sm" href="/api/candidates/${encodeURIComponent(c.id)}/resume">Download resume</a></div>`
+        : '<div class="hint">No resume uploaded</div>';
+      const pipeline = d.pipeline.length ? d.pipeline.map(p => `<div class="note"><div class="who2">${esc(p.job_title)}</div><div>${badge(p.status)}</div></div>`).join('') : '<div class="hint">Not on a job pipeline yet</div>';
+      const notes = d.notes.length ? d.notes.map(n => `<div class="note"><div class="who2">${esc(n.author)} · ${esc(fmtWhen(n.created_at))}</div><p>${esc(n.note)}</p></div>`).join('') : '<div class="hint">No notes yet</div>';
+      $('cand-drawer-title').textContent = c.name;
+      $('cand-drawer-body').innerHTML = `
+        <div class="hint">${contact || 'No contact details'}</div>
+        <div style="margin:10px 0">${badge(c.status, (CAND_STATUS.find(s => s[0] === c.status) || [0, c.status])[1])}</div>
+        <h3>Tags</h3>
+        <div class="tags">${tags}</div>
+        <div class="toolbar"><input class="form-input" id="cand-tag-input" aria-label="New tag" placeholder="Add a tag" maxlength="60"><button class="btn btn-sm" id="cand-tag-add">Add tag</button></div>
+        <h3>Resume</h3>
+        ${resume}
+        <div class="toolbar" style="margin-top:8px"><input type="file" id="cand-resume" accept=".pdf,.docx" aria-label="Upload resume (PDF or DOCX)"><button class="btn btn-sm" id="cand-resume-up">Upload</button></div>
+        <h3>Jobs</h3>
+        ${pipeline}
+        <button class="btn btn-sm" id="cand-add-job">Add to job</button>
+        <h3>Notes</h3>
+        <div class="form-group"><label class="form-label" for="cand-note">New note</label><textarea class="form-textarea" id="cand-note" maxlength="5000"></textarea></div>
+        <button class="btn btn-sm" id="cand-note-add">Add note</button>
+        <div style="margin-top:12px">${notes}</div>`;
+      $('cand-drawer-body').querySelectorAll('.tag button').forEach(b => { b.onclick = () => removeTag(c.id, b.dataset.tag); });
+      $('cand-tag-add').onclick = () => addTag(c.id);
+      $('cand-resume-up').onclick = () => uploadResume(c.id);
+      $('cand-add-job').onclick = () => showAddToJob(c.id);
+      $('cand-note-add').onclick = () => addNote(c.id);
+      $('cand-tag-input').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addTag(c.id); } });
+    }
+    async function addTag(id) {
+      const tag = val('cand-tag-input');
+      if (!tag) { toast('Type a tag first', true); return; }
+      try { await api(`/api/candidates/${encodeURIComponent(id)}/tags`, 'POST', {tag}); toast('Tag added'); await refreshCandidate(id); loadCandidates(); }
+      catch (e) { toast(e.message, true); }
+    }
+    async function removeTag(id, tag) {
+      try { await api(`/api/candidates/${encodeURIComponent(id)}/tags`, 'POST', {tag, remove: true}); toast('Tag removed'); await refreshCandidate(id); loadCandidates(); }
+      catch (e) { toast(e.message, true); }
+    }
+    async function addNote(id) {
+      const note = $('cand-note').value.trim();
+      if (!note) { toast('Write a note first', true); return; }
+      try { await api(`/api/candidates/${encodeURIComponent(id)}/notes`, 'POST', {note}); toast('Note added'); await refreshCandidate(id); }
+      catch (e) { toast(e.message, true); }
+    }
+    async function pushResume(id, file) {
+      const fd = new FormData(); fd.append('resume', file);
+      const r = await fetch(`/api/candidates/${encodeURIComponent(id)}/resume`, {method: 'POST', credentials: 'same-origin', body: fd});
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.ok === false) throw new Error(data.detail || 'Upload failed');
+      return data.resume;
+    }
+    async function uploadResume(id) {
+      const file = $('cand-resume').files[0];
+      if (!file) { toast('Choose a PDF or DOCX file', true); return; }
+      try {
+        await pushResume(id, file);
+        toast('Resume uploaded'); await refreshCandidate(id); loadCandidates();
+        if ($('page-resume-screening').classList.contains('active')) loadScreening();
+      } catch (e) { toast(e.message, true); }
+    }
+    async function showAddToJob(id) {
+      try { if (!S.jobs.length) await loadCore(); } catch (e) { toast(e.message, true); return; }
+      if (!S.jobs.length) { toast('Create a job first', true); showPageNav('jobs'); return; }
+      openModal('Add to job', `<div class="form-group"><label class="form-label" for="aj-job">Job</label><select class="form-select" id="aj-job">${S.jobs.map(j => `<option value="${j.id}">${esc(j.title)}</option>`).join('')}</select></div>`,
+        async () => {
+          await api('/api/recruiter/pipeline', 'POST', {job_id: +val('aj-job'), candidate_id: id});
+          toast('Added to job'); await refreshCandidate(id);
+          if ($('page-pipeline').classList.contains('active')) loadPipeline();
+        }, 'Add to job');
     }
 
     /* ===== tasks ===== */
@@ -1176,7 +1554,7 @@ html.gated .app,html.gated header{opacity:0!important}
     const IV_TYPES = [['phone_screening','Phone screening'],['technical_interview','Technical interview'],['hr_interview','HR interview'],['managerial_interview','Managerial interview'],['final_interview','Final interview']];
     function renderInterviews() {
       $('iv-list').innerHTML = S.ivs.map(i => `<tr><td>${esc(fmtWhen(i.scheduled_at))}<div class="hint">${i.duration_minutes || 60} min</div></td>
-        <td class="who"><b>${esc(i.candidate_name)}</b><span>${esc(i.candidate_email || '')}</span></td><td>${esc(i.job_title || '')}</td>
+        <td class="who"><b>${esc(i.candidate_name)}</b><span>${i.candidate_email ? `<a href="${mailTo(i.candidate_email)}">${esc(i.candidate_email)}</a>` : ''}</span></td><td>${esc(i.job_title || '')}</td>
         <td>${esc((IV_TYPES.find(t => t[0] === i.interview_type) || [0, i.interview_type])[1])}</td>
         <td>${i.meeting_link ? `<a href="${esc(i.meeting_link)}" target="_blank" rel="noopener noreferrer">Meeting link</a>` : esc(i.location || '')}</td>
         <td><select aria-label="Interview status" onchange="setInterviewStatus(${i.id}, this.value)">${opts([['scheduled','Scheduled'],['rescheduled','Rescheduled'],['completed','Completed'],['cancelled','Cancelled'],['no_show','No show']], i.status)}</select></td></tr>`).join('')
@@ -1192,9 +1570,11 @@ html.gated .app,html.gated header{opacity:0!important}
         <div class="form-group"><label class="form-label" for="if-note">Instructions for the candidate</label><textarea class="form-textarea" id="if-note"></textarea></div>`,
         async () => {
           if (!val('if-when')) throw new Error('Pick a date and time');
-          await api('/api/recruiter/interviews', 'POST', {application_id: +val('if-app'), scheduled_at: toISO(val('if-when')), duration_minutes: num('if-dur') || 60,
+          const d = await api('/api/recruiter/interviews', 'POST', {application_id: +val('if-app'), scheduled_at: toISO(val('if-when')), duration_minutes: num('if-dur') || 60,
             interview_type: val('if-type'), meeting_link: val('if-link'), location: val('if-loc'), instructions: val('if-note')});
-          toast('Interview scheduled'); loadInterviews(); loadDashboard();
+          const m = d.mail || {};
+          toast(m.sent ? 'Interview scheduled, candidate emailed' : 'Interview scheduled, email not sent' + (m.error ? ': ' + m.error : ''), !m.sent);
+          loadInterviews(); loadDashboard();
           if ($('page-applications').classList.contains('active')) loadApplications();
         }, 'Schedule');
     }
@@ -1266,7 +1646,12 @@ html.gated .app,html.gated header{opacity:0!important}
         <button class="btn btn-sm btn-primary" onclick="confirmSlot(${s.id})">Confirm interview</button><button class="btn btn-sm" onclick="declineSlot(${s.id})">Decline</button></div>`).join('') : '';
     }
     async function confirmSlot(id) {
-      try { await api(`/api/recruiter/slots/${id}/confirm`, 'POST', {}); toast('Interview confirmed'); closeModal(); loadCalendar(); loadDashboard(); }
+      try {
+        const d = await api(`/api/recruiter/slots/${id}/confirm`, 'POST', {});
+        const m = d.mail || {};
+        toast(m.sent ? 'Interview confirmed, candidate emailed' : 'Interview confirmed, email not sent' + (m.error ? ': ' + m.error : ''), !m.sent);
+        closeModal(); loadCalendar(); loadDashboard();
+      }
       catch (e) { toast(e.message, true); loadCalendar(); }
     }
     async function declineSlot(id) {

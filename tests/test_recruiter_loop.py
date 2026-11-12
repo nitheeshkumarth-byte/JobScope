@@ -24,6 +24,13 @@ def _future(days=3):
     return (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+@pytest.fixture(autouse=True)
+def no_real_mail(monkeypatch):
+    """Scheduling an interview emails the candidate; a test must never reach SMTP."""
+    monkeypatch.setattr(recruiter_api.mailer, "send",
+                        lambda *a, **k: recruiter_api.mailer.MailResult(True, "test"))
+
+
 def test_hiring_loop_and_calendar():
     rec, _ = _client("rec@x.com", "recruiter")
     other, _ = _client("rec2@x.com", "recruiter")

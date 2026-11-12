@@ -3,7 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>JobScope - Welcome</title>
+  <title>JobScope - Candidate &amp; Recruiter sign-in</title>
+  <meta name="description" content="Sign in to JobScope: candidates search jobs and tailor resumes, recruiters manage jobs, applications, interviews and offers.">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="apple-touch-icon" href="/static/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
@@ -32,7 +35,7 @@
 
     .page{max-width:1120px;margin:0 auto;padding:28px 24px 40px}
     .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:56px}
-    .brand{display:inline-flex;align-items:center;gap:12px;font-family:var(--font-display);font-weight:700;font-size:22px;letter-spacing:-.01em}
+    .brand{display:inline-flex;align-items:center;gap:12px;font-family:var(--font-display);font-weight:700;font-size:22px;letter-spacing:-.01em;color:inherit;text-decoration:none}
     .top a{color:var(--muted);font-size:14px;text-decoration:none}
     .top a:hover{color:var(--ink);text-decoration:underline}
 
@@ -167,7 +170,7 @@ html.gated .app,html.gated header{opacity:0!important}
 <body>
   <div class="page">
     <div class="top">
-      <div class="brand"><span class="mark" aria-hidden="true"></span><span>JobScope</span></div>
+      <a class="brand" href="/"><span class="mark" aria-hidden="true"></span><span>JobScope</span></a>
     </div>
 
     <div class="hero">
@@ -224,7 +227,7 @@ html.gated .app,html.gated header{opacity:0!important}
     </div>
 
     <div class="footer">
-      <div>JobScope - AI-powered recruitment platform</div>
+      <div>&copy; <span id="copyright-year">2026</span> JobScope - AI-powered recruitment platform</div>
       <div class="admin-link"><a href="/admin">Super Admin Login</a></div>
     </div>
   </div>
@@ -395,6 +398,9 @@ html.gated .app,html.gated header{opacity:0!important}
         }
       } catch(e) {}
     })();
+
+    var yearEl = document.getElementById('copyright-year');
+    if (yearEl) yearEl.textContent = new Date().getFullYear();
   </script>
 <script>/* FX-START decorative background; aria-hidden, pointer-events none */
 (function(){

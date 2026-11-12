@@ -180,6 +180,12 @@ GITHUB_USERNAME=yourhandle
 GMAIL_OAUTH_CREDENTIALS=client_secret.json
 GMAIL_OAUTH_TOKEN_FILE=gmail_oauth_token.json
 
+# ── Google Forms applications intake ────────────────
+# Uses the same installed-app client_secret.json (GOOGLE_OAUTH_CREDENTIALS).
+# Optional: when unset the callback is derived from the portal's own host/port.
+# If set, it must be listed under "Authorised redirect URIs" for that OAuth client.
+GOOGLE_FORMS_REDIRECT_URI=http://localhost:8000/api/recruiter/integrations/google-forms/callback
+
 # ── SMTP (account verification / password reset) ────
 SMTP_HOST=smtp.example.com
 SMTP_PORT=587
@@ -261,6 +267,7 @@ jobscope/
 ├── github_projects.py                # JD-relevant repo matching + README summarisation
 ├── auth.py                           # SQLite auth: users, sessions, tokens, profiles, RAG docs, JD cache
 ├── mailer.py                         # SMTP sender (verify / reset / welcome emails)
+├── google_forms_api.py               # Google Forms → Applications intake (per-recruiter OAuth, form creation, Drive CV import, sync)
 │
 ├── step1_basics.py … step7_scraper_with_fallback.py   # seven-step tutorial progression
 │
@@ -480,6 +487,48 @@ All routes require the `js_session` cookie unless marked *public*. Responses car
 | `POST /api/run` | **SSE stream** of a full agent run |
 | `GET /api/logs` | Recent runs (≤50) + errors (≤20) for the account |
 
+### Recruiter CRM — phase 1 (`candidates_api.py`)
+
+Candidates are owned by the recruiter who added them; sourced pipeline entries are owned by their company. Another company's candidate or entry returns `404`, never `403`.
+
+| Method & path | Purpose |
+|---|---|
+| `GET /api/candidates?q=&skill=&status=&tag=&limit=&offset=` | Filter the caller's candidates; `skill` matches skills extracted from the uploaded resume |
+| `GET /api/candidates/{id}` | Candidate details + notes (newest first) + tags + active resume (with extracted skills) + sourced pipeline rows |
+| `DELETE /api/candidates/{id}` | Delete the candidate and cascade notes, tags, resume row, stored file and company pipeline entries |
+| `POST /api/candidates/{id}/notes` | `{note}` — author and UTC timestamp recorded, shown newest first |
+| `POST /api/candidates/{id}/tags` | `{tag, remove?}` — add or remove one tag |
+| `POST /api/candidates/{id}/resume` | Multipart PDF/DOCX (≤ 5 MB, validated by file signature) → parsed text + skills; image-only PDFs fall back to the Tier-2 OCR; replaces the previous resume |
+| `GET /api/candidates/{id}/resume` | Authenticated download; served as `Content-Disposition: attachment` from `data/resumes/` |
+| `GET /api/recruiter/pipeline` | Sourced `pipeline_entries` for the caller's company (board load) |
+| `POST /api/recruiter/pipeline` | `{job_id, candidate_id, status?}` — hand-add a candidate to a job; repeat updates instead of duplicating |
+| `POST /api/recruiter/pipeline/{id}/status` | Move a sourced entry to another application stage (status whitelist enforced) |
+| `GET /api/recruiter/screening?job_id=&limit=&offset=` | Score every company candidate resume against the job's posting with the existing `ats_score.score_resume`: ATS total, band, matched and missing keywords, best first. Another company's job returns `404` |
+
+The Resume Screening page uses this route; it does not re-implement matching. Scoring is the same code the resume generator and `/api/screen` use.
+
+### Google Forms applications (`google_forms_api.py`)
+
+Candidates can apply through a Google Form instead of the portal. Each recruiter connects their own Google account once, links a form to one of their jobs, and syncs responses; every response becomes a normal `applications` row, so it appears in Applications, Resume Screening and the pipeline like any other application. The respondent gets an unverified candidate account keyed by their email (an unusable password hash, `verified_at` NULL), so a later sign-up with that address claims the row. Re-syncing never duplicates a response and never overwrites a status the recruiter set. The answers in the form's linked Google Sheet are the same responses read through the Forms API, so there is no separate Sheets pull to configure.
+
+Every job created while Google is connected also gets its own published `Application — <job title>` form in the recruiter's Drive, linked to that job automatically (name, email, phone and a "why this role" question). The Forms API cannot create file-upload questions: add one **File upload** question to the form once in the Google Forms UI, and each uploaded CV is downloaded from the respondent's Drive into `data/resumes/` on sync — the same store the portal upload uses, so it is parsed, OCR'd when scanned, and scored in Resume Screening. The `application` is kept even if a CV download fails (bad file type, revoked access), and the count is reported separately.
+
+Setup: enable the **Google Forms API** and **Google Drive API** in the same Google Cloud project as `client_secret.json`, add the callback URL above as an authorised redirect URI, then use **Google Forms → Connect Google** in the recruiter portal. The integration asks for `forms.responses.readonly`, `forms.body` (create/publish forms) and `drive.readonly` (download uploaded CVs); the refresh token is stored per recruiter in `google_oauth`. When `GOOGLE_FORMS_REDIRECT_URI` is unset the callback is derived from the host/port the portal is actually served on, so `localhost` and `127.0.0.1` both work; that exact URI is stored with the `state` and repeated at the token exchange, so a browser returning on another host/port cannot break the exchange. A refused exchange returns Google's own error code (for example `invalid_grant`) instead of a generic message.
+
+| Method & path | Purpose |
+|---|---|
+| `GET /api/recruiter/integrations/google-forms` | Connection state, connected Google address and the company's linked forms |
+| `GET /api/recruiter/integrations/google-forms/start` | Consent URL for this recruiter's own Google account (single-use `state` + PKCE verifier stored together, 10-minute TTL) |
+| `GET /api/recruiter/integrations/google-forms/callback` | OAuth callback; resolves the recruiter from `state` (a missing session cookie on another host does not 401), replays the PKCE verifier and redirect URI stored with that state, stores the refresh token and returns to `/recruiter#google-forms` |
+| `DELETE /api/recruiter/integrations/google-forms` | Forget this recruiter's token; linked forms stay, syncs stop until reconnected |
+| `POST /api/recruiter/integrations/google-forms/links` | `{form, job_id}` — `form` is a Forms URL or id; the form must be readable by the connected account and the job must belong to the caller's company |
+| `DELETE /api/recruiter/integrations/google-forms/links/{id}` | Unlink a form (another company's link returns `404`) |
+| `POST /api/recruiter/integrations/google-forms/links/{id}/sync` | Pull responses, insert new applications and import uploaded CVs; returns `{added, seen, skipped, duplicates, no_email, resumes}` |
+
+`POST /api/recruiter/jobs` also returns `form: {form_id, form_title, responder_uri}` (or `null` when Google is not connected / form creation failed), so the portal can point the recruiter straight at the new form. The submitted answers are kept as a Q&A transcript in `applications.cover_letter`. A response with no usable email address is skipped and counted in `no_email` rather than inventing an account — a form that never asks for an address imports nothing, so enable **Settings → Responses → Collect email addresses** (or add an Email question) and have the respondent submit again.
+
+Scheduling an interview (also when a candidate-proposed slot is confirmed) emails the candidate the job title, time in UTC, duration, meeting link/location and instructions, using the address and name they applied with — for a form respondent, exactly what Google Forms collected. Both routes return `mail: {sent, error}`, and a delivery problem never undoes the booking.
+
 ### Resume & RAG
 
 | Method & path | Purpose |
@@ -582,6 +631,10 @@ Each server declares tools with `@mcp.tool()` and runs `mcp.run(transport="stdio
 | `profiles` | `(user_id, id)` | name, created_at, `is_default`, JSON `data` (resume text, skills, roles, cities, modes, countries, GitHub) |
 | `rag_documents` | `(user_id, id)` | name, kind (`cv`/other), full text (≤ 400 000 chars), created_at |
 | `job_desc_cache` | `url` | text (≤ 6000 chars), source (`http`/`http+browser`/`none`), `fetched_at` — deliberately **not** user-scoped (posting text is public) |
+| `candidate_resumes` | `id` | user FK + candidate id, original filename, random `stored_name` under `data/resumes/`, size, extracted text, created_at — one active row per candidate |
+| `candidate_tags` | `(user_id, candidate_id, tag)` | recruiter's free-form tags on their own candidates |
+| `candidate_notes` | `id` | user FK + candidate id, author display name, note (≤ 5000 chars), UTC created_at |
+| `pipeline_entries` | `id` | company FK + job FK + candidate id, stage status, created/updated; unique per `(company, job, candidate)` — hand-added candidates that have no user account |
 
 ### `gmail_cache.db`
 

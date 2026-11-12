@@ -937,3 +937,10 @@ def _age_session(token, seconds):
     with auth.connect() as conn:
         conn.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?",
                      (time.time() - seconds, auth._token_hash(token)))
+
+
+def test_a_missing_page_gets_html_while_a_missing_api_route_stays_json(client):
+    page = client.get('/no-such-page')
+    assert page.status_code == 404 and 'Page not found' in page.text
+    api = client.get('/api/no-such-endpoint')
+    assert api.status_code == 404 and api.json()['detail'] == 'Not Found'
