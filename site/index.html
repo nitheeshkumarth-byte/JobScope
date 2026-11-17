@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JobScope — job hunting, minus the tab-hopping</title>
+<meta name="description" content="JobScope searches nine job boards in parallel, falls back to Gmail job alerts when boards block it, and drafts a tailored, ATS-scored LaTeX resume. Runs locally.">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<style>
+:root{
+  --bg:#0d1020; --surface:#171b2e; --surface-2:#21263f; --text:#e8eaf5; --muted:#9aa3bd;
+  --border:#2a3052; --accent:#7c7ff5; --accent-2:#a78bfa; --soft:#262b4c;
+  --ok:#34d399; --warn:#fbbf24;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--text);line-height:1.6;
+  font-family:"Inter","Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased;
+}
+body::before{
+  content:"";position:fixed;inset:-20%;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(620px at 15% 0%,rgba(124,127,245,.20),transparent 62%),
+    radial-gradient(560px at 88% 12%,rgba(52,211,153,.12),transparent 60%),
+    radial-gradient(700px at 60% 100%,rgba(167,139,250,.16),transparent 65%);
+}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 0}
+.brand{display:flex;align-items:center;gap:10px;font-weight:650;letter-spacing:-.01em;color:var(--text)}
+.brand:hover{text-decoration:none}
+.mark{width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,var(--accent),var(--accent-2));box-shadow:0 0 18px rgba(124,127,245,.55)}
+nav{display:flex;gap:22px;font-size:14px;color:var(--muted)}
+nav a{color:var(--muted)}
+nav a:hover{color:var(--text);text-decoration:none}
+
+.hero{padding:56px 0 28px;max-width:760px}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.02em;color:var(--muted);border:1px solid var(--border);background:var(--surface);padding:5px 12px;border-radius:999px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+h1{font-size:clamp(34px,5.4vw,54px);line-height:1.08;letter-spacing:-.035em;margin:20px 0 16px;font-weight:700}
+h1 em{font-style:normal;background:linear-gradient(100deg,var(--accent),var(--accent-2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{font-size:18px;color:var(--muted);margin:0 0 28px;max-width:640px}
+.cta{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:11px 20px;border-radius:12px;font-size:14.5px;font-weight:600;border:1px solid transparent;transition:transform .15s ease,box-shadow .15s ease}
+.btn:hover{text-decoration:none;transform:translateY(-1px)}
+.btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#0d1020;box-shadow:0 12px 30px -12px rgba(124,127,245,.85)}
+.btn.ghost{border-color:var(--border);background:var(--surface);color:var(--text)}
+.stack{margin:22px 0 0;font-size:13px;color:var(--muted)}
+
+.shot{margin:34px 0 0;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:var(--surface);box-shadow:0 40px 90px -50px rgba(0,0,0,.9)}
+.shot img{display:block;width:100%;height:auto}
+.shot figcaption{padding:11px 16px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--border);display:flex;justify-content:space-between;gap:12px}
+
+section{padding:64px 0 8px}
+h2{font-size:clamp(24px,3vw,32px);letter-spacing:-.02em;margin:0 0 10px;font-weight:650}
+.sub{color:var(--muted);margin:0 0 30px;max-width:660px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px 20px 18px}
+.card h3{margin:0 0 7px;font-size:15.5px;font-weight:640;letter-spacing:-.01em}
+.card p{margin:0;font-size:14px;color:var(--muted)}
+.k{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);display:block;margin-bottom:9px;font-weight:600}
+
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;counter-reset:s}
+.step{position:relative;border-left:2px solid var(--border);padding:2px 0 2px 18px;counter-increment:s}
+.step::before{content:counter(s);position:absolute;left:-13px;top:0;width:24px;height:24px;border-radius:50%;background:var(--soft);border:1px solid var(--border);color:var(--accent);font-size:12px;font-weight:700;display:grid;place-items:center}
+.step b{display:block;font-size:14.5px;margin-bottom:3px}
+.step span{font-size:13.5px;color:var(--muted)}
+
+.split{display:grid;grid-template-columns:1fr;gap:28px;align-items:center}
+@media(min-width:880px){.split{grid-template-columns:1.05fr .95fr}}
+.split .shot{margin:0}
+ul.plain{list-style:none;padding:0;margin:0;display:grid;gap:11px}
+ul.plain li{position:relative;padding-left:24px;font-size:14.5px;color:var(--muted)}
+ul.plain li::before{content:"";position:absolute;left:2px;top:9px;width:8px;height:8px;border-radius:2px;background:var(--accent)}
+ul.plain li b{color:var(--text);font-weight:600}
+.limits li::before{background:var(--warn)}
+
+footer{margin-top:72px;border-top:1px solid var(--border);padding:26px 0 46px;font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between}
+footer a{color:var(--muted)}
+footer a:hover{color:var(--text)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <a class="brand" href="./"><span class="mark"></span>JobScope</a>
+    <nav>
+      <a href="demo/">Live demo</a>
+      <a href="assets/jobscope-runtime-architecture.html">Architecture</a>
+      <a href="https://github.com/nitheeshkumarth-byte/JobScope" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <span class="eyebrow"><span class="dot"></span>Local-first · FastAPI · LangGraph · Ollama</span>
+    <h1>The job hunt, minus <em>the tab-hopping</em>.</h1>
+    <p class="lede">JobScope searches nine job boards in parallel, falls back to your Gmail job alerts when a
+      board bot-walls it, and drafts a tailored, ATS-scored LaTeX resume for any posting worth applying to.</p>
+    <div class="cta">
+      <a class="btn primary" href="demo/">Open the live demo →</a>
+      <a class="btn ghost" href="https://github.com/nitheeshkumarth-byte/JobScope" target="_blank" rel="noopener">Read the source</a>
+    </div>
+    <p class="stack">Python · FastAPI · SSE · LangGraph · MCP tools · SQLite · no cloud account required</p>
+  </div>
+
+  <figure class="shot">
+    <img src="assets/demo-deck.jpg" width="1360" height="850" alt="JobScope dashboard showing a search transcript, the live pipeline, and a flashcard deck of eight job listings">
+    <figcaption><span>Search → pipeline → flashcard deck, all streamed over SSE.</span><span>Sample data</span></figcaption>
+  </figure>
+
+  <section id="what">
+    <h2>What it actually does</h2>
+    <p class="sub">Every capability below is in the repo and exercised by the tests — the dashboard is the front end of a
+      LangGraph agent, not a mock-up.</p>
+    <div class="grid">
+      <div class="card"><span class="k">Discovery</span><h3>Nine boards, one search</h3>
+        <p>Indeed, LinkedIn, Naukri, Glassdoor, Foundit, Internshala, WeWorkRemotely, Remotive and Arbeitnow run
+          concurrently under a 40-second deadline, each reporting whether it answered or was blocked.</p></div>
+      <div class="card"><span class="k">Fallback</span><h3>Gmail alerts as a second source</h3>
+        <p>Sync job-alert mail once over OAuth into a local SQLite cache; when the boards block the run, a deterministic
+          graph edge answers from that cache instead of pretending there are no jobs.</p></div>
+      <div class="card"><span class="k">Resume</span><h3>Tailored LaTeX, never invented</h3>
+        <p>BM25 ranks your own CV bullets against the posting and reorders them. It emits a compilable .tex plus an HTML
+          preview — the facts are yours, the emphasis is the posting's.</p></div>
+      <div class="card"><span class="k">Scoring</span><h3>Explainable ATS score</h3>
+        <p>A 100-point score across contact, sections, structure, dates, keywords and evidence — each with a note saying
+          what to fix, so the number is arguable instead of mystical.</p></div>
+      <div class="card"><span class="k">Interface</span><h3>Pipeline you can watch</h3>
+        <p>Agent tokens, tool calls and results stream into the transcript while the circuit lights up; results land in a
+          swipeable deck with Apply and LaTeX buttons.</p></div>
+      <div class="card"><span class="k">Privacy</span><h3>Runs on your machine</h3>
+        <p>Ollama for inference, SQLite for accounts, profiles and mail cache, scrypt password hashing. The only network
+          calls are the boards, Gmail and GitHub APIs.</p></div>
+    </div>
+  </section>
+
+  <section id="how">
+    <h2>How a hunt runs</h2>
+    <p class="sub">One message goes in; the agent decides whether to scrape, read mail, or both — and stops when it has
+      something it can defend.</p>
+    <div class="steps">
+      <div class="step"><b>Query built from your profile</b><span>Skills, target roles, cities and work modes become the
+        board query — not a free-text guess.</span></div>
+      <div class="step"><b>Boards swept in parallel</b><span>Each source reports a count or a blocked reason under one
+        deadline, so a slow board can't stall the run.</span></div>
+      <div class="step"><b>Blocked? Read the alerts</b><span>Gmail job-alert mail answers from the local cache, ranked
+        with sender diversity.</span></div>
+      <div class="step"><b>Deck, resume, score</b><span>Cards with Apply links; one click builds the LaTeX resume and its
+        ATS breakdown.</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="split">
+      <figure class="shot">
+        <img src="assets/demo-resume.jpg" width="1360" height="850" alt="The resume modal: HTML preview of a tailored resume next to a 100-point ATS breakdown">
+        <figcaption><span>Tailored resume + ATS breakdown, generated per posting.</span><span>Sample data</span></figcaption>
+      </figure>
+      <div>
+        <h2>A resume per posting</h2>
+        <p class="sub">The generator reads the posting, ranks your bullets, and rebuilds the document. The ATS panel
+          breaks the score down by component and names the keywords you are missing — here, four of eight.</p>
+        <ul class="plain">
+          <li><b>Reorder, don't fabricate.</b> Only text from your uploaded CV survives into the .tex.</li>
+          <li><b>GitHub projects included when they help.</b> Public repos are ranked against the posting before merging.</li>
+          <li><b>Scanned CVs still work.</b> A CPU OCR tier recovers text-only images before anything else runs.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="limits">
+    <h2>Honest limits</h2>
+    <p class="sub">The interesting part of a scraping tool is what it does when the scraping fails.</p>
+    <ul class="plain limits">
+      <li><b>The big boards fight back.</b> In the captured run behind this demo, Indeed, Naukri, Glassdoor and Foundit
+        were walled; five other sources answered. The UI says so per board instead of hiding it.</li>
+      <li><b>Page one only.</b> Scrapers do not paginate yet, so a narrow query can run out of new listings.</li>
+      <li><b>Gmail search is term matching.</b> Fast and private, but not semantic — no embeddings yet.</li>
+      <li><b>The demo is a captured run.</b> This site is static; the real app needs the FastAPI backend, Ollama and a
+        browser for the walled boards.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <span>MIT licensed · <a href="https://github.com/nitheeshkumarth-byte/JobScope" target="_blank" rel="noopener">github.com/nitheeshkumarth-byte/JobScope</a></span>
+    <span><a href="demo/">Live demo</a> · <a href="assets/jobscope-runtime-architecture.html">Architecture document</a></span>
+  </footer>
+</div>
+</body>
+</html>

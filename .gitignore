@@ -28,6 +28,15 @@ node_modules/
 indeed.zip
 crawl4ai-main/
 
+# Launcher build output. The .exe is produced locally with
+# `pyinstaller --onefile --noconsole --name JobScope launcher.py`; binaries and
+# PyInstaller's work directories do not belong in git.
+JobScope.exe
+build/
+dist/
+*.spec
+logs/launcher.log
+
 # Unrelated third-party checkout kept in the workspace for reference. Not used
 # by the app - cv_ocr.py runs RapidOCR/ONNX, not this. It is ~90MB, mostly a
 # demo GIF and a dev build of sglang, and its model needs an NVIDIA GPU this

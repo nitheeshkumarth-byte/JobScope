@@ -215,6 +215,15 @@ uvicorn dashboard:app --reload --port 8000   # dev auto-reload
 
 The first account you register becomes the **owner**. If SMTP is not configured, the API responds with a `dev_link` so you can verify locally.
 
+### Double-click launcher (Windows)
+
+```bash
+pip install pyinstaller
+pyinstaller --onefile --noconsole --name JobScope launcher.py
+```
+
+`JobScope.exe` starts `dashboard.py` through `.venv\Scripts\pythonw.exe`, waits for it to answer, then opens the browser. It needs the virtualenv and `dashboard.py` beside it; server output goes to `logs/launcher.log`, and `HOST` is forced to `127.0.0.1` so a double-click never exposes the app to the LAN.
+
 ### Run the Chainlit chat UI
 
 ```bash
