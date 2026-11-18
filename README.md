@@ -251,6 +251,9 @@ jobscope/
 ├── agent.py                          # LangGraph agent core: AgentConfig, MCP client, graph, router
 ├── dashboard.py                      # FastAPI backend: auth, SSE runs, resume API, JSONL logging
 ├── ui.py                             # Chainlit chat frontend (alternative to the dashboard)
+├── launcher.py                       # double-click launcher (starts pythonw dashboard.py, opens the browser)
+├── JobScope.exe                      # built launcher (git-ignored; build it as shown in Quick Start)
+├── install-windows.ps1               # Windows setup helper
 │
 ├── filters.py                        # SINGLE SOURCE OF TRUTH for listing rules (seniority,
 │                                     #   experience, India-tied, work modes, regions, countries,
@@ -280,10 +283,13 @@ jobscope/
 │
 ├── step1_basics.py … step7_scraper_with_fallback.py   # seven-step tutorial progression
 │
-├── tests/                            # pytest suite (22 modules)
+├── tests/                            # pytest suite (25 modules)
 ├── static/                           # dashboard SPA: index.html (CSS+JS single file), SVG assets
-├── docs/                             # LaTeX guides (JobScope_Guide.tex, Documentation, Research)
-├── logs/                             # JSONL run/error logs (auto-created)
+├── site/                             # static showcase + scrubbed demo (Cloudflare Pages)
+├── docs/                             # LaTeX guides, recruiter patch, captured HTML
+│   ├── captures/                     # captured recruiter portal HTML
+│   └── scratch/                      # scratch snippets, not used by the app
+├── logs/                             # JSONL run/error logs + launcher.log (auto-created)
 │
 ├── users.db                          # SQLite: accounts, sessions, profiles, RAG docs, JD cache
 ├── gmail_cache.db                    # SQLite: synced job-alert messages & extracted listings
@@ -786,4 +792,4 @@ MIT License — see `LICENSE` for details.
 
 ---
 
-*Related documents:* [`docs/JobScope_Documentation.tex`](docs/JobScope_Documentation.tex) (full technical reference, LaTeX) · [`docs/JobScope_Research.tex`](docs/JobScope_Research.tex) (research paper, LaTeX) · [`docs/JobScope_Guide.tex`](docs/JobScope_Guide.tex) (condensed guide, LaTeX)
+*Related documents:* [`docs/JobScope_Documentation.tex`](docs/JobScope_Documentation.tex) (full technical reference, LaTeX) · [`docs/JobScope_Research.tex`](docs/JobScope_Research.tex) (research paper, LaTeX) · [`docs/JobScope_Update_2026-11.tex`](docs/JobScope_Update_2026-11.tex) (latest update, LaTeX)
