@@ -28,10 +28,16 @@ def isolate_personal_data(tmp_path_factory, monkeypatch):
     import auth
     import dashboard
 
+    monkeypatch.setenv("JOBSCOPE_LOCAL_MODE", "1")
+    monkeypatch.setenv("HOST", "127.0.0.1")
+    monkeypatch.delenv("JOBSCOPE_GMAIL_USER", raising=False)
+    monkeypatch.delenv("APP_URL", raising=False)
+    monkeypatch.delenv("SMTP_HOST", raising=False)
     scratch = tmp_path_factory.mktemp("personal-data")
     monkeypatch.setattr(auth, "DB_FILE", str(scratch / "users.db"))
     monkeypatch.setattr(dashboard, "PROFILES_FILE",
                         str(scratch / "profiles.json"))
+    monkeypatch.setattr(dashboard, "LOG_DIR", str(scratch / "logs"))
     monkeypatch.setattr(dashboard.auth, "DB_FILE", str(scratch / "users.db"))
     auth.init_db()
     yield

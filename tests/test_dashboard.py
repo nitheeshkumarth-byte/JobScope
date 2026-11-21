@@ -2223,8 +2223,8 @@ def test_every_description_origin_is_named_in_the_footer():
 
 def _gmail_ctx(days_back=60):
     from types import SimpleNamespace
-    return SimpleNamespace(bundle=SimpleNamespace(
-        cfg=SimpleNamespace(days_back=days_back)))
+    cfg = SimpleNamespace(days_back=days_back, gmail_enabled=True)
+    return SimpleNamespace(uid=0, user={"role": "candidate"}, cfg=cfg, bundle=SimpleNamespace(cfg=cfg))
 
 
 def test_gmail_sync_endpoint_summarizes_what_landed(monkeypatch):
@@ -2239,7 +2239,7 @@ def test_gmail_sync_endpoint_summarizes_what_landed(monkeypatch):
         seen["account"] = account
         return "mailbox 1: 3 msgs, 9 listings"
 
-    monkeypatch.setattr(mcp_server_gmail, "sync_gmail_cache", fake_sync)
+    monkeypatch.setattr(mcp_server_gmail, "sync_job_alerts", fake_sync)
     monkeypatch.setattr(gmail_index, "count_listings", lambda *a, **k: 9)
     monkeypatch.setattr(gmail_index, "sender_breakdown", lambda *a, **k: [])
 
@@ -2255,7 +2255,7 @@ def test_gmail_sync_endpoint_summarizes_what_landed(monkeypatch):
 def test_gmail_sync_endpoint_honours_an_explicit_window(monkeypatch):
     import gmail_index
     import mcp_server_gmail
-    monkeypatch.setattr(mcp_server_gmail, "sync_gmail_cache",
+    monkeypatch.setattr(mcp_server_gmail, "sync_job_alerts",
                         lambda **kw: "Cached 1 message, 2 listings.")
     monkeypatch.setattr(gmail_index, "count_listings", lambda *a, **k: 2)
     monkeypatch.setattr(gmail_index, "sender_breakdown", lambda *a, **k: [])
@@ -2272,9 +2272,9 @@ def test_gmail_sync_failure_is_surfaced_not_swallowed(monkeypatch):
     from fastapi import HTTPException
 
     def boom(**kw):
-        raise RuntimeError("no token")
+        raise mcp_server_gmail.GmailSyncError("no token")
 
-    monkeypatch.setattr(mcp_server_gmail, "sync_gmail_cache", boom)
+    monkeypatch.setattr(mcp_server_gmail, "sync_job_alerts", boom)
     monkeypatch.setattr(gmail_index, "count_listings", lambda *a, **k: 0)
     monkeypatch.setattr(gmail_index, "sender_breakdown", lambda *a, **k: [])
 

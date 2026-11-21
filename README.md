@@ -121,33 +121,36 @@
 
 ### Prerequisites
 
-- **Python 3.11+** (developed and tested on 3.14)
+- **Python 3.14** (the version used by the Windows installer and CI)
 - **[Ollama](https://ollama.com/download)** running locally with a model pulled (default `llama3.1`)
-- A display is only needed for optional manual bot-wall solving and OCR of scanned PDFs
+- A display is only needed for optional manual board verification
 - Optional: **Gmail OAuth credentials** (client secret) for the job-alert fallback
 - Optional: **GitHub PAT** (public reads work without it; token raises the 60 req/h rate limit)
 
 ### Installation
 
-```bash
-git clone https://github.com/yourusername/jobscope.git  # replace with your repo URL
-cd jobscope
+From a checkout of JobScope, run this in PowerShell on Windows:
 
-python -m venv .venv
-# Windows PowerShell
-.\.venv\Scripts\Activate.ps1
-# bash / zsh
-source .venv/bin/activate
-
-python -m pip install -r requirements.txt
-pip install -r requirements-dev.txt   # pytest + pyflakes, for running tests
-
-# Scrapling is vendored; install its Chromium for browser-mode scraping
-python -m playwright install chromium
-
-cp .env.example .env      # then edit — see Configuration Reference below
-ollama pull llama3.1
+```powershell
+.\install-windows.ps1
 ```
+
+Add `-InstallBrowser` if you want Chromium for browser-based job boards. The script creates a virtual environment and copies `.env.example` only when `.env` is absent.
+
+If an older virtual environment still contains Chainlit or reports dependency conflicts, rename `.venv` before running the installer so it can build a fresh environment.
+
+On Linux or macOS:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp -n .env.example .env
+# Optional browser support
+python -m playwright install chromium
+```
+
+Start Ollama and run `ollama pull llama3.1` to use model features. For development, install `requirements-dev.txt` in the same environment.
 
 ### Gmail OAuth setup (fallback + alert sync)
 
@@ -156,77 +159,65 @@ ollama pull llama3.1
 python gmail_login.py
 ```
 
-`gmail_login.py` opens a browser consent flow against `client_secret.json` (or the file named by `GMAIL_OAUTH_CREDENTIALS`) with the `gmail.readonly` scope and stores a refreshable token in `gmail_oauth_token.json`. The MCP Gmail server reuses and auto-refreshes this token.
+`gmail_login.py` opens a browser consent flow against `client_secret.json` (or the file named by `GMAIL_OAUTH_CREDENTIALS`) with the `gmail.readonly` scope. It writes the token to `GMAIL_OAUTH_TOKEN_FILE`, which defaults to `gmail_oauth_token.json`. JobScope refreshes this token as needed and can show cached alerts when a sync fails.
 
-### Environment variables (`.env`)
+### Google sign-in and Gmail for multiple users
 
-```bash
-# ── LLM ─────────────────────────────────────────────
-OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.1
-OLLAMA_NUM_CTX=8192
+1. In [Google Auth Platform](https://console.cloud.google.com/auth/overview), create a **Web application** OAuth client. For a student pilot with personal Google accounts, use an **External** audience with publishing status **Testing** and add the accounts that will connect Gmail or Forms. Personal-mode projects require a separate project for multiple users. Enable the Gmail and Forms APIs for the project you use for those integrations.
+2. Register the exact dashboard callback. For example, use `http://127.0.0.1:8001/api/google/callback` when the portal is opened at `http://127.0.0.1:8001`. Use the corresponding HTTPS callback and set `APP_URL` for a hosted instance.
+3. Download the Web client JSON to `client_secret.web.json` and set `GOOGLE_WEB_OAUTH_CREDENTIALS=client_secret.web.json` in `.env`. Keep this file private. Restart the dashboard after changing configuration.
+4. Set `JOBSCOPE_GOOGLE_TOKEN_KEY` to a persistent Fernet key before enabling per-user Gmail. Generate it with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and keep it private. Changing the key requires users to reconnect Gmail.
 
-# ── Agent behaviour ─────────────────────────────────
-AGENT_SUMMARY_MODE=template        # template (instant, in-code) | llm
-RESUME_EXTRACT_MODE=strict         # strict | auto | fast | llm
-JOB_DAYS_BACK=60
-JOB_MAX_RESULTS=10
+Existing candidates and invited recruiters sign in as usual and select **Link Google sign-in** once. A first Google signup creates a candidate account. Recruiter and company access still comes from JobScope. Administrators continue to use their existing verified-account login.
 
-# ── GitHub (optional) ───────────────────────────────
-GITHUB_TOKEN=ghp_xxxxxxxxxxxx
-GITHUB_USERNAME=yourhandle
+Candidates select **Connect Gmail** separately and choose which inbox to authorize. JobScope reads job-alert senders, stores each connection's encrypted refresh token, and saves parsed listings only for that connection. Connecting or switching accounts starts a fresh cache without copying the shared local cache. **Disconnect Gmail** removes the saved token and listings from JobScope. Revoke the grant from the Google account to remove the application's authorization there. The `gmail_login.py` desktop connection remains available as a local option. The job-search agent's Gmail fallback uses that local connection only when the current user is authorized for it and has no per-user connection.
 
-# ── Gmail OAuth files ───────────────────────────────
-GMAIL_OAUTH_CREDENTIALS=client_secret.json
-GMAIL_OAUTH_TOKEN_FILE=gmail_oauth_token.json
+Recruiters connect **Google Forms** in their own portal. The Forms callback remains `/api/recruiter/integrations/google-forms/callback`. To use a Web client for Forms, register that callback for the same dashboard origin and configure `GOOGLE_OAUTH_CREDENTIALS` and, if needed, `GOOGLE_FORMS_REDIRECT_URI`. Recruiters should reconnect Forms after changing its OAuth client because their existing refresh tokens belong to the original client.
 
-# ── Google Forms applications intake ────────────────
-# Uses the same installed-app client_secret.json (GOOGLE_OAUTH_CREDENTIALS).
-# Optional: when unset the callback is derived from the portal's own host/port.
-# If set, it must be listed under "Authorised redirect URIs" for that OAuth client.
-GOOGLE_FORMS_REDIRECT_URI=http://localhost:8000/api/recruiter/integrations/google-forms/callback
+Google's External testing grants for Gmail and Forms expire after seven days. Review [Google's Gmail scope requirements](https://developers.google.com/workspace/gmail/api/auth/scopes) before hosting Gmail imports publicly.
 
-# ── SMTP (account verification / password reset) ────
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USER=you@example.com
-SMTP_PASSWORD=xxxxxxxxxxxxxxxx
-SMTP_FROM=no-reply@example.com
-SMTP_TLS=1
-AUTH_DEV_LINKS=0                 # 1 = show verify/reset links in API responses (dev only)
+### Run the dashboard
 
-# ── Server ──────────────────────────────────────────
-HOST=127.0.0.1
-APP_URL=http://localhost:8000
-
-# ── Optional integrations ───────────────────────────
-SCREEN_TOKEN=                    # enables POST /api/screen (M2M ATS screening)
-JOBSCOPE_MANUAL_WALL=auto        # auto | on | off — human-in-the-loop CAPTCHA
-GMAIL_CACHE_DB=gmail_cache.db    # override cache location
-```
-
-### Run the dashboard (recommended)
+On Windows, use `.\.venv\Scripts\python.exe dashboard.py`. On Linux or macOS, run these commands in the activated environment:
 
 ```bash
 python dashboard.py                 # http://127.0.0.1:8000
 python dashboard.py --port 9000     # alternate port
-uvicorn dashboard:app --reload --port 8000   # dev auto-reload
 ```
 
-The first account you register becomes the **owner**. If SMTP is not configured, the API responds with a `dev_link` so you can verify locally.
+In the recruiter portal, changing a candidate application to **Shortlisted**, **Offer released**, or **Rejected** sends a candidate email through the configured SMTP server. A rejection requires a candidate-facing reason, which also appears in **My applications**. If SMTP delivery fails, the application status is saved and the recruiter can select **Retry email**.
+
+The settings in [`.env.example`](.env.example) enable private use on this computer. If you already have an `.env`, set `HOST=127.0.0.1` and add `JOBSCOPE_LOCAL_MODE=1` for local signup and the local Gmail connection. To use Gmail with a candidate account, set `JOBSCOPE_GMAIL_USER` to that account's verified JobScope email. The first signup through a loopback connection creates the owner. Sign in at `/admin` with that account's email and password.
+
+To create the first owner from the terminal, run `python dashboard.py --create-owner` using the project's virtual environment. It prompts for the password and imports any legacy profiles. Existing owners can continue using their own accounts.
+
+The admin portal accepts verified owner and super-admin accounts. A new super admin, a newly promoted administrator, or an account with a changed email must verify its address. Sign in from the main dashboard and request a verification email if needed.
+
+### Publish the free portfolio demo
+
+1. Review the sample files under `site/` for personal information.
+2. In GitHub's repository settings, open **Pages** and set **Source** to **GitHub Actions**.
+3. Push the changes to `main`, then run **Deploy JobScope demo** from the **Actions** tab. The run displays the published URL. Later changes under `site/` deploy automatically.
+
+The workflow uploads `site/`, which replays sample responses in the browser. Keep the full dashboard and any real CVs, SQLite databases, and Gmail credentials on your machine. The test workflow runs on pull requests and on pushes to `main`.
+
+For a separate FastAPI pilot, set `JOBSCOPE_LOCAL_MODE=0`, configure `APP_URL` to your HTTPS origin, and create the owner at the terminal before inviting testers. Public signup requires SMTP and successful email verification. Without SMTP, the owner can create verified standard accounts from `/admin`. Gmail and manual browser verification are local integrations. The built-in rate limits are per process, so use a single worker for a small pilot. Use synthetic data on hosts with ephemeral storage.
 
 ### Double-click launcher (Windows)
 
 ```bash
-pip install pyinstaller
-pyinstaller --onefile --noconsole --name JobScope launcher.py
+python -m pip install pyinstaller
+python -m PyInstaller --onefile --noconsole --name JobScope launcher.py
 ```
 
-`JobScope.exe` starts `dashboard.py` through `.venv\Scripts\pythonw.exe`, waits for it to answer, then opens the browser. It needs the virtualenv and `dashboard.py` beside it; server output goes to `logs/launcher.log`, and `HOST` is forced to `127.0.0.1` so a double-click never exposes the app to the LAN.
+Copy `dist/JobScope.exe` to the project directory. `JobScope.exe` starts `dashboard.py` through `.venv\Scripts\pythonw.exe`, waits for it to answer, then opens the browser. It needs the virtualenv and `dashboard.py` beside it; server output goes to `logs/launcher.log`, and `HOST` is forced to `127.0.0.1` so a double-click never exposes the app to the LAN.
 
 ### Run the Chainlit chat UI
 
+Activate a separate Python 3.13 virtual environment for this optional interface.
+
 ```bash
+python -m pip install -r requirements-chainlit.txt
 chainlit run ui.py
 ```
 
@@ -476,7 +467,7 @@ All routes require the `js_session` cookie unless marked *public*. Responses car
 | Method & path | Purpose |
 |---|---|
 | `GET /api/auth/state` | Bootstrap: first-run flag, auth/verify state, SMTP configured?, idle countdown |
-| `POST /api/auth/register` | `{email,password}` — first account becomes owner + legacy-profile migration; issues session; mails verify link (or returns `dev_link`) |
+| `POST /api/auth/register` | `{email,password}` — issues a session, sends verification when SMTP is configured, and offers owner bootstrap on loopback in local mode |
 | `POST /api/auth/resend` | Re-issue verify link (session required; no account enumeration) |
 | `GET /api/auth/verify?token=` | Consume single-use verify token → mark verified → welcome mail |
 | `POST /api/auth/login` | `{email,password}` — identical error for unknown vs wrong password |
@@ -602,7 +593,7 @@ Each server declares tools with `@mcp.tool()` and runs `mcp.run(transport="stdio
 - **Sessions:** 32-byte `token_urlsafe` tokens; only the SHA-256 digest is stored. Cookie `js_session`. **Idle timeout 25 min** (touch on each authed request, extend +5 min) and **absolute 30-day expiry**.
 - **Email tokens:** single-use verify (24 h) and reset (2 h) tokens, digest-only storage; previous unused tokens of the same purpose are retired on re-issue.
 - **Profiles:** per-user JSON documents (resume text, skills, roles, cities, work modes, countries, GitHub link) keyed `(user_id, profile_id)`; the *active* profile lives on the session row, so different browsers can sit on different profiles.
-- **First-run bootstrap:** `count_users()==0` → the SPA shows sign-up; the first registered account is `is_owner=1` and inherits any legacy `profiles.json` data.
+- **First-run bootstrap:** Use `python dashboard.py --create-owner`, or register on loopback with `JOBSCOPE_LOCAL_MODE=1`. The owner inherits legacy `profiles.json` data and uses a verified account session in `/admin`.
 
 ---
 
@@ -622,7 +613,8 @@ Each server declares tools with `@mcp.tool()` and runs `mcp.run(transport="stdio
 | `GMAIL_OAUTH_CREDENTIALS` / `GMAIL_OAUTH_TOKEN_FILE` | OAuth client secret / token paths | `client_secret.json` / `gmail_oauth_token.json` |
 | `GMAIL_CACHE_DB` | Mail cache location | `gmail_cache.db` |
 | `SMTP_HOST/PORT/USER/PASSWORD/FROM/TLS/TIMEOUT` | Outbound mail (verify/reset/welcome) | port 587, TLS on, 15 s |
-| `AUTH_DEV_LINKS` | Return dev links in API responses | off |
+| `JOBSCOPE_LOCAL_MODE` | Allow local bootstrap and private integrations on loopback | off unless enabled in `.env` |
+| `AUTH_DEV_LINKS` | Return unsent verification/reset links in explicit local mode | off |
 | `HOST` / `APP_URL` | Bind address / public base URL | `127.0.0.1` / `http://localhost:8000` |
 | `SCREEN_TOKEN` | Enables `POST /api/screen` | disabled |
 | `JOBSCOPE_MANUAL_WALL` | `auto` (on iff display) \| `on` \| `off` | `auto` |
@@ -689,7 +681,7 @@ pytest tests/test_scraper.py -v
 pytest tests/test_agent.py -v
 ```
 
-- `pytest.ini` pins `testpaths = tests` so a bare run never recurses into the vendored `Scrapling-main/` suite, and registers the `slow` marker.
+- `pytest.ini` pins `testpaths = tests` so a bare run never recurses into an optional local `Scrapling-main/` checkout, and registers the `slow` marker.
 - `conftest.py` has an autouse fixture that redirects `users.db` and `profiles.json` into a temp directory — **no test ever touches real account data**.
 - 22 test modules cover: agent routing, auth, auth routes, boards, dashboard, CV OCR, filters, GitHub + ATS, Gmail index, job descriptions, mailer, manual verify, n8n workflow, RAG routes/resume/store, resume builder, role suggestion, scraper, screen route, session identity.
 

@@ -1,0 +1,3 @@
+# Optional chat interface. Install in a Python 3.13 virtual environment.
+-r requirements.txt
+chainlit==2.12.0

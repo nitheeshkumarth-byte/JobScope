@@ -183,3 +183,24 @@ def send_welcome(to: str, name: str = "") -> MailResult:
                 "Hi%s,\n\nYour email is confirmed and your JobScope account is "
                 "ready to use.\n\nUpload a CV to get your first set of "
                 "suggested roles and skills.\n" % who)
+
+
+def send_application_status(to: str, name: str, job_title: str, company: str,
+                            status: str, reason: str = "") -> MailResult:
+    role = " ".join(job_title.split())
+    position = f"{role} at {company}" if company else role
+    if status == "shortlisted":
+        label = "Shortlisted"
+        message = f"You have been shortlisted for the {position} role.\n\nCurrent status: {label}."
+    elif status == "offer_released":
+        label = "Offer released"
+        message = (f"Congratulations! You've been selected for the {position} role. "
+                   "The hiring team will share further details, and your offer letter will be released soon.")
+    elif status == "rejected":
+        label = "Application update"
+        message = (f"We've decided not to move forward with your application for the {position} role.\n\n"
+                   f"Reason: {reason}\n\n"
+                   "Thank you for applying. We hope you'll consider future opportunities with us.")
+    else:
+        raise ValueError("Unknown application email status")
+    return send(to, f"{label} – {role}", f"Hello {name},\n\n{message}\n\n{company or 'The hiring team'}")

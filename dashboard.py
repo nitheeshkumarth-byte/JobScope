@@ -43,6 +43,8 @@ import uuid
 
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from time import monotonic
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -55,7 +57,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from agent import (AgentConfig, JOBS_MARKER, _text_content, create_agent,
-                   create_runtime, load_config, system_message)
+                   create_runtime, load_config, ollama_url, system_message)
 import auth
 import ats_score
 import cv_ocr
@@ -1006,7 +1008,7 @@ def _drop_bundle(uid: int, profile_id: str) -> None:
     _bundle_cache().pop((uid, profile_id), None)
 
 
-async def _bundle_for(uid: int, profile_id: str, snap: dict):
+async def _bundle_for(uid: int, profile_id: str, snap: dict, *, gmail_enabled: bool = False):
     """The agent bundle for one (account, profile), built on demand and cached.
 
     The MCP runtime is shared - discovering the tools costs ~3.4s and the tool
@@ -1017,13 +1019,13 @@ async def _bundle_for(uid: int, profile_id: str, snap: dict):
     key = (uid, profile_id)
     cache = _bundle_cache()
     hit = cache.get(key)
-    if hit is not None:
+    if hit is not None and hit.cfg.gmail_enabled == gmail_enabled:
         return hit
     cfg = _cfg_from_profile(load_config(), snap)
     # Scope the board scraper's "already shown" memory to this account. The
     # bundle is cached per (account, profile), so this is set once and the
     # memory it keys cannot drift between runs.
-    cfg = replace(cfg, seen_scope=f"u{uid}")
+    cfg = replace(cfg, seen_scope=f"u{uid}", gmail_enabled=gmail_enabled)
     bundle = await create_agent(cfg, runtime=app.state.runtime)
     cache[key] = bundle
     return bundle
@@ -1042,14 +1044,20 @@ async def build_ctx(request: Request) -> Ctx:
     if not user:
         raise HTTPException(status_code=401, detail="sign in to continue")
     if not user.get("verified_at"):
-        raise HTTPException(status_code=403, detail="confirm your email address")
+        raise HTTPException(status_code=403, detail="confirm your email address",
+                            headers={"X-JobScope-Auth": "unverified"})
     pid = auth.session_profile(token) or "default"
     snap = _profile_for(user["id"], pid)
     if snap.get("id") and snap["id"] != pid:
         # The session pointed at a profile that no longer exists; realign it.
         pid = snap["id"]
         auth.set_session_profile(token, pid)
-    bundle = await _bundle_for(user["id"], pid, snap)
+    gmail_user = auth.normalize_email(os.environ.get("JOBSCOPE_GMAIL_USER", ""))
+    gmail_enabled = _local_request(request) and (user.get("is_owner")
+                                                or user["email"] == gmail_user)
+    if gmail_enabled and google_accounts.gmail_connection(user["id"]):
+        gmail_enabled = False
+    bundle = await _bundle_for(user["id"], pid, snap, gmail_enabled=bool(gmail_enabled))
     return Ctx(user, token, pid, snap, bundle)
 
 
@@ -1455,7 +1463,7 @@ async def extract_skills(resume_text: str, model: str, num_ctx: int = 8192) -> l
     try:
         # Use the SAME num_ctx as the agent so Ollama reuses the resident
         # model slot instead of reloading a second context size.
-        llm = ChatOllama(model=model, num_ctx=num_ctx)
+        llm = ChatOllama(model=model, num_ctx=num_ctx, base_url=ollama_url())
         resp = await asyncio.wait_for(
             llm.ainvoke([
                 SystemMessage(content=SKILL_SYS_PROMPT),
@@ -1495,12 +1503,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="JobScope", lifespan=lifespan)
-# Registered before every route below so the router's recruiter/candidate
-# endpoints win over the older same-path definitions further down.
 import candidates_api
+import google_accounts
 import google_forms_api
 import recruiter_api
 app.include_router(candidates_api.router)
+app.include_router(google_accounts.router)
 app.include_router(google_forms_api.router)
 app.include_router(recruiter_api.router)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -1578,16 +1586,70 @@ class ResetRequest(BaseModel):
 
 
 MIN_PASSWORD = 8
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _local_request(request: Request) -> bool:
+    return (
+        os.environ.get("JOBSCOPE_LOCAL_MODE") == "1"
+        and os.environ.get("HOST", "127.0.0.1") in LOOPBACK_HOSTS
+        and request.url.hostname in LOOPBACK_HOSTS
+        and request.client is not None
+        and request.client.host in LOOPBACK_HOSTS
+    )
+
+
+REQUEST_LIMITS = {
+    "/api/auth/login": ("/api/auth/login", 20),
+    "/api/admin/login": ("/api/auth/login", 20),
+    "/api/auth/register": ("/api/auth/register", 10),
+    "/api/auth/resend": ("/api/auth/resend", 5),
+    "/api/auth/forgot": ("/api/auth/forgot", 5),
+    "/api/auth/reset": ("/api/auth/reset", 10),
+    "/api/google/start": ("/api/google/start", 12),
+    "/api/gmail/sync": ("/api/gmail/sync", 6),
+    "/api/run": ("/api/run", 6),
+    "/api/resume": ("/api/resume", 8),
+    "/api/rag/docs": ("/api/resume", 8),
+    "/api/screen": ("/api/resume", 8),
+}
+
+
+@app.middleware("http")
+async def _limit_shared_requests(request: Request, call_next):
+    path = request.url.path.rstrip("/")
+    limit = REQUEST_LIMITS.get(path)
+    if request.method != "POST" or (_local_request(request) and path != "/api/admin/login"):
+        return await call_next(request)
+    if re.fullmatch(r"/api/candidates/[^/]+/resume", path):
+        limit = REQUEST_LIMITS["/api/resume"]
+    if limit:
+        group, maximum = limit
+        now = int(monotonic())
+        minute = now // 60
+        if getattr(request.app.state, "request_limit_minute", None) != minute:
+            request.app.state.request_limit_minute = minute
+            request.app.state.request_counts = {}
+        counts = request.app.state.request_counts
+        key = (group, request.client.host if request.client else "")
+        attempts = counts.get(key, 0)
+        if attempts >= maximum or (key not in counts and len(counts) >= 4096):
+            return JSONResponse({"ok": False, "error": "Too many requests. Try again shortly."},
+                                status_code=429, headers={"Retry-After": str(60 - now % 60)})
+        counts[key] = attempts + 1
+    return await call_next(request)
 
 
 def _base_url(request: Request) -> str:
-    """Absolute URL for the links we email out.
-
-    Prefers an explicit APP_URL (set it when the app is behind a proxy or a
-    tunnel), otherwise reconstructs from the request.
-    """
-    return (os.environ.get("APP_URL", "").strip()
-            or str(request.base_url)).rstrip("/")
+    """Use a configured HTTPS origin for shared account emails."""
+    configured = os.environ.get("APP_URL", "").strip().rstrip("/")
+    if _local_request(request):
+        return configured or str(request.base_url).rstrip("/")
+    url = urlsplit(configured)
+    if (url.scheme == "https" and url.hostname and not url.username
+            and not url.password and not url.query and not url.fragment):
+        return configured
+    return ""
 
 
 def _set_session_cookie(response, token: str, expires: str,
@@ -1622,7 +1684,9 @@ async def _auth_state_payload(request: Request) -> dict:
     token = request.cookies.get(auth.SESSION_COOKIE) or ""
     user = auth.session_user(token)
     return {
-        "needs_bootstrap": auth.count_users() == 0,
+        "needs_bootstrap": _local_request(request) and auth.count_users() == 0,
+        "google_signin": google_accounts.enabled(),
+        "local_recruiter_signup": _local_request(request),
         "authenticated": bool(user),
         "email": (user or {}).get("email", ""),
         "verified": bool(user and user.get("verified_at")),
@@ -1646,21 +1710,27 @@ async def auth_state(request: Request):
 
 @app.post("/api/auth/register")
 async def register(req: RegisterRequest, request: Request):
-    """Create an account.
-
-    The very first account also becomes the owner and adopts the CV sessions
-    from the old profiles.json, so an existing install keeps its history. When
-    SMTP is configured a confirmation link is emailed and the account stays
-    unusable until the link is followed; without SMTP the link is returned in
-    the response instead, so a fresh checkout can still finish signing up.
-    """
+    """Register an account. Only a loopback installation can bootstrap by signup."""
     weak = _check_password(req.password)
     if weak:
         return JSONResponse({"ok": False, "error": weak}, status_code=400)
+    local = _local_request(request)
+    smtp = mailer.configured()
+    base_url = _base_url(request)
+    if not local and (not smtp or not base_url):
+        return JSONResponse(
+            {"ok": False, "error": "Registration requires email. Ask the owner to create your account."},
+            status_code=503,
+        )
     role = req.role if req.role in ("candidate", "recruiter") else "candidate"
-    first = auth.count_users() == 0
+    if role == "recruiter" and not local:
+        return JSONResponse({"ok": False, "error": "Ask an administrator to create your recruiter account."},
+                            status_code=403)
+    first = local and auth.count_users() == 0
+    verified = local and not smtp
     try:
-        user = auth.create_user(req.email, req.password, owner=first, role=role)
+        user = auth.create_user(req.email, req.password, owner=first, role=role,
+                                verified=verified)
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
@@ -1669,40 +1739,30 @@ async def register(req: RegisterRequest, request: Request):
         adopted = _migrate_legacy_profiles(user["id"])
         _log({"event": "owner_created", "email": user["email"],
               "profiles_adopted": adopted})
-    # An unverified account can sign in far enough to be verified, but nothing
-    # else - it has no CV and no settings.
-    token = auth.issue_token(user["id"], "verify", auth.VERIFY_TOKEN_HOURS)
-    # The link points at the app, not the API: following it should land the
-    # person in the UI, not on a page of raw JSON.
-    link = f"{_base_url(request)}/?verify={token}"
-    if mailer.configured():
-        result = mailer.send_verification(user["email"], link)
-    else:
-        result = mailer.MailResult(False, "SMTP is not configured")
+    detail = "Account created in local mode."
+    dev_link = ""
+    if not verified:
+        token = auth.issue_token(user["id"], "verify", auth.VERIFY_TOKEN_HOURS, email=user["email"])
+        if not token:
+            raise HTTPException(status_code=409, detail="Account email changed. Sign in to continue.")
+        link = f"{base_url}/?verify={token}"
+        result = await run_in_threadpool(mailer.send_verification, user["email"], link)
+        detail = ("Verification email sent." if result.ok else
+                  "Verification email could not be sent. Try resending it.")
+        if not result.ok and local and mailer.dev_links_allowed() and not _has_admin_role(user):
+            dev_link = link
 
-    if not result.ok:
-        # No mail sent, so nothing can be verified by email: let them straight
-        # in and say why. The alternative is an account nobody can ever use.
-        auth.mark_verified(user["id"])
-        if not result.dev_link:
-            result.dev_link = link
-
-    # A session is issued either way. With SMTP the account stays locked behind
-    # 403 until the link is followed, but a session is what lets the person ask
-    # for a fresh link; without SMTP it is simply a signed-in account.
-    # result.ok is exactly "a confirmation was actually sent", so the inverse
-    # tells us whether the address is already usable.
     session, expires = auth.create_session(user["id"])
     auth.set_session_profile(session, "default")
     response = JSONResponse({
         "ok": True,
-        "verified": not result.ok,
-        "needs_verification": bool(result.ok),
+        "verified": verified,
+        "needs_verification": not verified,
         "email": user["email"],
-        "detail": result.detail,
-        "dev_link": result.dev_link or "",
+        "detail": detail,
+        "dev_link": dev_link,
         "profiles_adopted": adopted,
-    }, status_code=202 if result.ok else 200)
+    }, status_code=200 if verified else 202)
     _set_session_cookie(response, session, expires, request)
     return response
 
@@ -1723,67 +1783,36 @@ async def resend(request: Request):
     if user.get("verified_at"):
         return {"ok": True, "already_verified": True}
 
-    fresh = auth.issue_token(user["id"], "verify", auth.VERIFY_TOKEN_HOURS)
-    link = f"{_base_url(request)}/?verify={fresh}"
+    base_url = _base_url(request)
+    if not base_url:
+        raise HTTPException(status_code=503, detail="Email verification is unavailable.")
+    fresh = auth.issue_token(user["id"], "verify", auth.VERIFY_TOKEN_HOURS, email=user["email"])
+    if not fresh:
+        raise HTTPException(status_code=409, detail="Account email changed. Sign in to continue.")
+    link = f"{base_url}/?verify={fresh}"
     if mailer.configured():
-        result = mailer.send_verification(user["email"], link)
+        result = await run_in_threadpool(mailer.send_verification, user["email"], link)
     else:
         result = mailer.MailResult(False, "SMTP is not configured")
-    if not result.ok and mailer.dev_links_allowed():
-        result.dev_link = link
     return JSONResponse({
-        "ok": result.ok, "sent": result.ok, "detail": result.detail,
-        "dev_link": result.dev_link or "",
+        "ok": result.ok, "sent": result.ok,
+        "detail": "Verification email sent." if result.ok else
+                  "Verification email could not be sent. Try again later.",
+        "dev_link": link if not result.ok and _local_request(request)
+                    and mailer.dev_links_allowed() and not _has_admin_role(user) else "",
     }, status_code=200 if result.ok else 503)
 
 
 @app.get("/api/auth/verify")
 async def verify(token: str = ""):
-    """Confirm an address from an emailed link. Idempotent enough to be
-    clicked twice: the second attempt just reports the outcome."""
-    user = auth.consume_token(token, "verify")
+    """Confirm the address using a single-use link."""
+    user = auth.verify_email(token)
     if not user:
         return JSONResponse({"ok": False,
                              "error": "that link is invalid or has expired"},
                             status_code=400)
-    auth.mark_verified(user["id"])
-    auth.destroy_user_sessions(user["id"])   # old sessions predate verification
-    mailer.send_welcome(user["email"])
+    await run_in_threadpool(mailer.send_welcome, user["email"])
     return {"ok": True, "email": user["email"], "message": "Email confirmed."}
-
-
-@app.post("/api/auth/register")
-async def register(req: RegisterRequest, request: Request):
-    weak = _check_password(req.password)
-    if weak:
-        return JSONResponse({"ok": False, "error": weak}, status_code=400)
-    role = req.role if req.role in ("candidate", "recruiter") else "candidate"
-    first = auth.count_users() == 0
-    try:
-        user = auth.create_user(req.email, req.password, owner=first, role=role)
-    except ValueError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-    token, expires = auth.create_session(user["id"])
-    auth.set_session_profile(token, "default")
-    if not user.get("verified_at"):
-        link = None
-        try:
-            t = auth.issue_token(user["id"], "verify", 24)
-            link = f"{_base_url(request)}/?verify={t}"
-            res = mailer.send_verification(user["email"], link)
-            if res.dev_link:
-                link = res.dev_link
-        except Exception:
-            pass
-        response = JSONResponse({"ok": True, "needs_verification": True,
-                                 "email": user["email"], "dev_link": link or ""},
-                                status_code=200)
-        _set_session_cookie(response, token, expires, request)
-        return response
-    response = JSONResponse({"ok": True, "email": user["email"],
-                             "verified": True, "role": user.get("role", "candidate")})
-    _set_session_cookie(response, token, expires, request)
-    return response
 
 
 @app.post("/api/auth/login")
@@ -1793,7 +1822,7 @@ async def login(req: LoginRequest, request: Request):
     The same message covers an unknown address and a wrong password, so this
     cannot be used to discover which addresses have accounts.
     """
-    user = auth.authenticate(req.email, req.password)
+    user = await run_in_threadpool(auth.authenticate, req.email, req.password)
     if not user:
         _log({"event": "login_failed", "email": auth.normalize_email(req.email)})
         return JSONResponse({"ok": False, "error": "wrong email or password"},
@@ -1813,6 +1842,7 @@ async def login(req: LoginRequest, request: Request):
                              "seconds_left": auth.SESSION_IDLE_SECONDS,
                              "idle_minutes": auth.SESSION_IDLE_MINUTES,
                              "extend_minutes": auth.SESSION_EXTEND_MINUTES,
+                             "is_owner": bool(user.get("is_owner")),
                              "role": user.get("role", "candidate")})
     _set_session_cookie(response, token, expires, request)
     return response
@@ -1921,22 +1951,28 @@ async def forgot(req: ForgotRequest, request: Request):
     the status code and the response shape, which is why the unsent link is only
     ever included when AUTH_DEV_LINKS is explicitly turned on.
     """
+    base_url = _base_url(request)
+    if not base_url:
+        return {"ok": True, "sent": False}
     user = auth.get_user_by_email(req.email)
     sent = False
     if user:
-        token = auth.issue_token(user["id"], "reset", auth.RESET_TOKEN_HOURS)
+        token = auth.issue_token(user["id"], "reset", auth.RESET_TOKEN_HOURS, email=user["email"])
+        if not token:
+            return {"ok": True, "sent": False}
         # The address is in the link so the reset form can prefill it; the
         # token is the only thing that authorises the change.
-        link = f"{_base_url(request)}/?token={token}&email={user['email']}"
-        result = mailer.send_password_reset(user["email"], link)
+        link = f"{base_url}/?token={token}&email={user['email']}"
+        result = await run_in_threadpool(mailer.send_password_reset, user["email"], link)
         sent = result.ok
-        if result.dev_link and mailer.dev_links_allowed():
+        if (result.dev_link and _local_request(request) and mailer.dev_links_allowed()
+                and not _has_admin_role(user)):
             return JSONResponse({"ok": True, "sent": False, "dev_link": link},
                                 status_code=202)
         if not result.ok:
             _log({"event": "reset_email_failed", "detail": result.detail},
                  kind="errors")
-    return {"ok": True, "sent": sent}
+    return {"ok": True, "sent": sent if _local_request(request) else False}
 
 
 @app.post("/api/auth/reset")
@@ -1945,47 +1981,18 @@ async def reset(req: ResetRequest):
     weak = _check_password(req.password)
     if weak:
         return JSONResponse({"ok": False, "error": weak}, status_code=400)
-    user = auth.consume_token(req.token, "reset")
+    user = await run_in_threadpool(auth.reset_password, req.token, req.password)
     if not user:
         return JSONResponse({"ok": False,
                              "error": "that link is invalid or has expired"},
                             status_code=400)
-    # set_password() also drops every session for the account, so a cookie
-    # captured before the reset stops working immediately.
-    auth.set_password(user["id"], req.password)
     _log({"event": "password_reset", "email": user["email"]})
     return {"ok": True, "message": "Password updated. Sign in with it now."}
 
 
-class CandidateRequest(BaseModel):
-    id: str | None = None
-    name: str = ""
-    current_location: str = ""
-    expected_ctc: str = ""
-    current_ctc: str = ""
-    email: str = ""
-    phone: str = ""
-    availability: str = ""
-    status: str = "working"
-    notes: str = ""
-
-
-# Recruiter CRM helpers shared by the task/interview routes below.
-def _require_role(ctx: Ctx, roles: list[str]):
-    user_role = ctx.user.get("role", "candidate")
-    if user_role not in roles and user_role != "super_admin":
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
-    return True
-
-
-def _company_id(ctx: Ctx) -> int | None:
-    profile = auth.get_recruiter_profile(ctx.uid)
-    return profile.get("company_id") if profile else None
-
-
 @app.get("/api/jobs")
-async def list_public_jobs(status: str = "published"):
-    jobs = auth.list_jobs(status=status)
+async def list_public_jobs():
+    jobs = auth.list_jobs(status="published")
     return {"ok": True, "jobs": jobs}
 
 
@@ -1994,8 +2001,11 @@ async def apply_job(job_id: int, request: Request, ctx: Ctx = Depends(build_ctx)
     if ctx.user.get("role") != "candidate" and ctx.user.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="Only candidates can apply")
     body = await request.json()
-    app = auth.apply_to_job(job_id, ctx.uid, resume_id=body.get("resume_id"), cover_letter=body.get("cover_letter"))
-    return {"ok": True, "application": app}
+    application = auth.apply_to_job(job_id, ctx.uid, resume_id=body.get("resume_id"),
+                                    cover_letter=body.get("cover_letter"), published_only=True)
+    if not application:
+        raise HTTPException(status_code=404, detail="Published job not found")
+    return {"ok": True, "application": application}
 
 
 # Config endpoints for model selection
@@ -2008,7 +2018,7 @@ async def get_models():
     try:
         import httpx
         async with httpx.AsyncClient(timeout=2.0) as client:
-            r = await client.get("http://localhost:11434/api/tags")
+            r = await client.get(f"{ollama_url().rstrip('/')}/api/tags")
             if r.status_code == 200:
                 data = r.json()
                 models = []
@@ -2030,16 +2040,25 @@ async def get_models():
 
 
 # Super Admin User Management
-async def _require_admin(request: Request):
-    # Allow fixed admin login via cookie
-    if _is_admin_authenticated(request):
-        return {"is_fixed_admin": True}
-    # Or allow super_admin user session
+def _has_admin_role(user: dict | None) -> bool:
+    return bool(user and (user.get("is_owner") or user.get("role") == "super_admin"))
+
+
+def _has_admin_access(user: dict | None) -> bool:
+    return bool(_has_admin_role(user) and user.get("verified_at"))
+
+
+def _admin_user(request: Request) -> dict | None:
     token = request.cookies.get(auth.SESSION_COOKIE) or ""
     user = auth.session_user(token)
-    if user and (user.get("role") == "super_admin" or user.get("is_owner")):
-        return {"is_fixed_admin": False, "user": user}
-    raise HTTPException(status_code=403, detail="Super admin access required")
+    return user if _has_admin_access(user) else None
+
+
+async def _require_admin(request: Request):
+    user = _admin_user(request)
+    if not user:
+        raise HTTPException(status_code=403, detail="Super admin access required")
+    return user
 
 
 @app.get("/api/admin/users")
@@ -2066,11 +2085,9 @@ async def admin_create_user(req: UserCreateRequest, request: Request):
         return JSONResponse({"ok": False, "error": weak}, status_code=400)
     role = req.role if req.role in ("candidate", "recruiter", "super_admin") else "candidate"
     try:
-        user = auth.create_user(req.email, req.password, role=role)
+        auth.create_user(req.email, req.password, role=role, verified=role != "super_admin")
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-    # An account created by an admin is vouched for; it skips the email loop.
-    auth.mark_verified(user["id"])
     return {"ok": True}
 
 
@@ -2086,6 +2103,7 @@ async def admin_update_user(user_id: int, req: UserUpdateRequest, request: Reque
     await _require_admin(request)
     import sqlite3
     updates, params = [], []
+    email = None
     if req.email is not None:
         email = auth.normalize_email(req.email)
         if not auth._looks_like_email(email):
@@ -2110,47 +2128,38 @@ async def admin_update_user(user_id: int, req: UserUpdateRequest, request: Reque
         params.append(int(bool(req.is_owner)))
     if not updates:
         return JSONResponse({"ok": False, "error": "No changes to save"}, status_code=400)
-    params.append(user_id)
     try:
         with auth.connect() as conn:
-            cur = conn.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", params)
-            if req.password:
-                # A new password invalidates every existing cookie.
+            conn.execute("BEGIN IMMEDIATE")
+            user = conn.execute("SELECT email, role, is_owner FROM users WHERE id = ?",
+                                (user_id,)).fetchone()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+            role = req.role if req.role is not None else user["role"]
+            owner = bool(req.is_owner if req.is_owner is not None else user["is_owner"])
+            promoted = (role == "super_admin" or owner) and not _has_admin_role(dict(user))
+            requires_verification = promoted or (email is not None and email != user["email"])
+            if requires_verification:
+                updates.append("verified_at = NULL")
+            conn.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", (*params, user_id))
+            if requires_verification or req.password:
+                conn.execute("DELETE FROM email_tokens WHERE user_id = ?", (user_id,))
+            if requires_verification or req.password or role != user["role"] or owner != bool(user["is_owner"]):
                 conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
     except sqlite3.IntegrityError:
         return JSONResponse({"ok": False, "error": "That email is already in use"},
                             status_code=400)
-    if not cur.rowcount:
-        raise HTTPException(status_code=404, detail="User not found")
     return {"ok": True}
 
 
 @app.delete("/api/admin/users/{user_id}")
 async def admin_delete_user(user_id: int, request: Request):
     admin = await _require_admin(request)
-    # Prevent deleting self if using user session
-    if not admin.get("is_fixed_admin") and admin.get("user") and admin["user"]["id"] == user_id:
+    if admin["id"] == user_id:
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
     if not auth.delete_user(user_id):
         raise HTTPException(status_code=404, detail="User not found")
     return {"ok": True}
-
-
-# Admin auth (separate from user auth)
-ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "password"
-
-
-def _is_admin_authenticated(request: Request) -> bool:
-    token = request.cookies.get("js_admin_session") or ""
-    if not token:
-        return False
-    try:
-        import hmac, hashlib
-        expected = hashlib.sha256(f"{ADMIN_USERNAME}:{ADMIN_PASSWORD}:jobscope-admin".encode()).hexdigest()
-        return hmac.compare_digest(token, expected)
-    except Exception:
-        return False
 
 
 @app.get("/recruiter")
@@ -2187,33 +2196,31 @@ async def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 
-class AdminLoginRequest(BaseModel):
-    username: str = ""
-    password: str = ""
-
-
 @app.post("/api/admin/login")
-async def admin_login(req: AdminLoginRequest, request: Request):
-    if req.username != ADMIN_USERNAME or req.password != ADMIN_PASSWORD:
+async def admin_login(req: LoginRequest, request: Request):
+    user = await run_in_threadpool(auth.authenticate, req.email, req.password)
+    if _has_admin_role(user) and not user.get("verified_at"):
+        return JSONResponse({"ok": False, "error": "Verify your email from the main sign-in page first."},
+                            status_code=403)
+    if not _has_admin_access(user):
         return JSONResponse({"ok": False, "error": "Invalid credentials"}, status_code=401)
-    import hashlib
-    token = hashlib.sha256(f"{ADMIN_USERNAME}:{ADMIN_PASSWORD}:jobscope-admin".encode()).hexdigest()
+    token, expires = auth.create_session(user["id"])
+    auth.destroy_session(request.cookies.get(auth.SESSION_COOKIE) or "")
     response = JSONResponse({"ok": True})
-    response.set_cookie("js_admin_session", token, httponly=True, samesite="lax",
-                        secure=request.url.scheme == "https", path="/")
+    _set_session_cookie(response, token, expires, request)
     return response
 
 
 @app.post("/api/admin/logout")
-async def admin_logout():
-    response = JSONResponse({"ok": True})
-    response.delete_cookie("js_admin_session", path="/")
+async def admin_logout(request: Request):
+    response = await logout(request)
+    response.delete_cookie("js_local_admin", path="/api/admin")
     return response
 
 
 @app.get("/api/admin/session")
 async def admin_session(request: Request):
-    return {"ok": True, "authenticated": _is_admin_authenticated(request)}
+    return {"ok": True, "authenticated": _admin_user(request) is not None}
 
 
 _BOARD_NAMES_CACHE: dict[str, list[str]] = {}
@@ -2265,7 +2272,7 @@ async def public_boards():
 
 
 @app.post("/api/verify-board")
-async def verify_board(req: VerifyBoardRequest, ctx: Ctx = Depends(build_ctx)):
+async def verify_board(req: VerifyBoardRequest, request: Request, ctx: Ctx = Depends(build_ctx)):
     """Open a visible browser so the signed-in user can clear a bot wall.
 
     Returns a job id to poll at GET /api/verify-board/{job_id}. The browser opens
@@ -2276,6 +2283,8 @@ async def verify_board(req: VerifyBoardRequest, ctx: Ctx = Depends(build_ctx)):
     """
     import manual_verify
 
+    if not ctx.user.get("is_owner") or not _local_request(request):
+        raise HTTPException(status_code=403, detail="Browser verification is available to the local owner only")
     if not manual_verify.enabled():
         raise HTTPException(
             status_code=400,
@@ -2293,9 +2302,11 @@ async def verify_board(req: VerifyBoardRequest, ctx: Ctx = Depends(build_ctx)):
 
 
 @app.get("/api/verify-board/{job_id}")
-async def verify_board_status(job_id: str, ctx: Ctx = Depends(build_ctx)):
+async def verify_board_status(job_id: str, request: Request, ctx: Ctx = Depends(build_ctx)):
     """Poll one manual-verification job. Terminal states: done, blocked, failed."""
     import manual_verify
+    if not ctx.user.get("is_owner") or not _local_request(request):
+        raise HTTPException(status_code=403, detail="Browser verification is available to the local owner only")
 
     job = manual_verify.status(job_id)
     if job is None:
@@ -2312,19 +2323,24 @@ async def gmail_sync(req: GmailSyncRequest, ctx: Ctx = Depends(build_ctx)):
     sender), so it runs on a worker thread rather than the event loop. Returns
     the sync summary plus a per-sender breakdown so the UI can show what landed.
     """
-    import gmail_index
     default_days = int(getattr(ctx.bundle.cfg, "days_back", 0) or 60)
     days = req.days_back or default_days
+    if ctx.user["role"] == "candidate":
+        connection = google_accounts.gmail_connection(ctx.uid)
+        if connection:
+            import google_gmail
+            return await run_in_threadpool(google_gmail.sync, connection, min(3650, max(1, days)))
+    if not ctx.cfg.gmail_enabled:
+        raise HTTPException(status_code=403, detail="Connect Gmail to fetch job alerts for this account.")
 
-    def _do():
-        import mcp_server_gmail as gmail
-        return gmail.sync_gmail_cache(days_back=days, account=0)
-
+    import gmail_index
+    import mcp_server_gmail as gmail
     try:
-        summary = await run_in_threadpool(_do)
+        summary = await run_in_threadpool(gmail.sync_job_alerts, days_back=days, account=0)
+    except gmail.GmailSyncError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502,
-                            detail=f"Gmail fetch failed: {exc}")
+        raise HTTPException(status_code=502, detail="Gmail could not be reached. Try again later.") from exc
     return {"ok": True, "days_back": days, "summary": summary,
             "cached_total": gmail_index.count_listings(),
             "senders": gmail_index.sender_breakdown()}
@@ -2339,11 +2355,19 @@ async def gmail_listings(days_back: int = 0, query: str = "", limit: int = 0,
     this is cheap. `senders` carries the per-sender counts so the deck can say
     where each batch of listings came from.
     """
-    import gmail_index
     default_days = int(getattr(ctx.bundle.cfg, "days_back", 0) or 60)
     days = days_back or default_days
     cap = limit or 40
     cap = max(1, min(200, int(cap)))
+    if ctx.user["role"] == "candidate":
+        connection = google_accounts.gmail_connection(ctx.uid)
+        if connection:
+            import google_gmail
+            return await run_in_threadpool(google_gmail.listings, connection,
+                                           min(3650, max(1, days)), query, cap)
+    if not ctx.cfg.gmail_enabled:
+        raise HTTPException(status_code=403, detail="Connect Gmail to see job alerts for this account.")
+    import gmail_index
     # Pull a wide pool per account, THEN interleave across senders and slice.
     # Limiting each account to `cap` before the merge is what let a prolific
     # sender crowd Indeed out of the deck: the per-account top-N were all
@@ -2575,7 +2599,7 @@ async def activate_profile(req: ProfileIdRequest, ctx: Ctx = Depends(build_ctx))
     auth.set_session_profile(ctx.token, req.id)
     snap = _profile_for(ctx.uid, req.id)
     try:
-        bundle = await _bundle_for(ctx.uid, req.id, snap)
+        bundle = await _bundle_for(ctx.uid, req.id, snap, gmail_enabled=ctx.cfg.gmail_enabled)
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
     cfg = bundle.cfg
@@ -3388,6 +3412,24 @@ if __name__ == "__main__":
     import uvicorn
 
     args = sys.argv[1:]
+    if args == ["--create-owner"]:
+        from getpass import getpass
+
+        email = input("Owner email: ").strip()
+        password = getpass("Owner password: ")
+        weak = _check_password(password)
+        if weak:
+            raise SystemExit(weak)
+        if password != getpass("Confirm password: "):
+            raise SystemExit("Passwords did not match.")
+        auth.init_db()
+        try:
+            owner = auth.create_user(email, password, owner=True, verified=True)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        adopted = _migrate_legacy_profiles(owner["id"])
+        print(f"Owner created. Imported {adopted} legacy profile(s).")
+        raise SystemExit(0)
     port = int(args[args.index("--port") + 1]) if "--port" in args else 8000
     # HOST defaults to loopback. Set HOST=0.0.0.0 to serve other people on the
     # LAN - only do that behind a real TLS terminator, because the session
@@ -3413,91 +3455,3 @@ if __name__ == "__main__":
             raise SystemExit(0 if "already running" in busy else 1)
 
     uvicorn.run("dashboard:app", host=host, port=port, reload=reload)
-
-
-# --- Recruiter hiring loop: tasks and interviews -------------------------------
-class TaskRequest(BaseModel):
-    title: str | None = None
-    description: str | None = None
-    due_date: str | None = None
-    status: str | None = None
-    priority: str | None = None
-    related_to_type: str | None = None
-    related_to_id: int | None = None
-
-
-class InterviewRequest(BaseModel):
-    application_id: int | None = None
-    interview_type: str | None = None
-    scheduled_at: str | None = None
-    duration_minutes: int | None = None
-    meeting_link: str | None = None
-    location: str | None = None
-    instructions: str | None = None
-    status: str | None = None
-
-
-@app.get("/api/recruiter/tasks")
-async def list_recruiter_tasks(ctx: Ctx = Depends(build_ctx)):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    return {"ok": True, "tasks": auth.list_tasks(ctx.uid)}
-
-
-@app.post("/api/recruiter/tasks")
-async def create_recruiter_task(req: TaskRequest, ctx: Ctx = Depends(build_ctx)):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    if not (req.title or "").strip():
-        raise HTTPException(status_code=400, detail="Title required")
-    return {"ok": True, "task": auth.create_task(ctx.uid, _company_id(ctx), req.model_dump())}
-
-
-@app.post("/api/recruiter/tasks/{task_id}/update")
-async def update_recruiter_task(task_id: int, req: TaskRequest, ctx: Ctx = Depends(build_ctx)):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    data = req.model_dump(exclude_unset=True)
-    if "status" in data and data["status"] not in auth.TASK_STATUSES:
-        raise HTTPException(status_code=400, detail="Unknown status")
-    task = auth.update_task(ctx.uid, task_id, data)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return {"ok": True, "task": task}
-
-
-@app.delete("/api/recruiter/tasks/{task_id}")
-async def delete_recruiter_task(task_id: int, ctx: Ctx = Depends(build_ctx)):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    if not auth.delete_task(ctx.uid, task_id):
-        raise HTTPException(status_code=404, detail="Task not found")
-    return {"ok": True}
-
-
-@app.get("/api/recruiter/interviews")
-async def list_recruiter_interviews(ctx: Ctx = Depends(build_ctx)):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    cid = _company_id(ctx)
-    return {"ok": True, "interviews": auth.list_interviews(cid) if cid else []}
-
-
-@app.post("/api/recruiter/interviews")
-async def create_recruiter_interview(req: InterviewRequest, ctx: Ctx = Depends(build_ctx)):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    if not req.application_id or not req.scheduled_at:
-        raise HTTPException(status_code=400, detail="Application and time required")
-    cid = _company_id(ctx)
-    iv = auth.create_interview(cid, ctx.uid, req.model_dump()) if cid else None
-    if not iv:
-        raise HTTPException(status_code=404, detail="Application not found")
-    return {"ok": True, "interview": iv}
-
-
-@app.post("/api/recruiter/interviews/{interview_id}/update")
-async def update_recruiter_interview(interview_id: int, req: InterviewRequest, ctx: Ctx = Depends(build_ctx)):
-    _require_role(ctx, ["recruiter", "super_admin"])
-    data = req.model_dump(exclude_unset=True, exclude={"application_id"})
-    if "status" in data and data["status"] not in auth.INTERVIEW_STATUSES:
-        raise HTTPException(status_code=400, detail="Unknown status")
-    cid = _company_id(ctx)
-    iv = auth.update_interview(cid, interview_id, data) if cid else None
-    if not iv:
-        raise HTTPException(status_code=404, detail="Interview not found")
-    return {"ok": True, "interview": iv}

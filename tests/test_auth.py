@@ -118,6 +118,10 @@ def test_the_first_account_is_the_owner_and_later_ones_are_not(db):
     assert first["is_owner"] == 1 and second["is_owner"] == 0
     assert auth.owner_user()["email"] == "first@b.com"
 
+    with pytest.raises(ValueError, match="owner account already exists"):
+        auth.create_user("third@b.com", "a-good-password", owner=True)
+    assert auth.owner_user()["id"] == first["id"]
+
 
 def test_marking_verified_stores_a_timestamp_once(db):
     user = _user(db)

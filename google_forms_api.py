@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 
 import auth
 import candidates_api
+import google_accounts
 
 router = APIRouter()
 log = logging.getLogger("google_forms")
@@ -228,6 +229,8 @@ def _credentials(refresh_token: str):
     from google.auth.transport.requests import Request as GoogleRequest
     from google.oauth2.credentials import Credentials
     client_id, client_secret = _client_config()
+    if refresh_token.startswith("fernet:"):
+        refresh_token = google_accounts.decrypt_refresh_token(refresh_token.removeprefix("fernet:"))
     creds = Credentials(token=None, refresh_token=refresh_token,
                         token_uri="https://oauth2.googleapis.com/token",
                         client_id=client_id, client_secret=client_secret, scopes=SCOPES)
@@ -514,7 +517,7 @@ def _sync(user: dict, link_id: int) -> dict:
     resumes = 0
     for candidate_id, upload in pending:
         try:
-            data = _download(link["user_id"], upload["file_id"])
+            data = _download(user["id"], upload["file_id"])
             candidates_api.save_resume(owner, candidate_id, data, upload["file_name"])
             resumes += 1
         except Exception:
@@ -588,6 +591,8 @@ def google_forms_callback(request: Request, code: str = "", state: str = "", err
         raise HTTPException(status_code=403, detail="That sign-in link has expired, try again")
     refresh_token, email = _exchange(code, row["redirect_uri"] or _redirect_uri(request),
                                      row["code_verifier"] or "")
+    if os.environ.get("JOBSCOPE_GOOGLE_TOKEN_KEY"):
+        refresh_token = "fernet:" + google_accounts.encrypt_refresh_token(refresh_token)
     with _db() as conn:
         conn.execute(
             "INSERT INTO google_oauth (user_id, email, refresh_token, scopes, connected_at) "

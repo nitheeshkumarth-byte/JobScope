@@ -306,8 +306,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(d, "create_runtime", _noop_runtime)
     monkeypatch.setattr(d.app.state, "runtime", object(), raising=False)
     d.app.state.bundles = {}
-    with TestClient(d.app) as c:
-        c.headers["host"] = "jobs.test"
+    with TestClient(d.app, base_url="http://localhost", client=("127.0.0.1", 50000)) as c:
         yield c
 
 

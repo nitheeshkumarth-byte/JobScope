@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import auth
+import candidates_api
 import recruiter_api
 
 
@@ -14,6 +15,7 @@ def _client(email, role):
     u = auth.create_user(email, "pw12345678", role=role)
     auth.mark_verified(u["id"])
     app = FastAPI()
+    app.include_router(candidates_api.router)
     app.include_router(recruiter_api.router)
     c = TestClient(app)
     c.cookies.set(auth.SESSION_COOKIE, auth.create_session(u["id"])[0])
@@ -98,3 +100,65 @@ def test_hiring_loop_and_calendar():
     # role guards
     assert cand.get("/api/recruiter/jobs").status_code == 403
     assert rec.get("/api/candidate/applications").status_code == 403
+
+
+def test_application_status_emails_and_candidate_rejection_reason(monkeypatch):
+    recruiter, _ = _client("recruiter@example.com", "recruiter")
+    candidate, person = _client("candidate@example.com", "candidate")
+    other, _ = _client("other@example.com", "candidate")
+    recruiter.post("/api/recruiter/company", json={"name": "Example Hiring"})
+    job = recruiter.post("/api/recruiter/jobs", json={"title": "Data Analyst", "description": "A role"}).json()["job"]
+    app_id = auth.apply_to_job(job["id"], person["id"])["id"]
+    route = f"/api/recruiter/applications/{app_id}/status"
+    sent = []
+
+    def capture(to, subject, body):
+        sent.append((to, subject, body))
+        return recruiter_api.mailer.MailResult(True)
+
+    monkeypatch.setattr(recruiter_api.mailer, "send", capture)
+    assert recruiter.post(route, json={"status": "recruiter_review"}).json()["email_state"] == "skipped"
+    assert recruiter.post(route, json={"status": "shortlisted"}).json()["email_state"] == "sent"
+    assert recruiter.post(route, json={"status": "shortlisted"}).json()["changed"] is False
+    assert recruiter.post(route, json={"status": "offer_released"}).json()["email_state"] == "sent"
+    assert recruiter.post(route, json={"status": "rejected", "rejection_reason": "  "}).status_code == 400
+    assert candidate.get("/api/candidate/applications").json()["applications"][0]["status"] == "offer_released"
+
+    reason = "We need more SQL experience for this role."
+    result = recruiter.post(route, json={"status": "rejected", "rejection_reason": " " + reason + " "})
+    assert result.json()["email_state"] == "sent"
+    assert len(sent) == 3
+    assert all(to == "candidate@example.com" and "Data Analyst" in body for to, _, body in sent)
+    assert "Current status: Shortlisted" in sent[0][2]
+    assert "offer letter will be released soon" in sent[1][2]
+    assert reason in sent[2][2] and "future opportunities" in sent[2][2]
+    mine = candidate.get("/api/candidate/applications").json()["applications"][0]
+    assert mine["status"] == "rejected" and mine["rejection_reason"] == reason
+    assert other.get("/api/candidate/applications").json()["applications"] == []
+    recruiter.post(route, json={"status": "on_hold"})
+    assert candidate.get("/api/candidate/applications").json()["applications"][0]["rejection_reason"] is None
+
+
+def test_failed_application_email_can_be_retried_without_changing_status(monkeypatch):
+    recruiter, _ = _client("recruiter@example.com", "recruiter")
+    other, _ = _client("other@example.com", "recruiter")
+    candidate, person = _client("candidate@example.com", "candidate")
+    recruiter.post("/api/recruiter/company", json={"name": "Hiring"})
+    other.post("/api/recruiter/company", json={"name": "Other company"})
+    job = recruiter.post("/api/recruiter/jobs", json={"title": "Developer", "description": "A role"}).json()["job"]
+    app_id = auth.apply_to_job(job["id"], person["id"])["id"]
+    route = f"/api/recruiter/applications/{app_id}"
+    attempts = []
+
+    def flaky_send(*args):
+        attempts.append(args)
+        return recruiter_api.mailer.MailResult(len(attempts) == 2)
+
+    monkeypatch.setattr(recruiter_api.mailer, "send", flaky_send)
+    result = recruiter.post(route + "/status", json={"status": "shortlisted"}).json()
+    assert result["ok"] and result["email_state"] == "failed"
+    assert candidate.get("/api/candidate/applications").json()["applications"][0]["status"] == "shortlisted"
+    assert other.post(route + "/status-email/retry").status_code == 404
+    assert recruiter.post(route + "/status-email/retry").json()["email_state"] == "sent"
+    assert recruiter.post(route + "/status-email/retry").json()["email_state"] == "sent"
+    assert len(attempts) == 2

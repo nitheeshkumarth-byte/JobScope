@@ -99,6 +99,41 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
+CREATE TABLE IF NOT EXISTS google_identities (
+    subject TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS google_account_states (
+    state_hash TEXT PRIMARY KEY,
+    intent TEXT NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    session_hash TEXT,
+    nonce TEXT NOT NULL,
+    verifier TEXT NOT NULL,
+    redirect_uri TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS google_gmail_connections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    email TEXT NOT NULL,
+    refresh_token TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS google_gmail_alerts (
+    connection_id INTEGER NOT NULL REFERENCES google_gmail_connections(id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL,
+    sender TEXT NOT NULL,
+    sent_at TEXT NOT NULL,
+    listings TEXT NOT NULL,
+    PRIMARY KEY (connection_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_google_gmail_sent ON google_gmail_alerts(connection_id, sent_at);
+
 -- One-time links: 'verify' to confirm an address, 'reset' to set a new
 -- password. Storing only the digest means the database alone is useless.
 CREATE TABLE IF NOT EXISTS email_tokens (
@@ -240,6 +275,7 @@ CREATE TABLE IF NOT EXISTS applications (
     candidate_profile_id INTEGER REFERENCES candidate_profiles(id),
     resume_id         TEXT,
     status            TEXT    NOT NULL DEFAULT 'applied', -- applied, ai_screening, recruiter_review, shortlisted, interview_scheduled, interview_completed, technical_round, hr_round, offer_released, offer_accepted, hired, rejected, withdrawn, on_hold, offer_declined
+    rejection_reason  TEXT,
     cover_letter      TEXT,
     applied_at        TEXT    NOT NULL,
     updated_at        TEXT    NOT NULL,
@@ -247,6 +283,15 @@ CREATE TABLE IF NOT EXISTS applications (
 );
 CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(job_id);
 CREATE INDEX IF NOT EXISTS idx_applications_candidate ON applications(candidate_user_id);
+
+CREATE TABLE IF NOT EXISTS application_status_emails (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending',
+    attempted_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_application_status_emails ON application_status_emails(application_id, id);
 
 CREATE TABLE IF NOT EXISTS talent_pools (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -604,6 +649,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
                                 ("applications", "source", "TEXT"),
                                 ("applications", "stage_entered_at", "TEXT"),
                                 ("applications", "rejection_reason", "TEXT"),
+                                ("application_status_emails", "attempted_at", "REAL"),
                                 # interviews: scheduling detail
                                 ("interviews", "round", "TEXT"),
                                 ("interviews", "mode", "TEXT"),
@@ -741,12 +787,11 @@ def _looks_like_email(email: str) -> bool:
     return " " not in domain
 
 
-def create_user(email: str, password: str, owner: bool = False, role: str = "candidate") -> dict:
+def create_user(email: str, password: str, owner: bool = False, role: str = "candidate",
+                *, verified: bool = False, google_subject: str | None = None) -> dict:
     """Create an account and give it one empty default profile.
 
-    Raises ValueError on a duplicate address or a bad password. The first
-    account created becomes the owner, which is how the pre-existing CV
-    sessions get claimed.
+    An explicit owner request succeeds only if there is no existing owner.
     """
     role = role if role in ("candidate", "recruiter", "super_admin") else "candidate"
     email = normalize_email(email)
@@ -756,6 +801,10 @@ def create_user(email: str, password: str, owner: bool = False, role: str = "can
     now = _now()
     claimed = False
     with connect() as conn:
+        if owner:
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("SELECT 1 FROM users WHERE is_owner = 1 LIMIT 1").fetchone():
+                raise ValueError("an owner account already exists")
         try:
             cur = conn.execute(
                 "INSERT INTO users (email, password_hash, created_at, is_owner, role) "
@@ -763,6 +812,8 @@ def create_user(email: str, password: str, owner: bool = False, role: str = "can
                 (email, pwd_hash, now, 1 if owner else 0, role))
             uid = cur.lastrowid
         except sqlite3.IntegrityError:
+            if google_subject is not None:
+                raise ValueError("an account with that email already exists") from None
             # google_forms_api creates unverified applicant accounts with an
             # unusable password. Signing up with that address claims the row
             # instead of dead-ending, so a form respondent can still join.
@@ -774,10 +825,13 @@ def create_user(email: str, password: str, owner: bool = False, role: str = "can
             uid, claimed = row["id"], True
             conn.execute("UPDATE users SET password_hash = ?, role = ? WHERE id = ?",
                          (pwd_hash, role, uid))
-        if owner:
-            # Belt and braces: exactly one owner even if two registrations race.
-            conn.execute("UPDATE users SET is_owner = 0 WHERE id != ?", (uid,))
+        if owner and claimed:
             conn.execute("UPDATE users SET is_owner = 1 WHERE id = ?", (uid,))
+        if verified:
+            conn.execute("UPDATE users SET verified_at = ? WHERE id = ?", (now, uid))
+        if google_subject is not None:
+            conn.execute("INSERT INTO google_identities (subject, user_id) VALUES (?, ?)",
+                         (google_subject, uid))
         conn.execute(
             ("INSERT OR IGNORE" if claimed else "INSERT") + " INTO profiles "
             "(id, user_id, name, created_at, is_default, data) VALUES (?, ?, ?, ?, 1, ?)",
@@ -916,15 +970,21 @@ def list_jobs(company_id: int = None, status: str = None) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def apply_to_job(job_id: int, candidate_user_id: int, resume_id: str = None, cover_letter: str = None) -> dict:
+def apply_to_job(job_id: int, candidate_user_id: int, resume_id: str = None,
+                 cover_letter: str = None, *, published_only: bool = False) -> dict:
     now = _now()
     with connect() as conn:
+        if published_only:
+            conn.execute("BEGIN IMMEDIATE")
+            if not conn.execute("SELECT 1 FROM jobs WHERE id = ? AND status = 'published'",
+                                (job_id,)).fetchone():
+                return {}
         try:
             cur = conn.execute(
                 "INSERT INTO applications (job_id, candidate_user_id, resume_id, cover_letter, status, applied_at, updated_at) VALUES (?,?,?,?,?,?,?)",
                 (job_id, candidate_user_id, resume_id, cover_letter, 'applied', now, now))
             aid = cur.lastrowid
-        except Exception:
+        except sqlite3.IntegrityError:
             row = conn.execute("SELECT * FROM applications WHERE job_id = ? AND candidate_user_id = ?", (job_id, candidate_user_id)).fetchone()
             return dict(row) if row else {}
         row = conn.execute("SELECT * FROM applications WHERE id = ?", (aid,)).fetchone()
@@ -1348,12 +1408,17 @@ def destroy_user_sessions(uid: int) -> None:
 # one-time email links
 # --------------------------------------------------------------------------
 
-def issue_token(uid: int, purpose: str, hours: int) -> str:
+def issue_token(uid: int, purpose: str, hours: int, *, email: str | None = None) -> str | None:
     """Mint a single-use link token. Only its digest is kept."""
     if purpose not in ("verify", "reset"):
         raise ValueError("unknown token purpose")
     token = secrets.token_urlsafe(32)
     with connect() as conn:
+        if email is not None:
+            conn.execute("BEGIN IMMEDIATE")
+            if not conn.execute("SELECT 1 FROM users WHERE id = ? AND email = ?",
+                                (uid, email)).fetchone():
+                return None
         # Issuing a new link retires the old one for that purpose.
         conn.execute("UPDATE email_tokens SET used_at = ? "
                      "WHERE user_id = ? AND purpose = ? AND used_at IS NULL",
@@ -1364,22 +1429,46 @@ def issue_token(uid: int, purpose: str, hours: int) -> str:
     return token
 
 
-def consume_token(token: str, purpose: str) -> dict | None:
-    """Redeem a link, returning the account. Single use, expiry enforced."""
+def _consume_token(conn: sqlite3.Connection, token: str, purpose: str) -> dict | None:
     if not token:
         return None
+    now = _now()
+    row = conn.execute(
+        "UPDATE email_tokens SET used_at = ? "
+        "WHERE token_hash = ? AND purpose = ? AND used_at IS NULL AND expires_at > ? "
+        "RETURNING user_id",
+        (now, _token_hash(token), purpose, now)).fetchone()
+    if not row:
+        return None
+    user = conn.execute("SELECT id, email FROM users WHERE id = ?", (row["user_id"],)).fetchone()
+    return dict(user) if user else None
+
+
+def consume_token(token: str, purpose: str) -> dict | None:
+    """Redeem a link, returning the account. Single use, expiry enforced."""
     with connect() as conn:
-        row = conn.execute(
-            "SELECT t.user_id, u.email FROM email_tokens t "
-            "JOIN users u ON u.id = t.user_id "
-            "WHERE t.token_hash = ? AND t.purpose = ? AND t.used_at IS NULL "
-            "AND t.expires_at > ?",
-            (_token_hash(token), purpose, _now())).fetchone()
-        if not row:
-            return None
-        conn.execute("UPDATE email_tokens SET used_at = ? WHERE token_hash = ?",
-                     (_now(), _token_hash(token)))
-    return {"id": row["user_id"], "email": row["email"]}
+        return _consume_token(conn, token, purpose)
+
+
+def verify_email(token: str) -> dict | None:
+    with connect() as conn:
+        user = _consume_token(conn, token, "verify")
+        if user:
+            conn.execute("UPDATE users SET verified_at = COALESCE(verified_at, ?) WHERE id = ?",
+                         (_now(), user["id"]))
+            conn.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
+        return user
+
+
+def reset_password(token: str, password: str) -> dict | None:
+    password_hash = hash_password(password)
+    with connect() as conn:
+        user = _consume_token(conn, token, "reset")
+        if user:
+            conn.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+                         (password_hash, user["id"]))
+            conn.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
+        return user
 
 
 # --------------------------------------------------------------------------

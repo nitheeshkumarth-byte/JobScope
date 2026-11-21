@@ -203,6 +203,12 @@ class AgentConfig:
     # its "already shown" memory is per person. Left empty the memory is
     # shared, which is what a bare CLI run gets. Never surfaced to the model.
     seen_scope: str = ""
+    gmail_enabled: bool = True
+
+
+def ollama_url() -> str:
+    url = os.environ.get("OLLAMA_URL") or os.environ.get("OLLAMA_HOST") or "http://localhost:11434"
+    return url if "://" in url else f"http://{url}"
 
 
 def load_config() -> AgentConfig:
@@ -857,12 +863,16 @@ async def create_agent(cfg: AgentConfig | None = None,
     cfg = cfg or load_config()
     runtime = runtime or await create_runtime()
     tools = runtime.tools
+    if not cfg.gmail_enabled:
+        tools = [tool for tool in tools if not any(
+            name in tool.name for name in ("search_job_emails", "sync_gmail_cache"))]
 
-    llm = ChatOllama(model=cfg.model, num_ctx=cfg.num_ctx).bind_tools(tools)
+    base_url = ollama_url()
+    llm = ChatOllama(model=cfg.model, num_ctx=cfg.num_ctx, base_url=base_url).bind_tools(tools)
     # The final summary never calls tools — binding tool schemas slows every
     # generation (long function definitions on a small context), so summarize
     # with a plain, unbound instance of the same model.
-    llm_summary = ChatOllama(model=cfg.model, num_ctx=min(cfg.num_ctx, 4096))
+    llm_summary = ChatOllama(model=cfg.model, num_ctx=min(cfg.num_ctx, 4096), base_url=base_url)
 
     def _collect_message(state: AgentState) -> AIMessage:
         """Deterministic first step of a hunt: emit ONE AIMessage whose
@@ -880,6 +890,8 @@ async def create_agent(cfg: AgentConfig | None = None,
         calls = []
         source = requested_source(state)
         if source == "gmail":
+            if not cfg.gmail_enabled:
+                return AIMessage(content="Gmail is not enabled for this account.")
             try:
                 gmail = _find_tool(tools, "search_job_emails")
                 # One call, not one call per sender.
@@ -959,7 +971,7 @@ async def create_agent(cfg: AgentConfig | None = None,
                     return "prep"
         if requested_board(state):
             return "prep"
-        return "fallback" if _scrape_blocked(state) else "agent"
+        return "fallback" if cfg.gmail_enabled and _scrape_blocked(state) else "agent"
 
     async def prep_node(state: AgentState) -> dict:
         """Parallel-collect path: boards AND Gmail both ran in the same tools
@@ -1092,7 +1104,7 @@ async def create_agent(cfg: AgentConfig | None = None,
     graph.add_edge("fallback", "agent")
     graph.add_edge("prep", "agent")
 
-    return AgentBundle(graph.compile(), runtime, cfg)
+    return AgentBundle(graph.compile(), runtime, cfg, tools)
 
 
 class AgentBundle:
@@ -1103,11 +1115,11 @@ class AgentBundle:
     held: the adapters open a session per tool call and close it afterwards.
     """
 
-    def __init__(self, app, runtime, cfg: AgentConfig):
+    def __init__(self, app, runtime, cfg: AgentConfig, tools=None):
         self.app = app
         self.runtime = runtime
         self.client = runtime.client
-        self.tools = runtime.tools
+        self.tools = runtime.tools if tools is None else tools
         self.cfg = cfg
 
     async def reconfigure(self, cfg: AgentConfig) -> "AgentBundle":

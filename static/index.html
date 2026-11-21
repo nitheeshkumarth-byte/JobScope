@@ -1295,6 +1295,9 @@ html.gated .app,html.gated header{opacity:0!important}
   </span>
   <button class="iconbtn" id="settingsBtn" title="Role, skills, model">Customise</button>
   <button class="iconbtn" id="gmailBtn" title="Fetch job-alert emails from Gmail and show them">Gmail</button>
+  <button class="iconbtn" id="gConnectGmail" type="button" hidden>Connect Gmail</button>
+  <button class="iconbtn" id="gDisconnectGmail" type="button" hidden>Disconnect Gmail</button>
+  <button class="iconbtn" id="gLinkGoogle" type="button" hidden>Link Google sign-in</button>
   <div class="identwrap">
   <button class="ident" id="identBtn" style="display:none" title="Account">
     <span class="av" id="identAv">–</span><span class="who" id="identWho">–</span><span class="identcaret" aria-hidden="true">▾</span>
@@ -1592,7 +1595,7 @@ html.gated .app,html.gated header{opacity:0!important}
           <span class="gpprev" id="gAvPrev" aria-hidden="true" hidden></span>
         </div>
       </div>
-      <div style="margin: 10px 0;">
+      <div id="gPortalChoice" style="margin: 10px 0;">
         <div style="margin-bottom:8px; font-size:13px; color:var(--muted);">Select portal</div>
         <div class="portal-toggle" id="portalToggle">
           <div class="portal-toggle-slider" id="portalToggleSlider"></div>
@@ -1603,6 +1606,10 @@ html.gated .app,html.gated header{opacity:0!important}
       </div>
       <div class="gerr" id="gErr" hidden></div>
       <button class="btn primary wide" id="gSubmit" type="submit">Sign in</button>
+      <button id="gGoogleSignIn" class="btn wide" type="button" hidden
+        style="background:#fff;color:#1f1f1f;border:1px solid #747775;border-radius:20px;min-height:40px">
+        <img src="https://developers.google.com/static/identity/images/g-logo.png" alt="" width="18" height="18" style="margin-right:10px">Sign in with Google
+      </button>
     </form>
 
     <!-- confirmation screen -->
@@ -1643,6 +1650,7 @@ html.gated .app,html.gated header{opacity:0!important}
 
 <div class="toast" id="toast"></div>
 
+<script src="/static/google_accounts.js"></script>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -1920,24 +1928,23 @@ async function fetchGmailJobs() {
     const sres = await api("/api/gmail/sync", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
     });
-    if (!sres.ok) {
-      let d = "Gmail fetch failed (" + sres.status + ").";
-      try { d = (await sres.json()).detail || d; } catch (_) {}
-      throw new Error(d);
-    }
     const sync = await sres.json();
+    if (!sres.ok && sres.status !== 502) throw new Error(sync.detail || sync.error || "Gmail fetch failed.");
     const lres = await api("/api/gmail/listings?limit=40");
     const data = await lres.json();
-    const first = String(sync.summary || "").split("\n")[0] || "Synced.";
+    if (!lres.ok) throw new Error(data.detail || "Could not load Gmail listings.");
+    const first = sres.ok
+      ? String(sync.summary || "").split("\n")[0] || "Synced."
+      : sync.detail || "Gmail sync failed.";
     const senders = Object.keys(data.sources || {}).length;
     b._raw = first + "\n\n" + (data.total
       ? "Showing " + data.total + " of " + data.cached_total +
         " cached listing(s) from " + senders + " sender(s)."
-      : "No job listings found in that window.");
+      : "No cached job listings found in that window.");
     b.innerHTML = markdown(b._raw);
     if (data.jobs && data.jobs.length) {
-      renderDeck(data, "Gmail job alerts");
-      circ("gmail", "done", data.total + " listing(s) from Gmail");
+      renderDeck(data, sres.ok ? "Gmail job alerts" : "Cached Gmail job alerts");
+      circ("gmail", "done", data.total + (sres.ok ? " listing(s) from Gmail" : " cached Gmail listing(s)"));
     } else {
       circ("gmail", "fail", "no job listings indexed");
     }
@@ -1950,6 +1957,36 @@ async function fetchGmailJobs() {
   }
 }
 $("gmailBtn").onclick = fetchGmailJobs;
+
+let googleSignInAvailable = false;
+let localRecruiterSignup = false;
+function startGoogle(intent, showError) {
+  window.jobScopeGoogle.start(intent).catch(err => showError(err.message));
+}
+
+$("gGoogleSignIn").onclick = () => startGoogle("signin", gErr);
+$("gLinkGoogle").onclick = () => startGoogle("link", toast);
+$("gConnectGmail").onclick = () => startGoogle("gmail", toast);
+$("gDisconnectGmail").onclick = async () => {
+  try {
+    const response = await api("/api/integrations/gmail", {method: "DELETE"});
+    if (!response.ok) throw new Error((await response.json()).detail);
+    toast("Gmail disconnected. Its cached job alerts were removed.");
+    refreshGmailConnection();
+  } catch (err) { toast(err.message); }
+};
+
+async function refreshGmailConnection() {
+  try {
+    const response = await fetch("/api/integrations/gmail", {credentials: "same-origin"});
+    if (!response.ok) return;
+    const state = await response.json();
+    $("gConnectGmail").hidden = !state.enabled;
+    $("gConnectGmail").textContent = state.connected ? "Reconnect Gmail" : "Connect Gmail";
+    $("gConnectGmail").title = state.connected ? state.email : "";
+    $("gDisconnectGmail").hidden = !state.connected;
+  } catch (_) {}
+}
 
 /* Decks used to be a single global (state.deck / state.deckIdx) plus hardcoded
    element ids, so exactly one deck could exist: renderDeck removed the old one
@@ -3439,6 +3476,8 @@ function gateShow(mode, opts = {}) {
   $("gateReset").hidden = mode !== "forgot" && mode !== "setpw";
 
   const signup = mode === "signup";
+  $("gPortalChoice").hidden = signup && !localRecruiterSignup;
+  $("gGoogleSignIn").hidden = !googleSignInAvailable;
   $("gPass2Wrap").hidden = !signup;
   $("gProfileWrap").hidden = !signup;
   if (signup) paintSignupLogo();
@@ -3513,7 +3552,14 @@ async function api(path, opts = {}) {
   await AUTH_READY;
   const res = await fetch(path, { credentials: "same-origin", ...opts });
   if (res.status === 401) { gateShow("signin"); throw new Error("signed out"); }
-  if (res.status === 403) { gateShow("check"); throw new Error("unverified"); }
+  if (res.status === 403) {
+    if (res.headers.get("X-JobScope-Auth") === "unverified") {
+      gateShow("check");
+      throw new Error("unverified");
+    }
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || "Access denied.");
+  }
   return res;
 }
 
@@ -3526,6 +3572,7 @@ async function bootAuth() {
 
 async function _bootAuth() {
   const qs = new URLSearchParams(location.search);
+  const googleNotice = window.jobScopeGoogle.notice();
 
   // A confirmation link from the welcome mail: consume it, then land back in
   // the app. The token is dropped from the address bar so a refresh cannot try
@@ -3552,14 +3599,17 @@ async function _bootAuth() {
   try { st = await (await fetch("/api/auth/state", { credentials: "same-origin" })).json(); }
   catch { gateShow("signin", { foot: "Cannot reach the server." }); return; }
 
+  googleSignInAvailable = Boolean(st.google_signin);
+  localRecruiterSignup = Boolean(st.local_recruiter_signup);
   if (st.needs_bootstrap) {
     gateShow("signup", { foot: "First run: this account will own the saved CV sessions." });
     return;
   }
-  if (!st.authenticated) { gateShow("signin"); return; }
+  if (!st.authenticated) { gateShow("signin", { foot: googleNotice }); return; }
   if (!st.verified) { gateShow("check", { msg: st.msg }); return; }
   gateHide();
   signedIn(st);
+  if (googleNotice) toast(googleNotice);
 }
 
 function signedIn(st) {
@@ -3577,6 +3627,8 @@ function signedIn(st) {
   $("acct").title = st.email || "";
   $("acct").style.display = "none";   // superseded by the identity pill
   $("signOutBtn").style.display = "";
+  $("gLinkGoogle").hidden = !googleSignInAvailable || Boolean(st.is_owner);
+  refreshGmailConnection();
   renderIdentity(st);
   applyPendingProfile(st);
   startIdleCountdown(st);
@@ -3701,7 +3753,12 @@ async function openSlotsPanel() {
       apps.forEach(function (a) { applied[a.job_title] = 1; });
       var h = "<h3 style='margin:0 0 8px;font-size:14px'>My applications</h3>";
       h += apps.length ? apps.map(function (a) {
-        var s = a.interview
+        var rejected = a.status === "rejected";
+        var reason = rejected
+          ? "<p style='margin:8px 0 0;white-space:pre-wrap'><b>Rejection reason</b><br>" +
+            esc(a.rejection_reason || "No reason was provided.") + "</p>"
+          : "";
+        var s = rejected ? "" : a.interview
           ? "<div style='color:var(--accent);margin:6px 0'>Interview confirmed: " + esc(local(a.interview.scheduled_at)) +
             (a.interview.meeting_link ? ' · <a href="' + esc(a.interview.meeting_link) + '" target="_blank" rel="noopener noreferrer">Meeting link</a>' : "") + "</div>"
           : a.slots.map(function (x) {
@@ -3709,12 +3766,12 @@ async function openSlotsPanel() {
                 " min · <i>" + SLOT_TXT[x.status] + "</i></span>" +
                 (x.status === "proposed" ? '<button class="iconbtn" data-del="' + x.id + '">Withdraw</button>' : "") + "</div>";
             }).join("");
-        var form = a.interview ? "" :
+        var form = rejected || a.interview ? "" :
           '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"><input type="datetime-local" data-when="' + a.id + '" style="flex:1;min-width:190px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 8px;color-scheme:dark light">' +
           '<select data-dur="' + a.id + '" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px"><option value="30">30 min</option><option value="45">45 min</option><option value="60" selected>60 min</option></select>' +
           '<button class="iconbtn" data-offer="' + a.id + '">Offer this time</button></div>';
         return "<div style='border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px'><b>" + esc(a.job_title) +
-          "</b> <span style='color:var(--muted);font-size:12.5px'>" + esc(a.company_name || "") + " · " + esc(a.status.replace(/_/g, " ")) + "</span>" + s + form + "</div>";
+          "</b> <span style='color:var(--muted);font-size:12.5px'>" + esc(a.company_name || "") + " · " + esc(a.status.replace(/_/g, " ")) + "</span>" + reason + s + form + "</div>";
       }).join("") : "<p style='color:var(--muted);font-size:13px'>You have not applied to any job yet.</p>";
       var open = jobs.filter(function (j) { return !applied[j.title]; });
       h += "<h3 style='margin:16px 0 8px;font-size:14px'>Open positions</h3>";
@@ -4059,7 +4116,7 @@ $("gateSign").onsubmit = async e => {
   try {
     const path = GATE.mode === "signup" ? "/api/auth/register" : "/api/auth/login";
     const body = { email, password: pass };
-    if (GATE.mode === "signup") body.role = role;
+    if (GATE.mode === "signup") body.role = localRecruiterSignup ? role : "candidate";
     // Also send role on login in case backend wants to validate/track; backend accepts it
     if (GATE.mode === "login") body.role = role;
     const r = await (await api(path, {
@@ -4084,7 +4141,7 @@ $("gateSign").onsubmit = async e => {
     loadConfig();
   } catch (err) {
     if (err.message !== "signed out" && err.message !== "unverified") {
-      gErr("Could not reach the server.");
+      gErr(err.message || "Could not reach the server.");
     }
   } finally {
     GATE.busy = false; $("gSubmit").disabled = false;

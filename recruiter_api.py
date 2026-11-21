@@ -14,9 +14,10 @@ renders them in the viewer's own time zone.
 """
 import json
 from datetime import datetime, timezone
+from time import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import auth
 import mailer
@@ -31,6 +32,8 @@ TASK_STATUSES = ("pending", "in_progress", "completed", "cancelled")
 INTERVIEW_STATUSES = ("scheduled", "rescheduled", "completed", "cancelled", "no_show")
 READY_STATUS = "ready_for_interview"  # candidate-form status the dashboard counts
 MAX_SLOTS = 10
+APPLICATION_EMAIL_STATUSES = {"shortlisted", "offer_released", "rejected"}
+EMAIL_RETRY_AFTER_SECONDS = 600
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS calendar_events (
@@ -276,7 +279,9 @@ async def set_job_status(job_id: int, req: StatusIn, user: dict = Depends(_recru
 def _applications(company_id: int, job_id: int | None = None) -> list[dict]:
     sql = ("SELECT a.*, j.title AS job_title, u.email AS candidate_email, "
            "COALESCE(cp.full_name, u.nickname, u.email) AS candidate_name, "
-           "cp.professional_title AS candidate_title, cp.location AS candidate_location "
+           "cp.professional_title AS candidate_title, cp.location AS candidate_location, "
+           "(SELECT e.state FROM application_status_emails e "
+           "WHERE e.application_id = a.id AND e.status = a.status ORDER BY e.id DESC LIMIT 1) AS email_state "
            "FROM applications a JOIN jobs j ON j.id = a.job_id JOIN users u ON u.id = a.candidate_user_id "
            "LEFT JOIN candidate_profiles cp ON cp.user_id = a.candidate_user_id WHERE j.company_id = ?")
     args = [company_id]
@@ -293,18 +298,88 @@ async def list_applications(job_id: int | None = None, user: dict = Depends(_rec
     return {"ok": True, "applications": _applications(cid, job_id) if cid else []}
 
 
+class ApplicationStatusIn(StatusIn):
+    rejection_reason: str = Field(default="", max_length=1500)
+
+
+def _send_application_email(company_id: int, app_id: int, notification_id: int | None = None) -> str:
+    with _db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT e.id, e.status, e.state, e.attempted_at, a.rejection_reason, "
+            "j.title AS job_title, c.name AS company, u.email, "
+            "COALESCE(NULLIF(cp.full_name, ''), NULLIF(u.nickname, ''), 'there') AS candidate_name "
+            "FROM applications a JOIN jobs j ON j.id = a.job_id "
+            "JOIN companies c ON c.id = j.company_id JOIN users u ON u.id = a.candidate_user_id "
+            "LEFT JOIN candidate_profiles cp ON cp.user_id = u.id "
+            "JOIN application_status_emails e ON e.id = (SELECT MAX(id) FROM application_status_emails "
+            "WHERE application_id = a.id AND status = a.status) WHERE a.id = ? AND j.company_id = ?",
+            (app_id, company_id),
+        ).fetchone()
+        if not row or (notification_id is not None and notification_id != row["id"]):
+            return "skipped"
+        started = time()
+        if row["state"] == "sent":
+            return "sent"
+        if row["state"] == "sending" and started - (row["attempted_at"] or 0) < EMAIL_RETRY_AFTER_SECONDS:
+            return "sending"
+        conn.execute("UPDATE application_status_emails SET state = 'sending', attempted_at = ? WHERE id = ?",
+                     (started, row["id"]))
+
+    try:
+        result = mailer.send_application_status(row["email"], row["candidate_name"], row["job_title"],
+                                                row["company"], row["status"], row["rejection_reason"] or "")
+        state = "sent" if result.ok else "failed"
+    except (ValueError, OSError):
+        state = "failed"
+    with _db() as conn:
+        conn.execute("UPDATE application_status_emails SET state = ? WHERE id = ? AND attempted_at = ?",
+                     (state, row["id"], started))
+    return state
+
+
 @router.post("/api/recruiter/applications/{app_id}/status")
-async def set_application_status(app_id: int, req: StatusIn, user: dict = Depends(_recruiter)):
+def set_application_status(app_id: int, req: ApplicationStatusIn, user: dict = Depends(_recruiter)):
     if req.status not in APP_STATUSES:
         raise HTTPException(status_code=400, detail="Unknown status")
     cid = _need_company(user)
+    reason = req.rejection_reason.strip() if req.status == "rejected" else None
+    notification_id = None
     with _db() as conn:
-        n = conn.execute(
-            "UPDATE applications SET status = ?, updated_at = ? WHERE id = ? AND job_id IN "
-            "(SELECT id FROM jobs WHERE company_id = ?)", (req.status, auth._now(), app_id, cid)).rowcount
-    if not n:
-        raise HTTPException(status_code=404, detail="Application not found")
-    return {"ok": True}
+        conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute(
+            "SELECT a.status, a.rejection_reason FROM applications a JOIN jobs j ON j.id = a.job_id "
+            "WHERE a.id = ? AND j.company_id = ?", (app_id, cid),
+        ).fetchone()
+        if not current:
+            raise HTTPException(status_code=404, detail="Application not found")
+        if req.status == "rejected" and not reason:
+            raise HTTPException(status_code=400, detail="Enter a rejection reason to share with the candidate.")
+        if current["status"] == req.status and current["rejection_reason"] == reason:
+            previous = conn.execute(
+                "SELECT state FROM application_status_emails WHERE application_id = ? AND status = ? "
+                "ORDER BY id DESC LIMIT 1", (app_id, req.status),
+            ).fetchone()
+            return {"ok": True, "status": req.status, "changed": False, "rejection_reason": reason,
+                    "email_state": previous["state"] if previous else "skipped"}
+        conn.execute("UPDATE applications SET status = ?, rejection_reason = ?, updated_at = ? WHERE id = ?",
+                     (req.status, reason, auth._now(), app_id))
+        if req.status in APPLICATION_EMAIL_STATUSES:
+            notification_id = conn.execute(
+                "INSERT INTO application_status_emails (application_id, status) VALUES (?, ?)",
+                (app_id, req.status),
+            ).lastrowid
+    state = _send_application_email(cid, app_id, notification_id) if notification_id else "skipped"
+    return {"ok": True, "status": req.status, "changed": True,
+            "rejection_reason": reason, "email_state": state}
+
+
+@router.post("/api/recruiter/applications/{app_id}/status-email/retry")
+def retry_application_email(app_id: int, user: dict = Depends(_recruiter)):
+    state = _send_application_email(_need_company(user), app_id)
+    if state == "skipped":
+        raise HTTPException(status_code=404, detail="Application email not found")
+    return {"ok": True, "email_state": state}
 
 
 @router.get("/api/recruiter/dashboard/stats")
@@ -341,16 +416,6 @@ class CandidateIn(BaseModel):
     notes: str = ""
 
 
-@router.get("/api/candidates")
-async def list_candidates(status: str | None = None, user: dict = Depends(_recruiter)):
-    sql, args = "SELECT * FROM candidates WHERE user_id = ?", [user["id"]]
-    if status:
-        sql += " AND status = ?"
-        args.append(status)
-    with _db() as conn:
-        return {"ok": True, "candidates": [dict(r) for r in conn.execute(sql + " ORDER BY created_at DESC", args)]}
-
-
 @router.post("/api/candidates")
 async def save_candidate(req: CandidateIn, user: dict = Depends(_recruiter)):
     if not req.name.strip():
@@ -369,13 +434,6 @@ async def save_candidate(req: CandidateIn, user: dict = Depends(_recruiter)):
                          "availability, status, notes, updated_at, user_id, id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                          (*vals, user["id"], cid, now))
     return {"ok": True, "id": cid}
-
-
-@router.delete("/api/candidates/{cand_id}")
-async def delete_candidate(cand_id: str, user: dict = Depends(_recruiter)):
-    with _db() as conn:
-        n = conn.execute("DELETE FROM candidates WHERE user_id = ? AND id = ?", (user["id"], cand_id)).rowcount
-    return {"ok": bool(n)}
 
 
 # ---- tasks ----------------------------------------------------------------
@@ -633,7 +691,8 @@ class SlotsIn(BaseModel):
 async def my_applications(user: dict = Depends(_candidate)):
     with _db() as conn:
         apps = [dict(r) for r in conn.execute(
-            "SELECT a.id, a.status, a.applied_at, j.title AS job_title, c.name AS company_name "
+            "SELECT a.id, a.status, a.applied_at, j.title AS job_title, c.name AS company_name, "
+            "CASE WHEN a.status = 'rejected' THEN a.rejection_reason END AS rejection_reason "
             "FROM applications a JOIN jobs j ON j.id = a.job_id LEFT JOIN companies c ON c.id = j.company_id "
             "WHERE a.candidate_user_id = ? ORDER BY a.applied_at DESC", (user["id"],))]
         for a in apps:

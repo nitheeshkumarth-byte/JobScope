@@ -373,8 +373,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(d.app.state, "runtime", object(), raising=False)
 
     from fastapi.testclient import TestClient
-    with TestClient(d.app) as c:
-        c.headers["host"] = "jobs.test"
+    with TestClient(d.app, base_url="http://localhost", client=("127.0.0.1", 50000)) as c:
         r = c.post("/api/auth/register",
                    json={"email": "desc@jobs.test", "password": "a-good-password"})
         assert r.status_code in (200, 202), r.text

@@ -407,6 +407,7 @@ html.gated .app,html.gated header{opacity:0!important}
               </div>
               <div class="dropdown-item" onclick="showPageFromMenu('recruiter-profile')"><svg class="ic" aria-hidden="true"><use href="#i-user"/></svg>Recruiter Profile</div>
               <div class="dropdown-item" onclick="showPageFromMenu('settings')"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg>Account Settings</div>
+              <button class="dropdown-item btn" id="recruiter-google-link" type="button" style="display:none">Link Google sign-in</button>
               <div class="dropdown-divider"></div>
               <div class="dropdown-item" onclick="logout()">Sign Out</div>
             </div>
@@ -719,6 +720,7 @@ html.gated .app,html.gated header{opacity:0!important}
     <div class="drawer-body" id="cand-drawer-body"></div>
   </aside>
   <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/static/google_accounts.js"></script>
   <script>
     const $ = id => document.getElementById(id);
     let currentUser = null;
@@ -803,6 +805,10 @@ html.gated .app,html.gated header{opacity:0!important}
         }
         st = await applyPendingProfile(st);
         currentUser = st;
+        $('recruiter-google-link').style.display = st.google_signin && st.verified && !st.is_owner && st.role === 'recruiter' ? 'flex' : 'none';
+        $('recruiter-google-link').onclick = () => window.jobScopeGoogle.start('link').catch(e => toast(e.message, true));
+        const googleNotice = window.jobScopeGoogle.notice();
+        if (googleNotice) toast(googleNotice);
         if (st.role === 'super_admin' || st.is_owner) {
           const navUsers = $('nav-users');
           if (navUsers) navUsers.style.display = 'flex';
@@ -1182,7 +1188,7 @@ html.gated .app,html.gated header{opacity:0!important}
       const rows = S.apps.filter(a => (!j || String(a.job_id) === j) && (!s || a.status === s)).map(a => `<tr>
         <td class="who"><b>${esc(a.candidate_name || '#' + a.candidate_user_id)}</b><span>${a.candidate_email ? `<a href="${mailTo(a.candidate_email)}">${esc(a.candidate_email)}</a>` : ''}</span>${a.source === 'google_form' ? '<span class="badge b-info">Google Form</span>' : ''}</td>
         <td>${esc(a.job_title || '#' + a.job_id)}</td>
-        <td><select aria-label="Status" onchange="updateStatus(${a.id}, this.value)">${appOpts(a.status)}</select></td>
+        <td><select aria-label="Status" onchange="updateStatus(${a.id}, this.value)">${appOpts(a.status)}</select>${applicationStatusActions(a)}</td>
         <td>${esc(fmtDate(a.applied_at))}</td>
         <td><div class="row-actions">${a.source === 'google_form' ? `<button class="btn btn-sm" onclick="showApplicationAnswers(${a.id})">Answers</button>` : ''}<button class="btn btn-sm" onclick="showInterviewForm(${a.id})">Schedule interview</button></div></td></tr>`);
       $('all-apps').innerHTML = rows.join('') || '<tr><td colspan="5" class="empty">No applications match.</td></tr>';
@@ -1193,13 +1199,64 @@ html.gated .app,html.gated header{opacity:0!important}
       openModal('Application answers',
         `<div class="hint" style="white-space:pre-wrap">${esc(a.cover_letter || 'No written answers were submitted.')}</div>`);
     }
+    function applicationStatusActions(a) {
+      const reason = a.status === 'rejected'
+        ? `<div class="hint" style="white-space:pre-wrap">${esc(a.rejection_reason || 'No rejection reason was recorded.')}</div>
+           <button class="btn btn-sm" type="button" onclick="updateStatus(${a.id}, 'rejected')">${a.rejection_reason ? 'Edit reason' : 'Add rejection reason'}</button>`
+        : '';
+      const retry = ['pending', 'failed', 'sending'].includes(a.email_state)
+        ? `<button class="btn btn-sm" type="button" onclick="retryStatusEmail(${a.id}, this)">Retry email</button>` : '';
+      return reason + retry;
+    }
+    function refreshApplicationViews() {
+      renderApplications();
+      if ($('page-pipeline').classList.contains('active')) renderPipeline();
+    }
+    function showApplicationEmailResult(state, saved) {
+      if (state === 'failed') toast(saved ? 'Status saved. The email failed. You can retry it.' : 'Email delivery failed.', true);
+      else if (state === 'sending') toast('Email delivery is in progress.');
+      else if (state === 'sent') toast(saved ? 'Status updated. Candidate email sent.' : 'Candidate email sent.');
+      else if (saved) toast('Status updated.');
+    }
+    async function saveApplicationStatus(a, status, reason) {
+      const data = await api(`/api/recruiter/applications/${a.id}/status`, 'POST',
+        {status, rejection_reason: reason});
+      Object.assign(a, {status: data.status, rejection_reason: data.rejection_reason, email_state: data.email_state});
+      refreshApplicationViews();
+      if (data.changed) showApplicationEmailResult(data.email_state, true);
+      loadDashboard();
+    }
     async function updateStatus(appId, status) {
-      const a = S.apps.find(x => x.id === appId), prev = a && a.status;
+      const a = S.apps.find(x => x.id === appId);
+      if (!a) return;
+      if (status === 'rejected') {
+        refreshApplicationViews();
+        openModal('Reject application',
+          `<div class="form-group"><label class="form-label" for="application-rejection-reason">Reason to share with the candidate</label>
+             <textarea class="form-textarea" id="application-rejection-reason" maxlength="1500" required>${esc(a.rejection_reason || '')}</textarea>
+             <p class="hint">This reason appears in the candidate’s email and application.</p></div>`,
+          async () => {
+            const reason = val('application-rejection-reason');
+            if (!reason) throw new Error('Enter a rejection reason.');
+            await saveApplicationStatus(a, status, reason);
+          }, 'Save and notify');
+        return;
+      }
       try {
-        await api(`/api/recruiter/applications/${appId}/status`, 'POST', {status});
-        if (a) a.status = status; toast('Status updated'); loadDashboard();
-        if ($('page-pipeline').classList.contains('active')) renderPipeline();
-      } catch (e) { toast(e.message, true); if (a) a.status = prev; renderApplications(); renderPipeline(); }
+        await saveApplicationStatus(a, status, '');
+      } catch (e) { toast(e.message, true); refreshApplicationViews(); }
+    }
+    async function retryStatusEmail(appId, button) {
+      const a = S.apps.find(x => x.id === appId);
+      if (!a) return;
+      button.disabled = true;
+      try {
+        const data = await api(`/api/recruiter/applications/${appId}/status-email/retry`, 'POST');
+        a.email_state = data.email_state;
+        showApplicationEmailResult(data.email_state, false);
+        refreshApplicationViews();
+      } catch (e) { toast(e.message, true); }
+      finally { button.disabled = false; }
     }
 
     /* ===== Google Forms intake ===== */
@@ -1312,7 +1369,7 @@ html.gated .app,html.gated header{opacity:0!important}
             <select aria-label="Move ${esc(p.candidate_name)} to" onchange="updatePipelineStatus(${p.id}, this.value)">${appOpts(p.status)}</select></div>`),
           ...list.map(a => `<div class="kcard" draggable="true" data-kind="app" data-id="${a.id}"><b>${esc(a.candidate_name || '#' + a.candidate_user_id)}</b><span>${esc(a.job_title || '')}</span>
             ${a.status !== key ? `<span>${esc(APP_STATUS[a.status])}</span>` : ''}
-            <select aria-label="Move ${esc(a.candidate_name || 'candidate')} to" onchange="updateStatus(${a.id}, this.value)">${appOpts(a.status)}</select></div>`)
+            <select aria-label="Move ${esc(a.candidate_name || 'candidate')} to" onchange="updateStatus(${a.id}, this.value)">${appOpts(a.status)}</select>${applicationStatusActions(a)}</div>`)
         ];
         return `<div class="kcol" data-col="${key}"><h3>${label}<b>${cards.length}</b></h3><div class="kcards">${cards.join('')}</div></div>`;
       }).join('');
@@ -1336,7 +1393,7 @@ html.gated .app,html.gated header{opacity:0!important}
         if (drag.kind === 'src') { if (def) updatePipelineStatus(drag.id, target); else renderPipeline(); }
         else {
           const a = S.apps.find(x => x.id === drag.id);
-          if (a && def && !def[2].includes(a.status)) { a.status = target; renderPipeline(); updateStatus(drag.id, target); } else renderPipeline();
+          if (a && def && !def[2].includes(a.status)) updateStatus(drag.id, target); else renderPipeline();
         }
       });
     })();

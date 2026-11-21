@@ -39,8 +39,7 @@ def client(tmp_path, monkeypatch):
     d.app.state.bundles = {}
     monkeypatch.setattr(d.app.state, "runtime", object(), raising=False)
 
-    with TestClient(d.app) as c:
-        c.headers["host"] = "jobs.test"
+    with TestClient(d.app, base_url="http://localhost", client=("127.0.0.1", 50000)) as c:
         yield c
 
 
@@ -174,6 +173,162 @@ def test_registering_without_smtp_leaves_the_account_usable(client):
     assert client.get("/api/config").status_code == 200
 
 
+def test_shared_registration_requires_mail_and_never_claims_the_owner(client, monkeypatch):
+    monkeypatch.setenv("JOBSCOPE_LOCAL_MODE", "0")
+    details = {"email": "new@jobs.test", "password": "a-good-password"}
+    assert client.get("/api/auth/state").json()["needs_bootstrap"] is False
+    assert client.post("/api/auth/register", json=details).status_code == 503
+    assert auth.get_user_by_email(details["email"]) is None
+
+    monkeypatch.setenv("AUTH_DEV_LINKS", "1")
+    monkeypatch.setenv("APP_URL", "https://jobs.test")
+    monkeypatch.setattr(d.mailer, "configured", lambda: True)
+    monkeypatch.setattr(d.mailer, "send_verification",
+                        lambda to, link: mailer.MailResult(False, "failed", link))
+    response = client.post("/api/auth/register", json=details)
+    assert response.status_code == 202
+    assert response.json()["needs_verification"] is True
+    assert response.json()["dev_link"] == ""
+    assert auth.owner_user() is None
+    assert client.get("/api/config").status_code == 403
+    assert client.post("/api/auth/resend").json()["dev_link"] == ""
+
+
+def test_admin_uses_revocable_account_sessions(client):
+    register(client)
+    details = {"email": "member@jobs.test", "password": "a-good-password"}
+    assert client.post("/api/admin/users", json=details).status_code == 200
+    client.cookies.clear()
+    assert client.post("/api/admin/login", json=details).status_code == 401
+    assert client.get("/api/admin/users").status_code == 403
+
+    owner = {"email": "owner@jobs.test", "password": "a-good-password"}
+    assert client.post("/api/admin/login", json=owner).status_code == 200
+    token = client.cookies.get(auth.SESSION_COOKIE)
+    assert client.get("/api/admin/session").json()["authenticated"] is True
+    assert client.post("/api/admin/logout").status_code == 200
+    assert auth.session_user(token) is None
+    assert client.get("/api/admin/users").status_code == 403
+
+
+def test_admin_login_requires_verified_email(client, monkeypatch):
+    legacy = {"username": "admin", "password": "password"}
+    assert client.post("/api/admin/login", json=legacy).status_code == 401
+    client.cookies.set("js_local_admin", "former-session")
+    assert client.get("/api/admin/users").status_code == 403
+    client.cookies.clear()
+
+    register(client)
+    pending = {"email": "admin@jobs.test", "password": "a-good-password"}
+    assert client.post("/api/admin/users", json={**pending, "role": "super_admin"}).status_code == 200
+    client.cookies.clear()
+    assert client.post("/api/admin/login", json=pending).status_code == 403
+    assert client.post("/api/auth/login", json=pending).status_code == 200
+    assert client.get("/api/admin/users").status_code == 403
+
+    captured = {}
+    monkeypatch.setattr(d.mailer, "configured", lambda: True)
+    monkeypatch.setattr(d.mailer, "send_verification", _capture(captured))
+    assert client.post("/api/auth/resend").status_code == 200
+    token = captured["link"].split("verify=")[-1]
+    assert client.get("/api/auth/verify", params={"token": token}).status_code == 200
+    assert client.get("/api/admin/users").status_code == 403
+    assert client.post("/api/admin/login", json=pending).status_code == 200
+    assert client.get("/api/admin/users").status_code == 200
+
+
+def test_admin_email_or_privilege_changes_require_fresh_verification(client):
+    register(client)
+    member = auth.create_user("member@jobs.test", "a-good-password", verified=True)
+    reset = auth.issue_token(member["id"], "reset", auth.RESET_TOKEN_HOURS)
+    stale_session, _ = auth.create_session(member["id"])
+    route = f"/api/admin/users/{member['id']}/update"
+    assert client.post(route, json={"role": "super_admin"}).status_code == 200
+    assert auth.session_user(stale_session) is None
+    assert auth.consume_token(reset, "reset") is None
+    assert not auth.get_user(member["id"])["verified_at"]
+    token = auth.issue_token(member["id"], "verify", auth.VERIFY_TOKEN_HOURS)
+    assert client.post(route, json={"email": "new@jobs.test"}).status_code == 200
+    assert client.get("/api/auth/verify", params={"token": token}).status_code == 400
+    assert client.post("/api/admin/login", json={"email": "new@jobs.test", "password": "a-good-password"}).status_code == 403
+
+
+def test_gmail_is_disabled_for_other_accounts_and_shared_requests(client, monkeypatch):
+    register(client)
+    assert client.get("/api/config").status_code == 200
+    other = register(client, email="member@jobs.test")
+    assert other["ok"]
+    denied = client.get("/api/gmail/listings")
+    assert denied.status_code == 403
+    assert "X-JobScope-Auth" not in denied.headers
+    assert client.post("/api/gmail/sync", json={}).status_code == 403
+
+    sign_in(client)
+    monkeypatch.setenv("JOBSCOPE_LOCAL_MODE", "0")
+    assert client.get("/api/gmail/listings").status_code == 403
+
+
+def test_gmail_works_for_the_configured_local_candidate(client, monkeypatch):
+    import gmail_index
+    import mcp_server_gmail
+
+    email = "jobs@jobs.test"
+    auth.create_user(email, "a-good-password", verified=True)
+    monkeypatch.setenv("JOBSCOPE_GMAIL_USER", email)
+    monkeypatch.setattr(mcp_server_gmail, "sync_job_alerts", lambda **kwargs: "Cached 1 message.")
+    monkeypatch.setattr(gmail_index, "count_listings", lambda: 1)
+    monkeypatch.setattr(gmail_index, "sender_breakdown", lambda: [])
+    sign_in(client, email=email)
+    response = client.post("/api/gmail/sync", json={})
+    assert response.status_code == 200
+    assert response.json()["summary"] == "Cached 1 message."
+
+    def disconnected(**kwargs):
+        raise mcp_server_gmail.GmailSyncError("Reconnect Gmail.")
+
+    monkeypatch.setattr(mcp_server_gmail, "sync_job_alerts", disconnected)
+    failed = client.post("/api/gmail/sync", json={})
+    assert failed.status_code == 502
+    assert failed.json()["detail"] == "Reconnect Gmail."
+
+    monkeypatch.setenv("JOBSCOPE_LOCAL_MODE", "0")
+    assert client.post("/api/gmail/sync", json={}).status_code == 403
+
+
+def test_active_routes_have_unique_method_and_path_pairs(client):
+    pairs = [(method, route.path) for route in d.app.routes
+             for method in getattr(route, "methods", ())]
+    assert len(pairs) == len(set(pairs))
+
+
+def test_shared_admin_and_regular_login_share_a_rate_limit(client, monkeypatch):
+    monkeypatch.setenv("JOBSCOPE_LOCAL_MODE", "0")
+    monkeypatch.setitem(d.REQUEST_LIMITS, "/api/auth/login", ("/api/auth/login", 1))
+    monkeypatch.setattr(d, "monotonic", lambda: 90)
+    monkeypatch.setattr(d.app.state, "request_limit_minute", 1, raising=False)
+    monkeypatch.setattr(d.app.state, "request_counts", {}, raising=False)
+    credentials = {"email": "unknown@jobs.test", "password": "a-good-password"}
+    assert client.post("/api/admin/login", json=credentials).status_code == 401
+    denied = client.post("/api/auth/login", json=credentials)
+    assert denied.status_code == 429
+    assert int(denied.headers["Retry-After"]) > 0
+
+
+def test_public_jobs_only_list_and_accept_applications_for_published_jobs(client):
+    register(client)
+    recruiter = auth.create_user("recruiter@jobs.test", "a-good-password", role="recruiter")
+    company = auth.create_company("Demo", created_by=recruiter["id"])
+    draft = auth.create_job(company["id"], recruiter["id"],
+                            {"title": "Draft", "description": "Data", "status": "draft"})
+    live = auth.create_job(company["id"], recruiter["id"],
+                           {"title": "Live", "description": "Data", "status": "published"})
+
+    rows = client.get("/api/jobs?status=draft").json()["jobs"]
+    assert [job["id"] for job in rows] == [live["id"]]
+    assert client.post(f"/api/jobs/{draft['id']}/apply", json={}).status_code == 404
+    assert client.post(f"/api/jobs/{live['id']}/apply", json={}).status_code == 200
+
+
 def test_with_smtp_configured_a_link_is_mailed_and_nothing_is_returned(
         client, monkeypatch):
     captured = {}
@@ -185,7 +340,7 @@ def test_with_smtp_configured_a_link_is_mailed_and_nothing_is_returned(
     assert body["needs_verification"] is True
     assert body["dev_link"] == ""
     # the link points at the app so following it lands in the UI
-    assert captured["link"].startswith("http://jobs.test/?verify=")
+    assert captured["link"].startswith("http://localhost/?verify=")
 
 
 def test_an_unconfirmed_account_cannot_use_the_app(client, monkeypatch):
@@ -202,7 +357,9 @@ def test_an_unconfirmed_account_cannot_use_the_app(client, monkeypatch):
     # ...but the app itself is closed until the address is confirmed
     assert client.get("/api/config").status_code == 403
     assert client.get("/api/profiles").status_code == 403
-    assert client.post("/api/run", json={"message": "hi"}).status_code == 403
+    denied = client.post("/api/run", json={"message": "hi"})
+    assert denied.status_code == 403
+    assert denied.headers["X-JobScope-Auth"] == "unverified"
 
 
 def test_a_fresh_link_can_be_asked_for_but_only_while_signed_in(client,
@@ -215,7 +372,7 @@ def test_a_fresh_link_can_be_asked_for_but_only_while_signed_in(client,
 
     r = client.post("/api/auth/resend")
     assert r.status_code == 200 and r.json()["ok"] is True
-    assert captured["link"].startswith("http://jobs.test/?verify=")
+    assert captured["link"].startswith("http://localhost/?verify=")
 
     client.cookies.clear()
     assert client.post("/api/auth/resend").status_code == 401
@@ -255,9 +412,12 @@ def test_following_the_link_opens_the_account_and_drops_old_cookies(
     assert client.get("/api/config").status_code == 200
 
 
-def test_a_verification_link_only_works_once(client):
-    body = register(client, verify=False)
-    token = body["dev_link"].split("verify=")[-1]
+def test_a_verification_link_only_works_once(client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(d.mailer, "configured", lambda: True)
+    monkeypatch.setattr(d.mailer, "send_verification", _capture(captured))
+    register(client, verify=False)
+    token = captured["link"].split("verify=")[-1]
     assert client.get("/api/auth/verify?token=" + token).status_code == 200
     assert client.get("/api/auth/verify?token=" + token).status_code == 400
 
@@ -619,7 +779,6 @@ def test_the_default_session_cannot_be_deleted(client):
 def test_a_reset_link_sets_a_new_password_and_signs_everyone_out(client,
                                                                   monkeypatch):
     captured = {}
-    monkeypatch.setattr(d.mailer, "configured", lambda: True)
     monkeypatch.setattr(d.mailer, "send_password_reset", _capture(captured))
     register(client)
     sign_in(client)
@@ -632,6 +791,7 @@ def test_a_reset_link_sets_a_new_password_and_signs_everyone_out(client,
                                              "password": "a-newer-password"})
     assert r.status_code == 200
     # the cookie captured before the reset is dead
+    assert auth.session_user(stolen) is None
     assert client.get("/api/config").status_code == 401
     client.cookies.clear()
     sign_in(client, password="a-newer-password")
@@ -640,7 +800,6 @@ def test_a_reset_link_sets_a_new_password_and_signs_everyone_out(client,
 def test_the_reset_link_carries_the_address_so_the_form_can_prefill(client,
                                                                     monkeypatch):
     captured = {}
-    monkeypatch.setattr(d.mailer, "configured", lambda: True)
     monkeypatch.setattr(d.mailer, "send_password_reset", _capture(captured))
     register(client)
     client.post("/api/auth/forgot", json={"email": "owner@jobs.test"})
@@ -650,7 +809,6 @@ def test_the_reset_link_carries_the_address_so_the_form_can_prefill(client,
 
 def test_a_reset_token_only_works_once(client, monkeypatch):
     captured = {}
-    monkeypatch.setattr(d.mailer, "configured", lambda: True)
     monkeypatch.setattr(d.mailer, "send_password_reset", _capture(captured))
     register(client)
     client.post("/api/auth/forgot", json={"email": "owner@jobs.test"})
@@ -683,7 +841,7 @@ def test_forgot_hands_back_the_link_only_when_explicitly_allowed(client,
                                                                  monkeypatch):
     """The escape hatch for a checkout with no mail server, off by default
     because returning a link to whoever asked is an enumeration oracle."""
-    register(client)
+    auth.create_user("owner@jobs.test", "a-good-password", verified=True)
     r = client.post("/api/auth/forgot", json={"email": "owner@jobs.test"})
     assert "dev_link" not in r.json()
 
@@ -706,7 +864,6 @@ def test_a_reset_weak_password_is_refused_without_burning_the_token(client,
                                                                     monkeypatch):
     """Otherwise a typo would consume the link and strand the user."""
     captured = {}
-    monkeypatch.setattr(d.mailer, "configured", lambda: True)
     monkeypatch.setattr(d.mailer, "send_password_reset", _capture(captured))
     register(client)
     client.post("/api/auth/forgot", json={"email": "owner@jobs.test"})
@@ -897,8 +1054,7 @@ def test_one_account_cannot_read_or_change_another_identity(client):
     client.post("/api/auth/identity", json={"nickname": "One", "avatar": "ember"})
     cookie = dict(client.cookies)
 
-    other = TestClient(d.app)
-    other.headers["host"] = "jobs.test"
+    other = TestClient(d.app, base_url="http://localhost", client=("127.0.0.1", 50000))
     other.post("/api/auth/register",
                json={"email": "two@jobs.test", "password": "a-good-password"})
     assert other.get("/api/auth/session").json()["display_name"] == "two"

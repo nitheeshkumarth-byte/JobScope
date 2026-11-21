@@ -13,6 +13,7 @@ import email
 import hashlib
 from datetime import datetime, timedelta, timezone
 from email.header import decode_header
+from pathlib import Path
 from typing import Any, Dict
 
 from mcp.server.fastmcp import FastMCP
@@ -29,29 +30,19 @@ except Exception:
     pass
 
 try:
+    from google.auth.exceptions import RefreshError
+    from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import build
     from googleapiclient.errors import HttpError
-    try:
-        from google.auth.transport.requests import Request
-    except Exception:
-        Request = None
 except Exception as e:
     raise ImportError(f"Missing Google API deps: {e}") from e
 
 mcp = FastMCP("gmail-tools")
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
-CREDENTIALS_FILE = os.environ.get(
-    "GMAIL_OAUTH_CREDENTIALS",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                 "client_secret_711408450947-oepdiicj2ja7daeji525ib6vkgunkrbp.apps.googleusercontent.com.json"),
-)
-TOKEN_FILE = os.environ.get(
-    "GMAIL_OAUTH_TOKEN_FILE",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                 "gmail_oauth_token.json"),
-)
+TOKEN_FILE = Path(os.environ.get("GMAIL_OAUTH_TOKEN_FILE") or "gmail_oauth_token.json")
+if not TOKEN_FILE.is_absolute():
+    TOKEN_FILE = Path(__file__).resolve().parent / TOKEN_FILE
 
 # Marks a structured JSON block of parsed job listings. The agent's fallback
 # node and the dashboard's SSE parser both understand this marker, so Gmail
@@ -538,29 +529,26 @@ def _extract_listing(subject: str, body: str) -> dict | None:
             "link": link.split("&")[0] if "indeed.com" in link else link}
 
 
+class GmailSyncError(RuntimeError):
+    """A Gmail sync error safe to show on the dashboard."""
+
+
 def _get_credentials():
-    creds = None
-    if os.path.exists(TOKEN_FILE):
-        try:
-            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-        except Exception:
-            creds = None
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token and Request:
-            try:
-                creds.refresh(Request())
-            except Exception:
-                creds = None
-        if not creds:
-            if not os.path.exists(CREDENTIALS_FILE):
-                raise FileNotFoundError(f"OAuth client secret not found: {CREDENTIALS_FILE}")
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
-        try:
-            with open(TOKEN_FILE, "w") as token:
-                token.write(creds.to_json())
-        except Exception:
-            pass
+    reconnect = "Reconnect Gmail by running python gmail_login.py on the computer running JobScope."
+    try:
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    except (OSError, ValueError) as exc:
+        raise GmailSyncError(reconnect) from exc
+    if creds.valid:
+        return creds
+    try:
+        creds.refresh(Request())
+    except RefreshError as exc:
+        raise GmailSyncError(reconnect) from exc
+    try:
+        TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
+    except OSError:
+        pass
     return creds
 
 
@@ -590,14 +578,18 @@ def _api_call(request, tries: int = 4):
 @mcp.tool()
 def sync_gmail_cache(days_back: int = 3650, account: int = 0) -> str:
     """Download job-alert mail into the local cache (OAuth)."""
-    accounts = [1] if account != 0 else [1, 2]
+    try:
+        return sync_job_alerts(days_back, account)
+    except GmailSyncError as exc:
+        return str(exc)
+
+
+def sync_job_alerts(days_back: int, account: int = 0) -> str:
+    accounts = [account] if account in (1, 2) else [1, 2]
     total_msgs = total_listings = 0
     out_lines = []
-    try:
-        creds = _get_credentials()
-        service = build("gmail", "v1", credentials=creds)
-    except Exception as e:
-        return f"OAuth init failed: {e}"
+    failures = 0
+    service = build("gmail", "v1", credentials=_get_credentials())
     for acct in accounts:
         try:
             senders = gmail_senders_for_account(acct)
@@ -606,26 +598,7 @@ def sync_gmail_cache(days_back: int = 3650, account: int = 0) -> str:
         parsed = []
         hit = []
         try:
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%Y/%m/%d")
-            for sender in senders:
-                q = f'from:"{sender}" after:{cutoff}'
-                res = _api_call(service.users().messages().list(
-                    userId="me", q=q, maxResults=500))
-                msgs = res.get("messages", [])
-                for m in msgs:
-                    try:
-                        raw = _api_call(service.users().messages().get(
-                            userId="me", id=m["id"], format="raw"))
-                        data = raw.get("raw")
-                        if data:
-                            import base64
-                            row = parse_message(base64.urlsafe_b64decode(data + '==='), account=acct)
-                            if row:
-                                parsed.append(row)
-                                if sender not in hit:
-                                    hit.append(sender)
-                    except Exception:
-                        continue
+            parsed, hit = fetch_job_alerts(service, senders, days_back, acct)
             gmail_index.upsert_messages(parsed)
             n_listings = gmail_index.count_listings(acct)
             gmail_index.record_sync(acct, len(parsed), "")
@@ -633,10 +606,53 @@ def sync_gmail_cache(days_back: int = 3650, account: int = 0) -> str:
             total_listings += n_listings
             out_lines.append(f"mailbox {acct}: {len(parsed)} msgs, {n_listings} listings, senders: {hit}")
         except Exception as e:
+            failures += 1
             gmail_index.upsert_messages(parsed)
             gmail_index.record_sync(acct, len(parsed), str(e))
-            out_lines.append(f"mailbox {acct}: ERROR {e}")
-    return "\n".join(["Cached " + str(total_msgs) + " messages, " + str(total_listings) + " listings."] + out_lines)
+            out_lines.append(f"mailbox {acct}: sync failed")
+    if failures == len(accounts):
+        raise GmailSyncError("Gmail could not sync the job alerts. Try again later.")
+    summary = f"Cached {total_msgs} messages, {total_listings} listings."
+    if failures:
+        summary += " Some Gmail alerts could not be synced."
+    return "\n".join([summary, *out_lines])
+
+
+def fetch_job_alerts(service, senders: list[str], days_back: int, account: int = 1):
+    from base64 import urlsafe_b64decode
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%Y/%m/%d")
+    parsed, hit = [], []
+    seen = set()
+    messages = service.users().messages()
+    completed = False
+    last_error = None
+    for sender in senders:
+        try:
+            result = _api_call(messages.list(userId="me", q=f'from:"{sender}" after:{cutoff}',
+                                             maxResults=500))
+        except HttpError as exc:
+            last_error = exc
+            continue
+        completed = True
+        parsed_before = len(parsed)
+        for item in result.get("messages", []):
+            message_id = item["id"]
+            if message_id in seen:
+                continue
+            seen.add(message_id)
+            try:
+                raw = _api_call(messages.get(userId="me", id=message_id, format="raw")).get("raw")
+                row = parse_message(urlsafe_b64decode(raw + "==="), account=account) if raw else None
+            except (HttpError, ValueError, TypeError):
+                continue
+            if row:
+                parsed.append(row)
+        if len(parsed) > parsed_before:
+            hit.append(sender)
+    if not completed and last_error:
+        raise last_error
+    return parsed, hit
 
 
 @mcp.tool()
